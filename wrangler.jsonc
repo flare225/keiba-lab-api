@@ -8,5 +8,8 @@
       "database_name": "keiba-lab",
       "database_id": "8549d5c5-dad4-43ce-a8dc-155ac167dc..."
     }
-  ]
+  ],
+"triggers": {
+  "crons": ["*/15 * * * *"]
+}
 }

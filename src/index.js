@@ -19,6 +19,27 @@ function tokyoDate() {
   }).format(new Date());
 }
 
+async function testJraConnection() {
+  const startedAt = new Date().toISOString();
+  const response = await fetch("https://www.jra.go.jp/", {
+    headers: {
+      "user-agent": "keiba-lab/0.3 (+JRA connectivity test)",
+      accept: "text/html,*/*;q=0.8",
+    },
+    redirect: "follow",
+  });
+
+  const body = await response.text();
+  return {
+    ok: response.ok,
+    status: response.status,
+    contentType: response.headers.get("content-type"),
+    bytes: body.length,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+  };
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") {
@@ -38,7 +59,7 @@ export default {
         return json({
           ok: true,
           service: "keiba-lab-api",
-          version: "0.2.0",
+          version: "0.3.0",
           missing: env.DB ? [] : ["D1 binding: DB"],
         });
       }
@@ -51,12 +72,12 @@ export default {
         const result = await env.DB
           .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
           .all();
+        return json({ ok: true, database: "connected", tables: result.results });
+      }
 
-        return json({
-          ok: true,
-          database: "connected",
-          tables: result.results,
-        });
+      if (url.pathname === "/v1/jra/test") {
+        const result = await testJraConnection();
+        return json({ source: "JRA", ...result }, result.ok ? 200 : 502);
       }
 
       if (url.pathname === "/v1/meetings/today") {
@@ -71,7 +92,6 @@ export default {
           )
           .bind(date)
           .all();
-
         return json({ ok: true, date, meetings: result.results });
       }
 
@@ -79,7 +99,6 @@ export default {
         const result = await env.DB
           .prepare("SELECT * FROM races ORDER BY race_date DESC, venue, race_no LIMIT 100")
           .all();
-
         return json({ ok: true, count: result.results.length, data: result.results });
       }
 
@@ -87,7 +106,6 @@ export default {
         const result = await env.DB
           .prepare("SELECT * FROM predictions ORDER BY id DESC LIMIT 100")
           .all();
-
         return json({ ok: true, count: result.results.length, data: result.results });
       }
 
@@ -95,40 +113,7 @@ export default {
         const result = await env.DB
           .prepare("SELECT * FROM validations ORDER BY id DESC LIMIT 100")
           .all();
-
         return json({ ok: true, count: result.results.length, data: result.results });
-      }
-
-      if (url.pathname === "/v1/test/insert") {
-        const date = tokyoDate();
-        const now = new Date().toISOString();
-
-        await env.DB
-          .prepare(
-            `INSERT OR REPLACE INTO races
-             (venue, race_date, race_no, surface, distance, going, source, fetched_at, raw_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          )
-          .bind(
-            "TEST",
-            date,
-            1,
-            "芝",
-            1200,
-            "良",
-            "manual-test",
-            now,
-            JSON.stringify({ test: true, message: "keiba-lab D1 write test" })
-          )
-          .run();
-
-        return json({
-          ok: true,
-          message: "D1 write OK",
-          venue: "TEST",
-          race_date: date,
-          race_no: 1,
-        });
       }
 
       return json({ ok: false, error: "Not Found" }, 404);
@@ -136,38 +121,15 @@ export default {
       return json({ ok: false, error: String(error) }, 500);
     }
   },
-};
+
   async scheduled(event, env, ctx) {
     ctx.waitUntil(
       (async () => {
         try {
-          const now = new Date().toISOString();
-
-          await env.DB.prepare(
-            `INSERT OR REPLACE INTO races
-             (venue, race_date, race_no, surface, distance, track_condition, source, fetched_at, raw_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          )
-            .bind(
-              "CRON_TEST",
-              tokyoDate(),
-              1,
-              "芝",
-              1200,
-              "自動",
-              "cron-test",
-              now,
-              JSON.stringify({
-                test: true,
-                trigger: "scheduled",
-                timestamp: now,
-              })
-            )
-            .run();
-
-          console.log("Cron D1 write OK:", now);
+          const result = await testJraConnection();
+          console.log("JRA scheduled connectivity test", JSON.stringify(result));
         } catch (error) {
-          console.error("Cron D1 write failed:", error);
+          console.error("JRA scheduled connectivity failed", String(error));
         }
       })()
     );

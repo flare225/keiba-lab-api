@@ -137,3 +137,39 @@ export default {
     }
   },
 };
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(
+      (async () => {
+        try {
+          const now = new Date().toISOString();
+
+          await env.DB.prepare(
+            `INSERT OR REPLACE INTO races
+             (venue, race_date, race_no, surface, distance, track_condition, source, fetched_at, raw_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+            .bind(
+              "CRON_TEST",
+              tokyoDate(),
+              1,
+              "芝",
+              1200,
+              "自動",
+              "cron-test",
+              now,
+              JSON.stringify({
+                test: true,
+                trigger: "scheduled",
+                timestamp: now,
+              })
+            )
+            .run();
+
+          console.log("Cron D1 write OK:", now);
+        } catch (error) {
+          console.error("Cron D1 write failed:", error);
+        }
+      })()
+    );
+  },
+};

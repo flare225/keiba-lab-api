@@ -51,6 +51,31 @@ async function resolveStatusDate(db, requestedDate) {
   };
 }
 
+function buildGapDiagnostics(races) {
+  const byVenue = new Map();
+  for (const race of races) {
+    if (!byVenue.has(race.venue)) byVenue.set(race.venue, []);
+    byVenue.get(race.venue).push(Number(race.race_no));
+  }
+
+  const venueSummary = [];
+  const missingRaces = [];
+
+  for (const [venue, raceNos] of [...byVenue.entries()].sort((a, b) => a[0].localeCompare(b[0], "ja"))) {
+    const present = [...new Set(raceNos)].filter((n) => n >= 1 && n <= 12).sort((a, b) => a - b);
+    const missing = [];
+    for (let raceNo = 1; raceNo <= 12; raceNo++) {
+      if (!present.includes(raceNo)) {
+        missing.push(raceNo);
+        missingRaces.push({ venue, raceNo });
+      }
+    }
+    venueSummary.push({ venue, raceCount: present.length, presentRaceNos: present, missingRaceNos: missing });
+  }
+
+  return { venueSummary, missingRaces };
+}
+
 async function statusResponse(url, env) {
   try {
     const requestedDate = url.searchParams.get("date");
@@ -63,6 +88,7 @@ async function statusResponse(url, env) {
       .bind(resolved.date)
       .all();
 
+    const raceRows = races.results || [];
     const runners = await env.DB
       .prepare(
         "SELECT COUNT(*) AS count FROM jra_runners WHERE race_key IN (SELECT race_key FROM jra_races WHERE race_date=?)"
@@ -70,19 +96,22 @@ async function statusResponse(url, env) {
       .bind(resolved.date)
       .first();
 
+    const diagnostics = buildGapDiagnostics(raceRows);
+
     return json({
       ok: true,
       stage: "full-day-d1-status",
-      version: "1.1.1",
+      version: "1.1.2",
       requestedDate: requestedDate || tokyoDate(),
       date: resolved.date,
       fallbackToLatest: resolved.fallbackToLatest,
-      raceCount: races.results?.length || 0,
+      raceCount: raceRows.length,
       runnerCount: Number(runners?.count || 0),
-      races: races.results || [],
+      ...diagnostics,
+      races: raceRows,
     });
   } catch (error) {
-    return json({ ok: false, version: "1.1.1", error: String(error) }, 400);
+    return json({ ok: false, version: "1.1.2", error: String(error) }, 400);
   }
 }
 
@@ -94,8 +123,8 @@ export default {
       return json({
         ok: true,
         service: "keiba-lab-api",
-        version: "1.1.1",
-        phase: "date-aware full-day JRA status",
+        version: "1.1.2",
+        phase: "date-aware full-day JRA status + gap diagnostics",
         missing: env.DB ? [] : ["D1 binding: DB"],
       });
     }

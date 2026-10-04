@@ -22,7 +22,7 @@ function tokyoDate() {
 async function fetchHtml(url) {
   const response = await fetch(url, {
     headers: {
-      "user-agent": "keiba-lab/1.0.0 (+official JRA D1 ingestion)",
+      "user-agent": "keiba-lab/1.0.1 (+official JRA D1 ingestion)",
       accept: "text/html,*/*;q=0.8",
     },
     redirect: "follow",
@@ -40,7 +40,6 @@ async function fetchHtml(url) {
     ok: response.ok,
     status: response.status,
     url: response.url,
-    contentType: response.headers.get("content-type"),
     bytes: buffer.byteLength,
     body,
   };
@@ -78,21 +77,10 @@ function extractLinks(html, base) {
 }
 
 const BAD = new Set([
-  "ニュース",
-  "企業情報",
-  "社会貢献活動",
-  "レース情報",
-  "新規会員登録",
-  "ホーム",
-  "競馬メニュー",
-  "レース成績データ",
-  "重賞レース一覧",
-  "スマートフォン",
-  "サイトマップ",
-  "リンク",
-  "ご利用に際して",
-  "ウェブアクセシビリティについて",
-  "成績データ",
+  "ニュース", "企業情報", "社会貢献活動", "レース情報", "新規会員登録",
+  "ホーム", "競馬メニュー", "レース成績データ", "重賞レース一覧",
+  "スマートフォン", "サイトマップ", "リンク", "ご利用に際して",
+  "ウェブアクセシビリティについて", "成績データ",
 ]);
 
 function cleanName(value) {
@@ -115,7 +103,7 @@ function cellBlocks(row) {
   }));
 }
 
-function firstAnchorTexts(html) {
+function anchorTexts(html) {
   return [...html.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/gi)]
     .map((m) => cleanName(m[1]))
     .filter(Boolean);
@@ -138,7 +126,6 @@ function extractOfficialRunners(html) {
 
     let horseCell = null;
     let profileCell = null;
-
     for (const cell of cells) {
       if (!horseCell && /父：/.test(cell.text) && /母：/.test(cell.text)) horseCell = cell;
       if (
@@ -149,10 +136,9 @@ function extractOfficialRunners(html) {
         profileCell = cell;
       }
     }
-
     if (!horseCell || !profileCell) continue;
 
-    const horseAnchors = firstAnchorTexts(horseCell.html);
+    const horseAnchors = anchorTexts(horseCell.html);
     const name = horseAnchors.find(plausibleHorseName) || null;
     if (!name || seen.has(name)) continue;
 
@@ -164,17 +150,13 @@ function extractOfficialRunners(html) {
       }
     }
 
-    const profileAnchors = firstAnchorTexts(profileCell.html)
+    const profileAnchors = anchorTexts(profileCell.html)
       .filter((value) => value !== name && !plausibleHorseName(value));
-    const allAnchors = firstAnchorTexts(row);
+    const allAnchors = anchorTexts(row);
     const jockey =
       profileAnchors[0] ||
       allAnchors.find(
-        (value) =>
-          value !== name &&
-          value !== trainer &&
-          /[一-龠々]/.test(value) &&
-          value.length <= 12
+        (value) => value !== name && value !== trainer && /[一-龠々]/.test(value) && value.length <= 12
       ) ||
       null;
 
@@ -182,7 +164,6 @@ function extractOfficialRunners(html) {
       .map((cell) => cell.text)
       .filter((value) => /^(?:[1-9]|1[0-8])$/.test(value))
       .map(Number);
-
     const horseNo = numberCells.length ? numberCells[numberCells.length - 1] : null;
 
     const profileText = profileCell.text;
@@ -202,7 +183,6 @@ function extractOfficialRunners(html) {
       assignedWeight,
       jockey,
       trainer,
-      rowText: rowText.slice(0, 260),
     });
     seen.add(name);
   }
@@ -255,9 +235,7 @@ function findRaceName(html) {
   for (const heading of html.matchAll(/<h[12][^>]*>([\s\S]*?)<\/h[12]>/gi)) {
     const value = text(heading[1]);
     if (
-      value &&
-      value !== "出馬表" &&
-      !/関連メニュー|検索/.test(value) &&
+      value && value !== "出馬表" && !/関連メニュー|検索/.test(value) &&
       value.length <= 50 &&
       /毎日王冠|京都大賞典|ステークス|賞|未勝利|新馬|クラス|オープン/.test(value)
     ) {
@@ -288,7 +266,6 @@ function courseFromContext(allText, raceName) {
     }
     return { surface: match[1] || null, distance: Number(match[2]) || null };
   }
-
   return { surface: null, distance: null };
 }
 
@@ -336,7 +313,7 @@ async function officialProbe() {
     return {
       ok: false,
       stage: "official-racecard",
-      version: "1.0.0",
+      version: "1.0.1",
       date,
       error: "No official seed configured for this date",
     };
@@ -344,7 +321,6 @@ async function officialProbe() {
 
   const races = [];
   const sameDayLinks = new Set();
-
   for (const seed of seeds) {
     try {
       const page = await fetchHtml(seed.url);
@@ -352,16 +328,11 @@ async function officialProbe() {
         races.push({ label: seed.label, sourceUrl: seed.url, error: `HTTP ${page.status}` });
         continue;
       }
-
       for (const url of extractLinks(page.body, page.url)) {
-        if (
-          url.includes("/JRADB/accessD.html") &&
-          url.includes(date.replaceAll("-", ""))
-        ) {
+        if (url.includes("/JRADB/accessD.html") && url.includes(date.replaceAll("-", ""))) {
           sameDayLinks.add(url);
         }
       }
-
       races.push({ label: seed.label, ...parseOfficialRacecard(page, seed) });
     } catch (error) {
       races.push({ label: seed.label, sourceUrl: seed.url, error: String(error) });
@@ -369,11 +340,10 @@ async function officialProbe() {
   }
 
   const totalRunners = races.reduce((count, race) => count + (race.runnerCount || 0), 0);
-
   return {
     ok: races.some((race) => race.runnerCount > 0),
     stage: "official-runner-parse",
-    version: "1.0.0",
+    version: "1.0.1",
     date,
     seedCount: seeds.length,
     discoveredSameDayRacecardLinks: sameDayLinks.size,
@@ -383,8 +353,8 @@ async function officialProbe() {
 }
 
 async function ensureJraTables(db) {
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS jra_races (
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS jra_races (
       race_key TEXT PRIMARY KEY,
       race_date TEXT NOT NULL,
       venue TEXT NOT NULL,
@@ -394,11 +364,9 @@ async function ensureJraTables(db) {
       distance INTEGER,
       source_url TEXT,
       runner_count INTEGER NOT NULL DEFAULT 0,
-      fetched_at TEXT NOT NULL,
-      UNIQUE(race_date, venue, race_no)
-    );
-
-    CREATE TABLE IF NOT EXISTS jra_runners (
+      fetched_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS jra_runners (
       race_key TEXT NOT NULL,
       horse_no INTEGER NOT NULL,
       frame_no INTEGER,
@@ -410,22 +378,22 @@ async function ensureJraTables(db) {
       trainer TEXT,
       fetched_at TEXT NOT NULL,
       PRIMARY KEY (race_key, horse_no)
-    );
+    )`,
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_jra_races_unique ON jra_races(race_date, venue, race_no)",
+    "CREATE INDEX IF NOT EXISTS idx_jra_races_date ON jra_races(race_date, venue, race_no)",
+    "CREATE INDEX IF NOT EXISTS idx_jra_runners_race ON jra_runners(race_key, horse_no)",
+  ];
 
-    CREATE INDEX IF NOT EXISTS idx_jra_races_date ON jra_races(race_date, venue, race_no);
-    CREATE INDEX IF NOT EXISTS idx_jra_runners_race ON jra_runners(race_key, horse_no);
-  `);
+  for (const statement of statements) {
+    await db.prepare(statement).run();
+  }
 }
 
 function validRaceForPersistence(race) {
   return (
-    race &&
-    race.venue &&
-    Number.isInteger(race.raceNo) &&
-    race.raceNo >= 1 &&
-    race.raceNo <= 12 &&
-    Array.isArray(race.runners) &&
-    race.runners.length > 0 &&
+    race && race.venue && Number.isInteger(race.raceNo) &&
+    race.raceNo >= 1 && race.raceNo <= 12 &&
+    Array.isArray(race.runners) && race.runners.length > 0 &&
     race.runners.every((runner) => runner.horseNo && runner.name)
   );
 }
@@ -451,57 +419,35 @@ async function persistOfficialProbe(db, probe) {
 
     const raceKey = `${probe.date}:${race.venue}:${race.raceNo}`;
 
-    await db
-      .prepare(`
-        INSERT INTO jra_races (
-          race_key, race_date, venue, race_no, race_name, surface,
-          distance, source_url, runner_count, fetched_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(race_key) DO UPDATE SET
-          race_name = excluded.race_name,
-          surface = excluded.surface,
-          distance = excluded.distance,
-          source_url = excluded.source_url,
-          runner_count = excluded.runner_count,
-          fetched_at = excluded.fetched_at
-      `)
-      .bind(
-        raceKey,
-        probe.date,
-        race.venue,
-        race.raceNo,
-        race.raceName,
-        race.surface,
-        race.distance,
-        race.sourceUrl,
-        race.runnerCount,
-        fetchedAt
-      )
-      .run();
+    await db.prepare(`
+      INSERT INTO jra_races (
+        race_key, race_date, venue, race_no, race_name, surface,
+        distance, source_url, runner_count, fetched_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(race_key) DO UPDATE SET
+        race_name = excluded.race_name,
+        surface = excluded.surface,
+        distance = excluded.distance,
+        source_url = excluded.source_url,
+        runner_count = excluded.runner_count,
+        fetched_at = excluded.fetched_at
+    `).bind(
+      raceKey, probe.date, race.venue, race.raceNo, race.raceName,
+      race.surface, race.distance, race.sourceUrl, race.runnerCount, fetchedAt
+    ).run();
 
     await db.prepare("DELETE FROM jra_runners WHERE race_key = ?").bind(raceKey).run();
 
     for (const runner of race.runners) {
-      await db
-        .prepare(`
-          INSERT INTO jra_runners (
-            race_key, horse_no, frame_no, horse_name, sex, age,
-            assigned_weight, jockey, trainer, fetched_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `)
-        .bind(
-          raceKey,
-          runner.horseNo,
-          runner.frameNo,
-          runner.name,
-          runner.sex,
-          runner.age,
-          runner.assignedWeight,
-          runner.jockey,
-          runner.trainer,
-          fetchedAt
-        )
-        .run();
+      await db.prepare(`
+        INSERT INTO jra_runners (
+          race_key, horse_no, frame_no, horse_name, sex, age,
+          assigned_weight, jockey, trainer, fetched_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        raceKey, runner.horseNo, runner.frameNo, runner.name, runner.sex,
+        runner.age, runner.assignedWeight, runner.jockey, runner.trainer, fetchedAt
+      ).run();
       persistedRunners += 1;
     }
 
@@ -519,7 +465,7 @@ async function persistOfficialProbe(db, probe) {
   return {
     ok: persistedRaces > 0,
     stage: "d1-persisted",
-    version: "1.0.0",
+    version: "1.0.1",
     date: probe.date,
     persistedRaces,
     persistedRunners,
@@ -528,11 +474,9 @@ async function persistOfficialProbe(db, probe) {
 }
 
 async function inspectSchema(db) {
-  const tableResult = await db
-    .prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name"
-    )
-    .all();
+  const tableResult = await db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name"
+  ).all();
 
   const tables = [];
   for (const row of tableResult.results || []) {
@@ -563,20 +507,16 @@ export default {
         return json({
           ok: true,
           service: "keiba-lab-api",
-          version: "1.0.0",
+          version: "1.0.1",
           phase: "official JRA -> D1 ingestion",
           missing: env.DB ? [] : ["D1 binding: DB"],
         });
       }
 
-      if (!env.DB) {
-        return json({ ok: false, error: "D1 binding DB is not configured" }, 500);
-      }
+      if (!env.DB) return json({ ok: false, error: "D1 binding DB is not configured" }, 500);
 
       if (url.pathname === "/health" || url.pathname === "/api/health") {
-        const result = await env.DB
-          .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-          .all();
+        const result = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all();
         return json({ ok: true, database: "connected", tables: result.results });
       }
 
@@ -589,21 +529,10 @@ export default {
         const seeds = officialSeeds(tokyoDate());
         if (!seeds.length) return json({ ok: false, error: "No seed for today" }, 404);
         const result = await fetchHtml(seeds[0].url);
-        return json(
-          {
-            source: "JRA JRADB",
-            ok: result.ok,
-            status: result.status,
-            bytes: result.bytes,
-            url: result.url,
-          },
-          result.ok ? 200 : 502
-        );
+        return json({ source: "JRA JRADB", ok: result.ok, status: result.status, bytes: result.bytes, url: result.url }, result.ok ? 200 : 502);
       }
 
-      if (url.pathname === "/v1/jra/discover") {
-        return json(await officialProbe());
-      }
+      if (url.pathname === "/v1/jra/discover") return json(await officialProbe());
 
       if (url.pathname === "/v1/jra/ingest") {
         const probe = await officialProbe();
@@ -620,22 +549,16 @@ export default {
       if (url.pathname === "/v1/jra/status") {
         await ensureJraTables(env.DB);
         const date = tokyoDate();
-        const races = await env.DB
-          .prepare(
-            "SELECT race_key, race_date, venue, race_no, race_name, surface, distance, runner_count, fetched_at FROM jra_races WHERE race_date = ? ORDER BY venue, race_no"
-          )
-          .bind(date)
-          .all();
-        const runners = await env.DB
-          .prepare(
-            "SELECT COUNT(*) AS count FROM jra_runners WHERE race_key IN (SELECT race_key FROM jra_races WHERE race_date = ?)"
-          )
-          .bind(date)
-          .first();
+        const races = await env.DB.prepare(
+          "SELECT race_key, race_date, venue, race_no, race_name, surface, distance, runner_count, fetched_at FROM jra_races WHERE race_date = ? ORDER BY venue, race_no"
+        ).bind(date).all();
+        const runners = await env.DB.prepare(
+          "SELECT COUNT(*) AS count FROM jra_runners WHERE race_key IN (SELECT race_key FROM jra_races WHERE race_date = ?)"
+        ).bind(date).first();
         return json({
           ok: true,
           stage: "d1-status",
-          version: "1.0.0",
+          version: "1.0.1",
           date,
           raceCount: races.results.length,
           runnerCount: runners?.count || 0,
@@ -645,58 +568,38 @@ export default {
 
       if (url.pathname === "/api/jra/races") {
         await ensureJraTables(env.DB);
-        const result = await env.DB
-          .prepare(
-            "SELECT * FROM jra_races ORDER BY race_date DESC, venue, race_no LIMIT 100"
-          )
-          .all();
+        const result = await env.DB.prepare("SELECT * FROM jra_races ORDER BY race_date DESC, venue, race_no LIMIT 100").all();
         return json({ ok: true, count: result.results.length, data: result.results });
       }
 
       if (url.pathname === "/api/jra/runners") {
         await ensureJraTables(env.DB);
         const raceKey = url.searchParams.get("race_key");
-        if (!raceKey) {
-          return json({ ok: false, error: "race_key is required" }, 400);
-        }
-        const result = await env.DB
-          .prepare(
-            "SELECT * FROM jra_runners WHERE race_key = ? ORDER BY horse_no"
-          )
-          .bind(raceKey)
-          .all();
+        if (!raceKey) return json({ ok: false, error: "race_key is required" }, 400);
+        const result = await env.DB.prepare("SELECT * FROM jra_runners WHERE race_key = ? ORDER BY horse_no").bind(raceKey).all();
         return json({ ok: true, raceKey, count: result.results.length, data: result.results });
       }
 
       if (url.pathname === "/v1/meetings/today") {
         const date = tokyoDate();
-        const result = await env.DB
-          .prepare(
-            "SELECT venue, race_date, COUNT(*) AS race_count FROM races WHERE race_date = ? GROUP BY venue, race_date ORDER BY venue"
-          )
-          .bind(date)
-          .all();
+        const result = await env.DB.prepare(
+          "SELECT venue, race_date, COUNT(*) AS race_count FROM races WHERE race_date = ? GROUP BY venue, race_date ORDER BY venue"
+        ).bind(date).all();
         return json({ ok: true, date, meetings: result.results });
       }
 
       if (url.pathname === "/api/races") {
-        const result = await env.DB
-          .prepare("SELECT * FROM races ORDER BY race_date DESC, venue, race_no LIMIT 100")
-          .all();
+        const result = await env.DB.prepare("SELECT * FROM races ORDER BY race_date DESC, venue, race_no LIMIT 100").all();
         return json({ ok: true, count: result.results.length, data: result.results });
       }
 
       if (url.pathname === "/api/predictions") {
-        const result = await env.DB
-          .prepare("SELECT * FROM predictions ORDER BY id DESC LIMIT 100")
-          .all();
+        const result = await env.DB.prepare("SELECT * FROM predictions ORDER BY id DESC LIMIT 100").all();
         return json({ ok: true, count: result.results.length, data: result.results });
       }
 
       if (url.pathname === "/api/validations") {
-        const result = await env.DB
-          .prepare("SELECT * FROM validations ORDER BY id DESC LIMIT 100")
-          .all();
+        const result = await env.DB.prepare("SELECT * FROM validations ORDER BY id DESC LIMIT 100").all();
         return json({ ok: true, count: result.results.length, data: result.results });
       }
 
@@ -707,20 +610,18 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(
-      (async () => {
-        try {
-          const probe = await officialProbe();
-          if (!probe.ok) {
-            console.error("JRA scheduled probe failed", JSON.stringify(probe));
-            return;
-          }
-          const persisted = await persistOfficialProbe(env.DB, probe);
-          console.log("JRA scheduled persistence", JSON.stringify(persisted));
-        } catch (error) {
-          console.error("JRA scheduled persistence failed", String(error));
+    ctx.waitUntil((async () => {
+      try {
+        const probe = await officialProbe();
+        if (!probe.ok) {
+          console.error("JRA scheduled probe failed", JSON.stringify(probe));
+          return;
         }
-      })()
-    );
+        const persisted = await persistOfficialProbe(env.DB, probe);
+        console.log("JRA scheduled persistence", JSON.stringify(persisted));
+      } catch (error) {
+        console.error("JRA scheduled persistence failed", String(error));
+      }
+    })());
   },
 };

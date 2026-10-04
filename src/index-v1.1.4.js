@@ -33,7 +33,7 @@ const VENUE_BY_CODE = {
 async function fetchHtml(url) {
   const response = await fetch(url, {
     headers: {
-      "user-agent": "keiba-lab/1.1.4 (+exact JRADB repair)",
+      "user-agent": "keiba-lab/1.1.5 (+robust JRADB repair)",
       accept: "text/html,*/*;q=0.8",
     },
     redirect: "follow",
@@ -137,7 +137,6 @@ async function findExactRacecardUrl(rows, date, venue, raceNo) {
     } catch {}
   }
 
-  // Historical safety fallback for the known 2026-10-04 Tokyo 5R hole.
   if (date === "2026-10-04" && venue === "東京" && raceNo === 5) {
     return "https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde1005202604020520261004%2F26";
   }
@@ -197,8 +196,19 @@ function extractRunners(html) {
     const profileAnchors = anchorTexts(profileCell.html).filter((v) => v !== name && !plausibleHorseName(v));
     const allAnchors = anchorTexts(row);
     const jockey = profileAnchors[0] || allAnchors.find((v) => v !== name && v !== trainer && /[一-龠々]/.test(v) && v.length <= 12) || null;
-    const numberCells = cells.map((c) => c.text).filter((v) => /^(?:[1-9]|1[0-8])$/.test(v)).map(Number);
-    const horseNo = numberCells.length ? numberCells[numberCells.length - 1] : null;
+
+    const numberCells = [];
+    for (const cell of cells) {
+      const exact = cell.text.match(/^(?:馬番\s*)?([1-9]|1[0-8])(?:\s*番)?$/);
+      if (exact) numberCells.push(Number(exact[1]));
+    }
+    let horseNo = numberCells.length ? numberCells[numberCells.length - 1] : null;
+
+    if (!horseNo) {
+      const leading = rowText.match(/^\s*(?:[1-8]\s+)?([1-9]|1[0-8])\s+/);
+      if (leading) horseNo = Number(leading[1]);
+    }
+
     const profileText = profileCell.text;
     const sexAgeIndex = profileText.search(/(牡|牝|せん)\s*[2-9]/);
     const weightPart = sexAgeIndex >= 0 ? profileText.slice(sexAgeIndex, sexAgeIndex + 80) : profileText;
@@ -207,6 +217,24 @@ function extractRunners(html) {
     runners.push({ horseNo, frameNo: null, name, sex: sexAge[1], age: Number(sexAge[2]), assignedWeight, jockey, trainer });
     seen.add(name);
   }
+  return runners;
+}
+
+function normalizeHorseNumbers(runners) {
+  const total = runners.length;
+  if (!total || total > 18) return runners;
+
+  const sequenceCompatible = runners.every((runner, index) => {
+    return !runner.horseNo || runner.horseNo === index + 1;
+  });
+
+  if (sequenceCompatible) {
+    return runners.map((runner, index) => ({
+      ...runner,
+      horseNo: runner.horseNo || index + 1,
+    }));
+  }
+
   return runners;
 }
 
@@ -264,7 +292,7 @@ function parseRace(page, date, venue, raceNo) {
   const allText = text(page.body);
   const raceName = findRaceName(page.body);
   const course = courseFromContext(allText, raceName);
-  const rawRunners = extractRunners(page.body);
+  const rawRunners = normalizeHorseNumbers(extractRunners(page.body));
   const runners = rawRunners.map((runner) => ({ ...runner, frameNo: deriveFrameNo(runner.horseNo, rawRunners.length) }));
   return {
     raceDate: date, venue, raceNo, raceName,
@@ -282,7 +310,7 @@ async function repairMissingRaces(db, date) {
   const rows = raceResult.results || [];
   const missingRaces = buildGapDiagnostics(rows);
   if (!missingRaces.length) {
-    return { ok: true, stage: "missing-races-repaired", version: "1.1.4", date, attempted: 0, repaired: 0, failed: 0, results: [] };
+    return { ok: true, stage: "missing-races-repaired", version: "1.1.5", date, attempted: 0, repaired: 0, failed: 0, results: [] };
   }
 
   const results = [];
@@ -300,8 +328,17 @@ async function repairMissingRaces(db, date) {
         continue;
       }
       const race = parseRace(page, date, missing.venue, missing.raceNo);
-      if (!race.runnerCount || race.runners.some((runner) => !runner.horseNo || !runner.name)) {
-        results.push({ ...missing, status: "failed", reason: "runner parse validation failed", targetUrl, runnerCount: race.runnerCount });
+      const invalidRunners = race.runners.filter((runner) => !runner.horseNo || !runner.name);
+      if (!race.runnerCount || invalidRunners.length) {
+        results.push({
+          ...missing,
+          status: "failed",
+          reason: "runner parse validation failed",
+          targetUrl,
+          runnerCount: race.runnerCount,
+          horseNumbers: race.runners.map((runner) => runner.horseNo),
+          invalidRunners: invalidRunners.map((runner) => ({ horseNo: runner.horseNo, name: runner.name })),
+        });
         continue;
       }
 
@@ -329,7 +366,7 @@ async function repairMissingRaces(db, date) {
   return {
     ok: repaired === missingRaces.length,
     stage: "missing-races-repaired",
-    version: "1.1.4",
+    version: "1.1.5",
     date,
     attempted: missingRaces.length,
     repaired,
@@ -345,8 +382,8 @@ export default {
       return json({
         ok: true,
         service: "keiba-lab-api",
-        version: "1.1.4",
-        phase: "exact-link missing-race repair",
+        version: "1.1.5",
+        phase: "robust horse-number repair",
         missing: env.DB ? [] : ["D1 binding: DB"],
       });
     }
@@ -357,7 +394,7 @@ export default {
         const result = await repairMissingRaces(env.DB, date);
         return json(result, result.ok ? 200 : 502);
       } catch (error) {
-        return json({ ok: false, version: "1.1.4", error: String(error) }, 400);
+        return json({ ok: false, version: "1.1.5", error: String(error) }, 400);
       }
     }
     return app.fetch(request, env, ctx);

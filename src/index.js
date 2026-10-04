@@ -1,4 +1,4 @@
-function json(data, status = 200) { 
+function json(data, status = 200) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: {
@@ -23,7 +23,7 @@ async function testJraConnection() {
   const startedAt = new Date().toISOString();
   const response = await fetch("https://www.jra.go.jp/", {
     headers: {
-      "user-agent": "keiba-lab/0.3 (+JRA connectivity test)",
+      "user-agent": "keiba-lab/0.4.1 (+JRA connectivity test)",
       accept: "text/html,*/*;q=0.8",
     },
     redirect: "follow",
@@ -38,6 +38,32 @@ async function testJraConnection() {
     startedAt,
     finishedAt: new Date().toISOString(),
   };
+}
+
+async function inspectSchema(db) {
+  const tablesResult = await db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name")
+    .all();
+
+  const tables = [];
+  for (const row of tablesResult.results || []) {
+    const tableName = String(row.name);
+    if (!/^[A-Za-z0-9_]+$/.test(tableName)) continue;
+
+    const columnsResult = await db.prepare(`PRAGMA table_info(${tableName})`).all();
+    tables.push({
+      name: tableName,
+      columns: (columnsResult.results || []).map((column) => ({
+        name: column.name,
+        type: column.type,
+        notnull: Boolean(column.notnull),
+        defaultValue: column.dflt_value,
+        primaryKey: Boolean(column.pk),
+      })),
+    });
+  }
+
+  return tables;
 }
 
 export default {
@@ -59,7 +85,7 @@ export default {
         return json({
           ok: true,
           service: "keiba-lab-api",
-          version: "0.3.1",
+          version: "0.4.1",
           missing: env.DB ? [] : ["D1 binding: DB"],
         });
       }
@@ -73,6 +99,11 @@ export default {
           .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
           .all();
         return json({ ok: true, database: "connected", tables: result.results });
+      }
+
+      if (url.pathname === "/v1/schema") {
+        const tables = await inspectSchema(env.DB);
+        return json({ ok: true, database: "connected", tableCount: tables.length, tables });
       }
 
       if (url.pathname === "/v1/jra/test") {

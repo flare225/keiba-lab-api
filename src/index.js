@@ -59,7 +59,7 @@ export default {
         return json({
           ok: true,
           service: "keiba-lab-api",
-          version: "0.3.0",
+          version: "0.3.1",
           missing: env.DB ? [] : ["D1 binding: DB"],
         });
       }

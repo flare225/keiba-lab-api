@@ -1,6 +1,6 @@
 {
   "name": "keiba-lab-api",
-  "main": "src/index-v1.3.3.js",
+  "main": "src/index-v1.4.0.js",
   "compatibility_date": "2026-10-03",
   "d1_databases": [
     {

@@ -10,3 +10,5 @@ export function legacySnapshotEligible(rows=[],runnerCount,cutoff){
 export function normalizeReplayRanking(rows=[],scoreKey='evidenceScore'){
  return rows.slice().sort((a,b)=>Number(b[scoreKey]??-1)-Number(a[scoreKey]??-1)||Number(a.horseNo)-Number(b.horseNo)).map((x,i)=>({...x,rank:i+1,mark:markForRank(i+1)}));
 }
+
+export function hasCompleteReplayScores(rows=[]){return rows.length>0&&rows.every(x=>x.evidenceScore!=null&&x.evidenceScore!==''&&Number.isFinite(Number(x.evidenceScore)))}

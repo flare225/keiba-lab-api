@@ -1,0 +1,18 @@
+name: Mainichi Okan pre-race evidence audit
+on:
+  push:
+    branches: [audit/mainichi-okan-pre-race-evidence]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query immutable LABO prediction
+        run: |
+          set -euo pipefail
+          base='https://keiba-lab-api.sekai-no-bancyou.workers.dev'
+          echo '=== LABO PREDICTION ==='
+          curl -fsS --get "$base/v1/lab/labo-prediction" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11' | jq .
+          echo '=== HISTORY RACE ==='
+          curl -fsS --get "$base/v1/lab/history/race" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11' | jq '{ok,version,race,laboPrediction,markRevisions,guardrails}'

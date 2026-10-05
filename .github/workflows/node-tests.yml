@@ -1,0 +1,27 @@
+name: Node tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: ''
+      - name: Syntax check active Worker
+        run: node --check src/index-v3.8.2.js
+      - name: Run test suite
+        run: node --test tests/*.test.mjs

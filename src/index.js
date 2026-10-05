@@ -362,7 +362,7 @@ async function persistFullDay(db, probe) {
     saved.push({ raceKey, venue: race.venue, raceNo: race.raceNo, raceName: race.raceName, runnerCount: race.runnerCount, status: "saved" });
   }
 
-  return { ok: persistedRaces > 0, stage: "full-day-d1-persisted", version: "1.1.0", date: probe.date, persistedRaces, persistedRunners, saved };
+  return { ok: persistedRaces > 0, stage: "full-day-d1-persisted", version: "1.1.0", date: probe.date, persistedRaces, persistedRunners, saved, fetchedAt };
 }
 
 async function inspectSchema(db) {

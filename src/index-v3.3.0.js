@@ -1,4 +1,6 @@
 import app from "./index-v3.2.0.js";
+import {requireLockEvidence} from "./card-evidence.js";
+import {verifyStoredSeal,writeAtomicSeal,ensureSealGuards,ensureCardSealGuard} from "./prospective-seal-store.js";
 
 function json(data,status=200){return new Response(JSON.stringify(data,null,2),{status,headers:{"content-type":"application/json; charset=UTF-8","access-control-allow-origin":"*"}})}
 function validDate(v){return /^\d{4}-\d{2}-\d{2}$/.test(v||"")}
@@ -60,8 +62,9 @@ async function step7ProspectiveSeal(request,env,ctx){
   const u=new URL(request.url),date=u.searchParams.get("date"),venue=u.searchParams.get("venue"),raceNo=Number(u.searchParams.get("race_no")),track=u.searchParams.get("track")||"良";
   if(!validDate(date)||!venue||!Number.isInteger(raceNo)||raceNo<1||raceNo>12)throw new Error("date=YYYY-MM-DD, venue and race_no=1-12 are required");
   await ensureTables(env.DB);
+  await ensureSealGuards(env.DB);
   const {race,runners}=await loadRace(env,date,venue,raceNo);
-  if(runners.length!==Number(race.runner_count||runners.length))throw new Error(`runner card coverage incomplete: ${runners.length}/${race.runner_count}`);
+  if(!runners.length||runners.length!==Number(race.runner_count))throw new Error(`runner card coverage incomplete: ${runners.length}/${race.runner_count}`);
 
   const today=jstDate();
   if(date<today)return{
@@ -80,14 +83,15 @@ async function step7ProspectiveSeal(request,env,ctx){
   const modelVersion="3.3.0-prospective";
   const existing=await env.DB.prepare(`SELECT l.snapshot_json,l.seal_kind,l.sealed_at,s.snapshot_sha256,s.quality_json,s.future_day_lock FROM lab_model_locks l LEFT JOIN lab_prospective_seals s ON s.race_key=l.race_key AND s.model_version=l.model_version AND s.track_condition=l.track_condition WHERE l.race_key=? AND l.model_version=? AND l.track_condition=?`).bind(race.race_key,modelVersion,track).first();
   if(existing){
-    const snap=JSON.parse(existing.snapshot_json||"{}");
+    const snap=await verifyStoredSeal(existing);
     return{ok:true,stage:"full-boost-7-prospective-seal",version:"3.3.0",step:7,idempotent:true,immutable:true,race:snap.race,seal:{modelVersion,sealKind:existing.seal_kind,sealedAt:existing.sealed_at,snapshotSha256:existing.snapshot_sha256,futureDayLock:Boolean(existing.future_day_lock)},quality:JSON.parse(existing.quality_json||"{}"),top5:snap.top5||[],next:"Do not reseal. After the race, ingest official outcomes and validate this exact hash-locked snapshot."};
   }
 
+  const cardEvidence=await requireLockEvidence(env.DB,race,runners);
   const overlay=await invoke(u.origin,"/v1/lab/workout-overlay",{date,venue,race_no:raceNo,track},env,ctx);
   if(overlay.status>=400||overlay.data?.ok===false)throw new Error(`prediction pipeline failed: ${overlay.data?.error||overlay.status}`);
   const sourceRows=overlay.data?.runners||[];
-  if(sourceRows.length!==runners.length)throw new Error(`prediction coverage incomplete: ${sourceRows.length}/${runners.length}`);
+  if(sourceRows.length!==runners.length||new Set(sourceRows.map(x=>Number(x.horseNo))).size!==runners.length||!sourceRows.every(x=>runners.some(r=>Number(r.horse_no)===Number(x.horseNo)&&r.horse_name===x.horseName)))throw new Error(`prediction coverage incomplete: ${sourceRows.length}/${runners.length}`);
 
   const predictions=sourceRows.map(r=>({
     horseNo:Number(r.horseNo),frameNo:Number(r.frameNo),horseName:r.horseName,rank:Number(r.rank),score:Number(r.confidenceAware100Points),
@@ -119,15 +123,25 @@ async function step7ProspectiveSeal(request,env,ctx){
   const weights={basicAbilityResults:25,recentPerformanceDevelopment:20,paceStyleFit:20,courseDistanceFit:15,ground:10,conditionPrep:10};
   const sealedAt=new Date().toISOString();
   const snapshot={
-    schemaVersion:"3.3.0",race:{raceKey:race.race_key,date:race.race_date,venue:race.venue,raceNo:race.race_no,raceName:race.race_name,surface:race.surface,distance:race.distance,runnerCount:runners.length,trackCondition:track},
+    schemaVersion:"3.3.0",cardEvidence, race:{raceKey:race.race_key,date:race.race_date,venue:race.venue,raceNo:race.race_no,raceName:race.race_name,surface:race.surface,distance:race.distance,runnerCount:runners.length,trackCondition:track},
     sealKind,sourcePipeline:"repaired-history-parser + confidence-aware overlay",weights,quality,
     top5:predictions.slice(0,5),runners:predictions
   };
   const snapshotJson=JSON.stringify(snapshot);
   const hash=await sha256Hex(snapshotJson);
 
-  await env.DB.prepare(`INSERT INTO lab_model_locks (race_key,model_version,track_condition,seal_kind,weights_json,snapshot_json,sealed_at) VALUES (?,?,?,?,?,?,?)`).bind(race.race_key,modelVersion,track,sealKind,JSON.stringify(weights),snapshotJson,sealedAt).run();
-  await env.DB.prepare(`INSERT INTO lab_prospective_seals (race_key,race_date,model_version,track_condition,seal_kind,snapshot_sha256,runner_count,outcome_count_at_seal,future_day_lock,quality_json,sealed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`).bind(race.race_key,date,modelVersion,track,sealKind,hash,runners.length,0,futureDayLock?1:0,JSON.stringify(quality),sealedAt).run();
+  // Recheck exact card identity after the prediction pipeline, then commit both seal rows together.
+  await requireLockEvidence(env.DB,race,runners);
+  await ensureCardSealGuard(env.DB);
+  try{
+    await writeAtomicSeal(env.DB,{raceKey:race.race_key,date,modelVersion,track,sealKind,weights,snapshotJson,hash,runnerCount:runners.length,futureDayLock,quality,sealedAt});
+  }catch(error){
+    // A concurrent caller may have won the unique-key insert. Verify and return that winner.
+    const winner=await env.DB.prepare(`SELECT l.snapshot_json,l.seal_kind,l.sealed_at,s.snapshot_sha256,s.quality_json,s.future_day_lock FROM lab_model_locks l JOIN lab_prospective_seals s ON s.race_key=l.race_key AND s.model_version=l.model_version AND s.track_condition=l.track_condition WHERE l.race_key=? AND l.model_version=? AND l.track_condition=?`).bind(race.race_key,modelVersion,track).first();
+    if(!winner)throw error;
+    const snap=await verifyStoredSeal(winner);
+    return{ok:true,stage:"full-boost-7-prospective-seal",version:"3.3.0",step:7,idempotent:true,immutable:true,race:snap.race,seal:{modelVersion,sealKind:winner.seal_kind,sealedAt:winner.sealed_at,snapshotSha256:winner.snapshot_sha256,futureDayLock:Boolean(winner.future_day_lock)},quality:JSON.parse(winner.quality_json),top5:snap.top5||[]};
+  }
 
   return{
     ok:true,stage:"full-boost-7-prospective-seal",version:"3.3.0",step:7,

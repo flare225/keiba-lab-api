@@ -1,0 +1,2 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {courseNearHeading} from '../src/race-course-parser-v3.26.0.js';
+test('uses course beside target heading',()=>{const html='<div>別レース コース：1600メートル（ダート・左）</div><h2>第77回 毎日王冠</h2><div>コース：1800メートル（芝・左）</div>';assert.equal(courseNearHeading(html,'第77回 毎日王冠').distance,1800);assert.equal(courseNearHeading(html,'第77回 毎日王冠').surface,'芝')});

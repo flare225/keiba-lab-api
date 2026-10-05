@@ -24,7 +24,7 @@ test('hourly rotation reaches all three dates and all 24 cards without starving 
  const {runScheduled}=await import('../src/index-v3.7.1.js');
  const dates=['2026-10-10','2026-10-11','2026-10-12'],seen=new Set();let staged=0;
  const db={prepare(){return{bind(){return{all:async()=>({results:dates.map(race_date=>({race_date}))})}}}}};
- const deps={today:()=>date,stage:async request=>{assert.equal(new URL(request.url).searchParams.get('dates').split(',').length,8);staged++;},ingest:async request=>{const u=new URL(request.url),d=u.searchParams.get('date'),cursor=Number(u.searchParams.get('cursor'));for(let i=cursor;i<cursor+8;i++)seen.add(`${d}:${i}`);return{ok:true};}};
+ const deps={today:()=>date,stage:async request=>{assert.equal(new URL(request.url).searchParams.get('dates').split(',').length,8);staged++;return new Response(JSON.stringify({ok:true}));},ingest:async request=>{const u=new URL(request.url),d=u.searchParams.get('date'),cursor=Number(u.searchParams.get('cursor'));for(let i=cursor;i<cursor+8;i++)seen.add(`${d}:${i}`);return{ok:true};}};
  for(let hour=0;hour<9;hour++){const r=await runScheduled({scheduledTime:hour*3600000},{DB:db},{},deps);assert.equal(r.runs.length,2);}
  assert.equal(staged,9);assert.equal(seen.size,72);
 });

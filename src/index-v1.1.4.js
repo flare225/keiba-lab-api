@@ -31,12 +31,18 @@ const VENUE_BY_CODE = {
 };
 
 async function fetchHtml(url) {
-  const response = await fetch(url, {
+  const requested=new URL(url),cname=requested.searchParams.get("CNAME");
+  const action=requested.origin==="https://www.jra.go.jp"&&requested.pathname==="/JRADB/accessD.html"&&/^pw01d/.test(cname||"");
+  const response = await fetch(action?`${requested.origin}${requested.pathname}`:url, {
+    method:action?"POST":"GET",
+    body:action?new URLSearchParams({CNAME:cname}).toString():undefined,
     headers: {
+      ...(action?{"content-type":"application/x-www-form-urlencoded"}:{}),
       "user-agent": "keiba-lab/1.1.5 (+robust JRADB repair)",
       accept: "text/html,*/*;q=0.8",
     },
     redirect: "follow",
+    signal: AbortSignal.timeout(20000),
   });
   const buffer = await response.arrayBuffer();
   let body;
@@ -45,7 +51,10 @@ async function fetchHtml(url) {
   } catch {
     body = new TextDecoder("utf-8").decode(buffer);
   }
-  return { ok: response.ok, status: response.status, url: response.url, body };
+  const resolved=new URL(response.url);
+  const sourceUrl=action&&resolved.origin===requested.origin&&resolved.pathname===requested.pathname?requested.href:response.url;
+  const parameterError=/<title>[^<]*パラメータエラー/.test(body);
+  return { ok: response.ok&&!parameterError, status: response.status, url: sourceUrl, body };
 }
 
 function text(value) {
@@ -63,17 +72,13 @@ function text(value) {
 }
 
 function extractLinks(html, base) {
-  const links = [];
-  const seen = new Set();
-  const re = /href\s*=\s*["']([^"'#]+)["']/gi;
-  let match;
-  while ((match = re.exec(html))) {
-    try {
-      const url = new URL(match[1].replace(/&amp;/g, "&"), base).href;
-      if (!url.startsWith("https://www.jra.go.jp/") || seen.has(url)) continue;
-      seen.add(url);
-      links.push(url);
-    } catch {}
+  const links = [],seen = new Set();
+  function add(value){try{const url=new URL(value.replace(/&amp;/g,"&"),base);if(url.origin!=="https://www.jra.go.jp"||seen.has(url.href))return;seen.add(url.href);links.push(url.href);}catch{}}
+  for(const match of html.matchAll(/href\s*=\s*["']([^"'#]+)["']/gi))add(match[1]);
+  // JRA navigation publishes literal action and CNAME in onclick, rather than href.
+  // Read only those literal arguments; never evaluate page JavaScript or invent checksums.
+  for(const match of html.matchAll(/doAction\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*\)/gi)){
+    try{const url=new URL(match[1],base);if(url.origin!=="https://www.jra.go.jp"||url.pathname!=="/JRADB/accessD.html"||!/^pw01d/.test(match[2]))continue;url.searchParams.set("CNAME",match[2]);add(url.href);}catch{}
   }
   return links;
 }
@@ -404,3 +409,5 @@ export default {
     if (app.scheduled) return app.scheduled(event, env, ctx);
   },
 };
+// Shared with date-specific ingestion; keep the existing repair behavior.
+export {fetchHtml, extractLinks, metaFromRacecardUrl, parseRace, extractRunners};

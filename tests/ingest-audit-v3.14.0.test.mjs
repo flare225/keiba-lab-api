@@ -1,0 +1,5 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {deriveIngestAudit} from '../src/ingest-audit-v3.14.0.js';
+test('passes only a complete verified official card',()=>{const x=deriveIngestAudit({declared:12,stored:12,sourceVerified:true});assert.equal(x.passed,true);assert.equal(x.next,'labo-prelock')});
+test('blocks partial card before prelock',()=>{const x=deriveIngestAudit({declared:12,stored:11,missingHorseNos:[12],sourceVerified:true});assert.equal(x.passed,false);assert.equal(x.guardrails.noPrelockOnPartialCard,true);assert.match(x.blockers.join(' '),/mismatch/)});
+test('blocks unverified source even when counts match',()=>{const x=deriveIngestAudit({declared:12,stored:12,sourceVerified:false});assert.equal(x.passed,false);assert.match(x.blockers.join(' '),/source/)});
+test('blocks duplicates and invalid horse numbers',()=>{const x=deriveIngestAudit({declared:12,stored:12,duplicateHorseNos:1,invalidHorseNos:[0,13],sourceVerified:true});assert.equal(x.passed,false);assert.equal(x.unique,false);assert.equal(x.numbersValid,false)});

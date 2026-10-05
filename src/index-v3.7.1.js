@@ -99,6 +99,7 @@ export async function ingestDay(request,env,ctx,deps={discover,fetchHtml,parseRa
 export default{
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/deploy-check')return json({ok:true,version:VERSION,build:'verified-cards-atomic-prospective-seal',now:new Date().toISOString()});
   if(u.pathname==='/')return json({ok:true,service:'keiba-lab-api',version:VERSION,phase:'date-specific card ingestion and row-level audit'});
   try{
    if(u.pathname==='/v1/lab/card-ingest')return json(await ingestDay(request,env,ctx));

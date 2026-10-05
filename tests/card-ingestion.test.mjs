@@ -37,3 +37,4 @@ test('JRA literal action uses POST CNAME and preserves source identity',async()=
  const{fetchHtml}=await import('../src/index-v1.1.4.js');const original=globalThis.fetch;
  try{globalThis.fetch=async(url,options)=>{assert.equal(options.method,'POST');assert.equal(new URLSearchParams(options.body).get('CNAME'),'pw01dli00/F3');return{ok:true,status:200,url:'https://www.jra.go.jp/JRADB/accessD.html',arrayBuffer:async()=>new TextEncoder().encode('<title>error</title>').buffer};};const page=await fetchHtml('https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dli00%2FF3');assert.equal(new URL(page.url).searchParams.get('CNAME'),'pw01dli00/F3');assert.ok(page.ok);}finally{globalThis.fetch=original;}
 });
+test('deployment check reports the active wrapper version',async()=>{const response=await worker.fetch(new Request('https://test/v1/lab/deploy-check'),env,{});assert.equal((await response.json()).version,'3.7.1');});

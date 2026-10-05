@@ -42,6 +42,7 @@ async function fetchHtml(url) {
       accept: "text/html,*/*;q=0.8",
     },
     redirect: "follow",
+    signal: AbortSignal.timeout(20000),
   });
   const buffer = await response.arrayBuffer();
   let body;

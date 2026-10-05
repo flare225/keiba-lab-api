@@ -19,7 +19,7 @@ D1 is connected. October 10–12 has 72 staged race programs, four graded progra
 
 ## Validation
 
-`node --test tests/*.test.mjs`: 26 passing tests. Tests cover extraction, exact date identity, redirects, duplicate/missing runners, save acknowledgement, partial audit, scheduler coverage, source count/frame checks, transactional rollback, immutable seals, result-time refusal and hash verification.
+`node --test tests/*.test.mjs`: 27 passing tests. Tests cover extraction, exact date identity, redirects, duplicate/missing runners, save acknowledgement, partial audit, scheduler coverage, source count/frame checks, transactional rollback, immutable seals, result-time refusal and hash verification.
 
 Live read-only parser check on an already-published October 4 Tokyo race card: official roster cells 17, source rows 17, parsed runners 17, observed horse numbers and all observed frames agree. JRA meeting selector GET returned an HTTP-200 parameter-error page; POST returned the expected meeting selection page. These checks do not verify the future target cards or production D1 writes.
 
@@ -32,3 +32,5 @@ SQLite tests execute actual SQL transactions and triggers through a D1-shaped ad
 3. Run Saudi RC prediction with an explicit track assumption, seal the verified card, then verify the saved hash, timestamp and repeated-call behavior in live D1.
 
 The strict parser deliberately blocks unsupported page layouts rather than inventing source numbers. Add a source-grounded fixture when a future JRA layout differs. Deployment adds evidence-table/trigger definitions; these have been tested locally, not applied to production.
+
+Final pre-merge check: the real 17-runner source card also passed local SQLite persistence, actual-row audit, official roster count verification and exact runner-fingerprint verification. No production DB data was changed by this test. Source requests have a 20-second timeout; /v1/lab/deploy-check reports the new wrapper version.

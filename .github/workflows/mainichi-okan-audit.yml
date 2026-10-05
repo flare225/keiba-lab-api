@@ -14,5 +14,7 @@ jobs:
           base='https://keiba-lab-api.sekai-no-bancyou.workers.dev'
           echo '=== LABO PREDICTION ==='
           curl -fsS --get "$base/v1/lab/labo-prediction" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11' | jq .
+          echo '=== RESULT-BLIND REPLAY ==='
+          curl -fsS --get "$base/v1/lab/replay" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11' | jq .
           echo '=== HISTORY RACE ==='
           curl -fsS --get "$base/v1/lab/history/race" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11' | jq '{ok,version,race,laboPrediction,markRevisions,guardrails}'

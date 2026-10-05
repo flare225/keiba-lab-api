@@ -1,0 +1,5 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {gradePredictionEvidence,EVIDENCE} from '../src/prediction-evidence-v3.15.0.js';
+test('prefers verified prospective seal',()=>{const x=gradePredictionEvidence({prospective:{available:true,hashVerified:true}});assert.equal(x.grade,EVIDENCE.VERIFIED)});
+test('accepts legacy only when demonstrably pre-race',()=>{const x=gradePredictionEvidence({legacy:{snapshot:{runners:[]},savedAt:'2026-10-03T05:00:00Z',resultFieldsPresent:false},raceStartAt:'2026-10-03T06:00:00Z'});assert.equal(x.grade,EVIDENCE.LEGACY)});
+test('rejects legacy saved after race start',()=>{const x=gradePredictionEvidence({legacy:{snapshot:{runners:[]},savedAt:'2026-10-03T07:00:00Z',resultFieldsPresent:false},raceStartAt:'2026-10-03T06:00:00Z'});assert.equal(x.grade,EVIDENCE.NONE)});
+test('rejects legacy containing result fields',()=>{const x=gradePredictionEvidence({legacy:{snapshot:{runners:[]},savedAt:'2026-10-03T05:00:00Z',resultFieldsPresent:true},raceStartAt:'2026-10-03T06:00:00Z'});assert.equal(x.grade,EVIDENCE.NONE)});

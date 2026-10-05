@@ -1,2 +1,2 @@
-Cloudflare deploy trigger: 2026-10-05 05:59 JST
-v1.1.1 date-aware status deploy
+Cloudflare deploy trigger: 2026-10-05 10:11 JST
+v2.4.3 caption diagnostics redeploy

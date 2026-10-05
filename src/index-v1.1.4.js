@@ -404,3 +404,5 @@ export default {
     if (app.scheduled) return app.scheduled(event, env, ctx);
   },
 };
+// Shared with date-specific ingestion; keep the existing repair behavior.
+export {fetchHtml, extractLinks, metaFromRacecardUrl, parseRace};

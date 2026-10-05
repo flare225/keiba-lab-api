@@ -465,3 +465,5 @@ export default {
     })());
   },
 };
+
+export {persistFullDay};

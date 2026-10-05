@@ -79,5 +79,5 @@ jobs:
             echo "- Expected/deployed version: ${{ steps.expected.outputs.version }}"
             echo "- Scheduler endpoint reachable: yes"
             echo "- Cron heartbeat: $heartbeat"
-            echo "- Note: heartbeat is reported, but `not-observed`/`overdue` does not fail deployment smoke; Cron proof is audited separately."
+            echo "- Note: heartbeat is reported; not-observed/overdue does not fail deployment smoke. Cron proof is audited separately."
           } >> "$GITHUB_STEP_SUMMARY"

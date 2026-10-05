@@ -1,2 +1,2 @@
-Cloudflare deploy trigger: 2026-10-05 10:11 JST
-v2.4.3 caption diagnostics redeploy
+Cloudflare deploy trigger: 2026-10-05 10:25 JST
+v2.5.0 direct timedtext fallback deploy

@@ -11,4 +11,12 @@ Program staging must succeed before card collection begins. The rotation, eight-
 
 Validation: 36 passing tests, including actual SQLite persistence of run records, duplicate delivery, manual/cron separation, exception recording, stale heartbeat detection, staging failure and endpoint method/limit checks.
 
-Production verification is recorded after deployment; pre-deployment unit tests do not establish that a cron has executed.
+Production verification (2026-10-05 JST): PR #2 merged as d1ca3b4dcd86412e1c213a27c7dfbfd073071ea2; the public deploy-check returns v3.7.2 and build persisted-collection-runs.
+
+Manual production run manual:6f54d9ca-89fb-46bf-b7ee-f8df9434d252 started at 2026-10-05T05:57:10.431Z and completed with 16 attempted cards, 16 cards not discovered, zero saved cards/runners, zero failed cards and zero source errors. Its record correctly remains trigger_kind=manual.
+
+The October 10–12 storage audit remains consistent: 72 programs, zero cards/runners and no anomalies. Saudi RC is not sealed.
+
+A bounded observation spanning 15:00 JST did not find a scheduled invocation. The status endpoint still reports cronHeartbeat=not-observed; manual success is not proof of automatic execution. This does not establish a configuration fault: Cloudflare documents that Cron Trigger changes can take up to 15 minutes to propagate (https://developers.cloudflare.com/workers/configuration/cron-triggers/). The deployed runtime configuration and a subsequent real cron invocation still need verification.
+
+No direct Cloudflare connection is available in this workspace; plugin discovery returned no Cloudflare matches. Do not claim the cron is operational until a scheduled run or the provider's execution record is observed.

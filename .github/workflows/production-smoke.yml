@@ -1,0 +1,83 @@
+name: Production smoke
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-smoke
+  cancel-in-progress: true
+
+env:
+  PRODUCTION_URL: https://keiba-lab-api.sekai-no-bancyou.workers.dev
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve expected Worker version
+        id: expected
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$(node - <<'NODE'
+          const fs = require('fs');
+          const text = fs.readFileSync('wrangler.jsonc', 'utf8');
+          const m = text.match(/"main"\s*:\s*"src\/index-v([^"/]+)\.js"/);
+          if (!m) process.exit(2);
+          process.stdout.write(m[1]);
+          NODE
+          )"
+          test -n "$expected"
+          echo "version=$expected" >> "$GITHUB_OUTPUT"
+          echo "Expected production version: $expected"
+
+      - name: Verify deployed version
+        id: deploy
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ steps.expected.outputs.version }}
+        run: |
+          set -euo pipefail
+          last=''
+          for attempt in $(seq 1 18); do
+            body="$(curl -fsS --max-time 10 "$PRODUCTION_URL/v1/lab/deploy-check" 2>/dev/null || true)"
+            last="$body"
+            actual="$(printf '%s' "$body" | jq -r '.version // empty' 2>/dev/null || true)"
+            ok="$(printf '%s' "$body" | jq -r '.ok // false' 2>/dev/null || true)"
+            if [[ "$ok" == "true" && "$actual" == "$EXPECTED_VERSION" ]]; then
+              echo "Production is serving v$actual"
+              printf '%s\n' "$body" | jq .
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Production did not converge to expected version $EXPECTED_VERSION" >&2
+          echo "Last deploy-check response:" >&2
+          printf '%s\n' "$last" >&2
+          exit 1
+
+      - name: Read scheduler observability
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$(curl -fsS --max-time 15 "$PRODUCTION_URL/v1/lab/scheduler-status?limit=5")"
+          ok="$(printf '%s' "$body" | jq -r '.ok // false')"
+          test "$ok" = "true"
+          heartbeat="$(printf '%s' "$body" | jq -r '.cronHeartbeat // "unknown"')"
+          echo "Cron heartbeat: $heartbeat"
+          printf '%s\n' "$body" | jq '{ok,version,checkedAt,configuredCron,cronHeartbeat,latestScheduled}'
+          {
+            echo "## KEIBA LABO production smoke"
+            echo "- Expected/deployed version: ${{ steps.expected.outputs.version }}"
+            echo "- Scheduler endpoint reachable: yes"
+            echo "- Cron heartbeat: $heartbeat"
+            echo "- Note: heartbeat is reported, but `not-observed`/`overdue` does not fail deployment smoke; Cron proof is audited separately."
+          } >> "$GITHUB_STEP_SUMMARY"

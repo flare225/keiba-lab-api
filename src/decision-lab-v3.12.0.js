@@ -1,6 +1,5 @@
-const MARK_WEIGHT={◎:5,'○':4,'▲':3,'△':2,'☆':1};
+const MARK_WEIGHT={'◎':5,'○':4,'▲':3,'△':2,'☆':1};
 const n=v=>v==null?null:Number(v);
-const text=v=>String(v??'').trim();
 export function userMarkMap(revision){const m=new Map();for(const x of revision?.marked||revision?.audit?.marked||[])m.set(Number(x.horseNo),x.mark);return m}
 export function counterevidence(prediction,userRevision){
  const um=userMarkMap(userRevision),alerts=[];

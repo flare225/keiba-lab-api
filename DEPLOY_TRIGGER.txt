@@ -1,2 +1,2 @@
-Cloudflare deploy trigger: 2026-10-05 10:25 JST
-v2.5.0 direct timedtext fallback deploy
+Cloudflare deploy trigger: 2026-10-05 10:31 JST
+v2.6.0 runner-level workout evidence pipeline deploy

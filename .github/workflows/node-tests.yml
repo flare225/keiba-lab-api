@@ -21,7 +21,23 @@ jobs:
         with:
           node-version: '24'
           cache: ''
+      - name: Resolve active Worker
+        id: active
+        shell: bash
+        run: |
+          set -euo pipefail
+          active="$(node - <<'NODE'
+          const fs=require('fs');
+          const text=fs.readFileSync('wrangler.jsonc','utf8');
+          const m=text.match(/"main"\s*:\s*"([^"]+)"/);
+          if(!m) process.exit(2);
+          process.stdout.write(m[1]);
+          NODE
+          )"
+          test -f "$active"
+          echo "path=$active" >> "$GITHUB_OUTPUT"
+          echo "Active Worker: $active"
       - name: Syntax check active Worker
-        run: node --check src/index-v3.8.2.js
+        run: node --check "${{ steps.active.outputs.path }}"
       - name: Run test suite
         run: node --test tests/*.test.mjs

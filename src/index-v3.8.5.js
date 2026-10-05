@@ -12,6 +12,7 @@ export default{
   const u=new URL(request.url);
   if(u.pathname==='/')return json({ok:true,service:'keiba-lab-api',version:VERSION,phase:'isolated pre-card context + two-year-old evidence audit'});
   if(u.pathname==='/v1/lab/deploy-check')return json({ok:true,version:VERSION,build:'precard-context-isolation-and-official-card-diff',now:new Date().toISOString()});
+  if((u.pathname==='/v1/lab/precard-context-ingest'||u.pathname==='/v1/lab/precard-context-sweep')&&request.method!=='POST')return json({ok:false,version:VERSION,error:'POST required for precard write operation'},405);
   if(u.pathname.startsWith('/v1/lab/precard-')&&!env.DB)return json({ok:false,version:VERSION,error:'D1 binding DB is not configured'},500);
   try{
    if(u.pathname==='/v1/lab/precard-targets'){
@@ -24,13 +25,11 @@ export default{
     const audit=await precardAudit(env.DB,raceKey);return json(audit,audit.ok?200:404);
    }
    if(u.pathname==='/v1/lab/precard-context-ingest'){
-    if(request.method!=='POST')return json({ok:false,version:VERSION,error:'POST required for precard ingestion'},405);
     await init(env.DB);const raceKey=u.searchParams.get('race_key')||DEFAULT_PRECARD_TARGETS[0].raceKey;
     const target=await targetByKey(env.DB,raceKey);if(!target)return json({ok:false,version:VERSION,error:'precard target not found'},404);
     const result=await ingestPrecardTarget(env.DB,target,{now:new Date()});return json({...result,version:VERSION},result.ok?200:409);
    }
    if(u.pathname==='/v1/lab/precard-context-sweep'){
-    if(request.method!=='POST')return json({ok:false,version:VERSION,error:'POST required for precard sweep'},405);
     const result=await runPrecardSweep({scheduledTime:Date.now()},env,ctx);return json(result,result.ok?200:409);
    }
    return app.fetch(request,env,ctx);

@@ -1,0 +1,4 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {deriveRaceReadiness} from '../src/readiness-v3.13.0.js';
+test('does not mark a partial official card complete',()=>{const x=deriveRaceReadiness({declared:16,stored:15});assert.equal(x.cardComplete,false);assert.equal(x.next,'official-card');assert.equal(x.preRaceReady,false)});
+test('requires lock user mark and decision audit for pre-race readiness',()=>{const x=deriveRaceReadiness({declared:16,stored:16,prediction:true,userRevision:true,decisionLab:true});assert.equal(x.preRaceReady,true);assert.equal(x.next,'official-result');assert.equal(x.resultComplete,false)});
+test('moves to review only after complete official result rows',()=>{const x=deriveRaceReadiness({declared:16,stored:16,prediction:true,userRevision:true,decisionLab:true,resultRows:16});assert.equal(x.reviewReady,true);assert.equal(x.next,'review');assert.ok(x.stages.every(s=>s.ready))});

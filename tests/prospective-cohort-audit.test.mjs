@@ -56,3 +56,12 @@ test('cohort endpoint fails closed without D1',async()=>{
  assert.equal(r.status,500);
  assert.match(d.error,/D1 binding/);
 });
+
+test('required validation storage errors are not converted into fake empty success',async()=>{
+ const DB={prepare(){throw new Error('required validation table unavailable')}};
+ const r=await worker.fetch(new Request('https://test/v1/lab/prospective-cohort-audit?scope=two-year-old'),{DB},{});
+ const d=await r.json();
+ assert.equal(r.status,500);
+ assert.equal(d.ok,false);
+ assert.match(d.error,/required validation table unavailable/);
+});

@@ -1,36 +1,52 @@
-# KEIBA LABO ingestion and prospective LOCK check — 2026-10-05 JST
+# KEIBA LABO production verification — 2026-10-05 JST
 
-Live API: https://keiba-lab-api.sekai-no-bancyou.workers.dev/
-Production baseline: 3870800b4e5fcaa6f018ff6285bf835a0d9100ae, v3.7.0.
-Configured entry point: src/index-v3.7.0.js. Proposed entry point: src/index-v3.7.1.js.
+## Deployment
 
-## Verified live state
+PR #1 was merged into main with merge commit a59b0aace41416f3c64b7234fcdaca87ce6375bf. GitHub integration deployed the API: both / and /v1/lab/deploy-check return v3.7.1. The build identifier is verified-cards-atomic-prospective-seal. D1 is connected and the source-evidence table exists.
 
-D1 is connected. October 10–12 has 72 staged race programs, four graded programs, zero saved cards and zero runners. Prospective scan returns zero strict eligible candidates. The official JRA card meeting selector inspected during this check displayed October 3 and 4; the target future cards were not discovered. No production DB writes or Saudi RC LOCK were performed.
+## Verified production ingestion and storage
 
-## Fixed in this proposal
+A published October 4 Tokyo 11R card was fetched and saved through /v1/lab/card-ingest?date=2026-10-04&cursor=22&limit=1.
 
-- Legacy ingestion ignored requested date/venue/race number, used today's date, and had bootstrap seeds only for October 4. Replace that call with target-specific published-link discovery and confirmed per-target saves.
-- JRA navigation uses literal doAction arguments and POST CNAME. Extract the published arguments, submit the documented page form shape, reject parameter-error pages, restrict links to JRA, and skip other dates' meeting selectors. Never synthesize checksums or execute site JavaScript.
-- Source horse rows and official roster cells are counted independently from the legacy parser. Preserve observed horse and frame numbers; do not fill missing numbers from row order or derive frames for this ingestion path. Explicit header counts are preferred; when absent, count the horse-name cells in the actual source roster table. Persist count basis, source SHA-256, runner fingerprint and card timestamp.
-- Audit actual and distinct saved runner rows, contiguous numbering, invalid names/numbers, orphans, header counts, and evidence freshness. A successful DB inspection is distinct from complete card coverage.
-- Bounded eight-card batches expose cursor/nextCursor. Hourly scheduling stages eight upcoming days then rotates up to three race dates, processing at most two dates per invocation. All 72 staged programs are covered by the tested nine-slot rotation.
-- Prospective LOCK refuses absent or stale source evidence, zero runners, prediction identity mismatches, or official outcomes. Two seal rows commit in one D1 batch transaction. Existing/concurrently created seals must pass SHA-256 verification. DB triggers reject seal updates/deletes, sealing after results, and source-card changes between prediction and insertion.
+- Confirmed saved race: 2026-10-04:東京:11.
+- Saved runners: 17; distinct runners: 17; invalid runners: 0.
+- First/last horse numbers: 1/17.
+- Row-level complete: true.
+- Official count/source evidence verification: true.
+- Audit anomalies: none.
+- Saved timestamp: 2026-10-05T05:46:33.969Z.
 
-## Validation
+The source-evidence count uses the actual official horse-name cells in the roster table when an explicit head-count label is absent. Horse/frame numbers are source-observed, not inferred. Source SHA-256, count basis, runner fingerprint and save timestamp are stored.
 
-`node --test tests/*.test.mjs`: 27 passing tests. Tests cover extraction, exact date identity, redirects, duplicate/missing runners, save acknowledgement, partial audit, scheduler coverage, source count/frame checks, transactional rollback, immutable seals, result-time refusal and hash verification.
+## Prospective LOCK checks
 
-Live read-only parser check on an already-published October 4 Tokyo race card: official roster cells 17, source rows 17, parsed runners 17, observed horse numbers and all observed frames agree. JRA meeting selector GET returned an HTTP-200 parameter-error page; POST returned the expected meeting selection page. These checks do not verify the future target cards or production D1 writes.
+A request to seal the already-run October 4 race was correctly refused with “past races cannot receive prospective validation credit”. No prospective LOCK was created by that request. Prospective seal tables and immutable/result-time DB guards were created successfully in production.
 
-SQLite tests execute actual SQL transactions and triggers through a D1-shaped adapter. Cloudflare's D1 batch transaction semantics are documented at https://developers.cloudflare.com/d1/worker-api/d1-database/#batch. Live D1 validation remains required.
+Two-row atomic saving, mutation/deletion rejection, concurrent-key behavior, source-card changes during prediction and stored SHA-256 verification pass local SQLite SQL tests. Successful future-race sealing and the card-evidence insertion guard still require live D1 verification on the target race.
 
-## Remaining
+## Target dates
 
-1. Deploy reviewed changes and verify live discovery on the target dates after publication. This draft has not been deployed.
-2. Ingest every cursor batch, confirm row-level coverage and source-evidence checks, and investigate any missing cards rather than assuming nonpublication.
-3. Run Saudi RC prediction with an explicit track assumption, seal the verified card, then verify the saved hash, timestamp and repeated-call behavior in live D1.
+Production audit for October 10–12:
+- Staged programs: 72.
+- Graded programs: 4.
+- Stored target cards/runners: 0/0.
+- All cards complete: false.
+- Audit anomalies: none.
 
-The strict parser deliberately blocks unsupported page layouts rather than inventing source numbers. Add a source-grounded fixture when a future JRA layout differs. Deployment adds evidence-table/trigger definitions; these have been tested locally, not applied to production.
+A bounded October 10 Kyoto 1R ingestion probe returned card-not-discovered with no source-fetch errors and saved nothing. This does not prove that every target card is unpublished. The JRA meeting selector inspected earlier displayed October 3 and October 4 only. Saudi RC remains unsealed.
 
-Final pre-merge check: the real 17-runner source card also passed local SQLite persistence, actual-row audit, official roster count verification and exact runner-fingerprint verification. No production DB data was changed by this test. Source requests have a 20-second timeout; /v1/lab/deploy-check reports the new wrapper version.
+## Implementation and tests
+
+The production wrapper now performs exact-date published-link discovery, JRA literal action/POST navigation, source identity and observed runner checks, confirmed target persistence, row-level audit and deployment-version reporting. Source requests time out after 20 seconds.
+
+The hourly cron configuration stages upcoming dates and rotates eight-card batches across up to three race dates, processing two dates per run. The 72-program rotation is covered by tests. A real scheduled production invocation has not yet been separately observed.
+
+`node --test tests/*.test.mjs`: 27 passing tests. The real 17-runner card also passed local SQLite ingestion, row-level audit and source fingerprint checks before the production write.
+
+D1 batch transaction semantics: https://developers.cloudflare.com/d1/worker-api/d1-database/#batch.
+
+## Next
+
+1. Observe the production scheduled collection, and inspect target-card discovery after publication.
+2. Run all target cursor batches and require complete actual-row coverage plus current verified source evidence; investigate missing cards.
+3. Confirm Saudi RC’s full card and explicit track assumption, run the prediction pipeline, seal before results, and verify saved hash/time and repeated-call behavior.

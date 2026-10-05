@@ -61,6 +61,6 @@ test('v3.8.5 deploy check identifies isolated precard build',async()=>{
 test('write endpoint requires POST before D1 is touched',async()=>{
  const r=await worker.fetch(new Request('https://test/v1/lab/precard-context-ingest'),{},{});
  const d=await r.json();
- assert.equal(r.status,500);
- assert.match(d.error,/D1 binding/);
+ assert.equal(r.status,405);
+ assert.match(d.error,/POST required/);
 });

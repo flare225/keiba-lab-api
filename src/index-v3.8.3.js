@@ -11,11 +11,15 @@ async function sha256Hex(text){
  const digest=await crypto.subtle.digest('SHA-256',bytes);
  return[...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');
 }
-async function safeRows(db,sql,args=[]){
- try{return((await db.prepare(sql).bind(...args).all()).results||[])}catch{return[]}
+async function requiredRows(db,sql,args=[]){
+ return((await db.prepare(sql).bind(...args).all()).results||[]);
 }
 function finite(v){return v!==null&&v!==undefined&&Number.isFinite(Number(v))}
 function sampleStatus(n){if(n===0)return'no-data';if(n<5)return'too-small';if(n<20)return'preliminary';if(n<50)return'growing';return'useful-sample'}
+function validPredictionRanks(predictions,expected){
+ const ranks=predictions.map(p=>Number(p.rank));
+ return ranks.length===expected&&ranks.every(Number.isInteger)&&ranks.every(r=>r>=1&&r<=expected)&&new Set(ranks).size===expected;
+}
 
 export function summarizeRunnerCohort(rows){
  const matched=(rows||[]).filter(r=>finite(r.predictedRank)&&finite(r.actualFinish));
@@ -74,7 +78,7 @@ export function summarizeRaceSet(races){
 }
 
 async function strictSeals(db){
- return safeRows(db,`SELECT l.race_key,l.model_version,l.track_condition,l.seal_kind,l.snapshot_json,l.sealed_at,
+ return requiredRows(db,`SELECT l.race_key,l.model_version,l.track_condition,l.seal_kind,l.snapshot_json,l.sealed_at,
    s.snapshot_sha256,s.future_day_lock,s.outcome_count_at_seal
    FROM lab_model_locks l JOIN lab_prospective_seals s
    ON s.race_key=l.race_key AND s.model_version=l.model_version AND s.track_condition=l.track_condition
@@ -82,14 +86,14 @@ async function strictSeals(db){
    AND s.future_day_lock=1 AND s.outcome_count_at_seal=0 ORDER BY l.sealed_at`);
 }
 async function fallbackHistoryMap(db,raceKey,raceDate){
- const rows=await safeRows(db,`SELECT rr.horse_no,COUNT(p.race_date) AS history_rows
+ const rows=await requiredRows(db,`SELECT rr.horse_no,COUNT(p.race_date) AS history_rows
    FROM jra_runners rr LEFT JOIN jra_past_performances p
    ON p.horse_name=rr.horse_name AND p.race_date<?
    WHERE rr.race_key=? GROUP BY rr.horse_no ORDER BY rr.horse_no`,[raceDate,raceKey]);
  return new Map(rows.map(x=>[Number(x.horse_no),Number(x.history_rows||0)]));
 }
 async function ageMap(db,raceKey){
- const rows=await safeRows(db,'SELECT horse_no,age FROM jra_runners WHERE race_key=? ORDER BY horse_no',[raceKey]);
+ const rows=await requiredRows(db,'SELECT horse_no,age FROM jra_runners WHERE race_key=? ORDER BY horse_no',[raceKey]);
  return new Map(rows.map(x=>[Number(x.horse_no),x.age==null?null:Number(x.age)]));
 }
 
@@ -100,12 +104,16 @@ async function cohortAudit(request,env){
  const races=[];const skipped=[];
  for(const seal of seals){
   const actualHash=await sha256Hex(seal.snapshot_json);
-  if(actualHash!==seal.snapshot_sha256){skipped.push({raceKey:seal.race_key,reason:'snapshot-hash-mismatch'});continue}
+  if(actualHash!==String(seal.snapshot_sha256||'').toLowerCase()){skipped.push({raceKey:seal.race_key,reason:'snapshot-hash-mismatch'});continue}
   let snap;try{snap=JSON.parse(seal.snapshot_json||'{}')}catch{skipped.push({raceKey:seal.race_key,reason:'snapshot-json-invalid'});continue}
   const predictions=Array.isArray(snap.runners)?snap.runners:[];
   const raceDate=snap.race?.date||null;
   const expected=Number(snap.race?.runnerCount||predictions.length||0);
-  if(!raceDate||!expected||predictions.length!==expected){skipped.push({raceKey:seal.race_key,reason:'sealed-runner-coverage-invalid'});continue}
+  const horseNos=predictions.map(p=>Number(p.horseNo));
+  if(!raceDate||!expected||predictions.length!==expected||new Set(horseNos).size!==expected||horseNos.some(n=>!Number.isInteger(n)||n<1)){
+   skipped.push({raceKey:seal.race_key,reason:'sealed-runner-coverage-invalid'});continue;
+  }
+  if(!validPredictionRanks(predictions,expected)){skipped.push({raceKey:seal.race_key,reason:'sealed-prediction-ranks-invalid'});continue}
 
   if(scope==='two-year-old'){
    const ages=await ageMap(env.DB,seal.race_key);
@@ -114,9 +122,12 @@ async function cohortAudit(request,env){
    if(!predictions.every(p=>ages.get(Number(p.horseNo))===2)){skipped.push({raceKey:seal.race_key,reason:'not-all-runners-age-2'});continue}
   }
 
-  const outcomes=await safeRows(env.DB,'SELECT horse_no,finish_position FROM lab_race_outcomes WHERE race_key=? AND finish_position IS NOT NULL ORDER BY finish_position',[seal.race_key]);
+  const outcomes=await requiredRows(env.DB,'SELECT horse_no,finish_position FROM lab_race_outcomes WHERE race_key=? AND finish_position IS NOT NULL ORDER BY finish_position',[seal.race_key]);
   const actualBy=new Map(outcomes.map(x=>[Number(x.horse_no),Number(x.finish_position)]));
-  if(outcomes.length!==expected||predictions.some(p=>!actualBy.has(Number(p.horseNo)))){skipped.push({raceKey:seal.race_key,reason:'official-outcome-coverage-incomplete'});continue}
+  const outcomeValues=outcomes.map(x=>Number(x.finish_position));
+  if(outcomes.length!==expected||predictions.some(p=>!actualBy.has(Number(p.horseNo)))||outcomeValues.some(x=>!Number.isInteger(x)||x<1||x>expected)){
+   skipped.push({raceKey:seal.race_key,reason:'official-outcome-coverage-incomplete'});continue;
+  }
 
   const needsHistory=predictions.some(p=>!finite(p.historyRows));
   const history=needsHistory?await fallbackHistoryMap(env.DB,seal.race_key,raceDate):new Map();
@@ -149,7 +160,7 @@ async function cohortAudit(request,env){
   evidenceDepthCohorts:{zeroToOneHistory:summarizeRunnerCohort(sparse),twoPlusHistory:summarizeRunnerCohort(twoPlus)},
   confidenceBands,
   races,
-  guardrails:{prospectiveFutureDaySealRequired:true,outcomeCountAtSealRequiredZero:true,snapshotSha256Verified:true,targetResultNeverUsedToCreatePrediction:true,automaticWeightMutation:false,reconstructionLocksExcluded:true},
+  guardrails:{prospectiveFutureDaySealRequired:true,outcomeCountAtSealRequiredZero:true,snapshotSha256Verified:true,targetResultNeverUsedToCreatePrediction:true,automaticWeightMutation:false,reconstructionLocksExcluded:true,requiredValidationTablesFailClosed:true},
   interpretationPolicy:'Compare sparse-history and deeper-history cohorts only after enough strict prospectively sealed races accumulate. Small samples are diagnostic, not a reason to tune weights.',
   promotionPolicy:{automaticWeightChanges:false,minimumRecommendedStrictRaceSampleBeforeModelChangeReview:20,saudiRcMayContributeOnlyAfterItsExistingHashLockedPredictionIsScoredAgainstOfficialOutcomes:true}
  };

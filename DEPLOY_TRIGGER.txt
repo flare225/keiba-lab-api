@@ -1,2 +1,2 @@
-Cloudflare deploy trigger: 2026-10-05 10:31 JST
-v2.6.0 runner-level workout evidence pipeline deploy
+Cloudflare deploy trigger: 2026-10-05 10:45 JST
+v2.7.0 three-stage validation boost deploy

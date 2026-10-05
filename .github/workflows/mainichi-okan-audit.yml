@@ -19,5 +19,7 @@ jobs:
           curl -fsS --get "$base/v1/lab/replay" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11' | jq .
           echo '=== SAFE RANK TRACK GOOD ==='
           curl -fsS --get "$base/v1/lab/rank" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11' --data-urlencode 'track=良' | jq '{version,race,fullModelCoverageCeilingNow,leakageGuard,runners:[.runners[]|{horseNo,horseName,evidenceScore,evidenceRank,confidencePct}]}'
+          echo '=== SAFE RANK FIRST DETAIL ==='
+          curl -fsS --get "$base/v1/lab/rank" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11' --data-urlencode 'track=良' | jq '.runners[0]'
           echo '=== HISTORY RACE ==='
           curl -fsS --get "$base/v1/lab/history/race" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11' | jq '{ok,version,race,laboPrediction,markRevisions,guardrails}'

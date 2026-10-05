@@ -1,8 +1,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import worker,{verifySealIdentity} from '../src/index-v3.8.4.js';
+import worker,{verifySealIdentity,summarizeBuildStages} from '../src/index-v3.8.4.js';
 
 const HASH='a'.repeat(64);
+const GREEN={httpStatus:200,ok:true,error:null};
 
 test('seal identity accepts identical immutable hash with idempotent second call',()=>{
  const first={seal:{snapshotSha256:HASH,immutable:true}};
@@ -27,6 +28,23 @@ test('seal identity rejects a non-idempotent verification call',()=>{
  const v=verifySealIdentity(first,second);
  assert.equal(v.ok,false);
  assert.equal(v.secondIdempotent,false);
+});
+
+test('fresh build audit requires every current pipeline stage to be green',()=>{
+ const stages={history:GREEN,trackBias:GREEN,baseRank:GREEN,paceStyle:GREEN,paceNeutralFill:GREEN,provisional100:GREEN,workoutOverlay:GREEN};
+ const a=summarizeBuildStages(stages);
+ assert.equal(a.ready,true);
+ assert.equal(a.requiredCount,7);
+ assert.equal(a.greenCount,7);
+ assert.equal(a.failedCount,0);
+});
+
+test('fresh build audit fails closed when a stage is stale, failed or missing',()=>{
+ const stages={history:GREEN,trackBias:GREEN,baseRank:GREEN,paceStyle:{httpStatus:502,ok:false,error:'source failed'},paceNeutralFill:GREEN,provisional100:GREEN};
+ const a=summarizeBuildStages(stages);
+ assert.equal(a.ready,false);
+ assert.equal(a.failedCount,2);
+ assert.deepEqual(a.failed.map(x=>x.name),['paceStyle','workoutOverlay']);
 });
 
 test('seal mode requires explicit LOCK confirmation before touching D1',async()=>{

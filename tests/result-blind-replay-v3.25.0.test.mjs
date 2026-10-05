@@ -1,5 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {cutoffFor,legacySnapshotEligible,normalizeReplayRanking,hasCompleteReplayScores} from '../src/result-blind-replay-v3.25.0.js';
 test('Mainichi Okan cutoff is explicitly verified',()=>{const x=cutoffFor('2026-10-04:東京:11');assert.equal(x.verified,true);assert.equal(x.raceStartAt,'2026-10-04T15:45:00+09:00')});
+test('Kyoto Daishoten cutoff is explicitly verified',()=>{const x=cutoffFor('2026-10-04:京都:11');assert.equal(x.verified,true);assert.equal(x.raceStartAt,'2026-10-04T15:30:00+09:00')});
 test('legacy evidence requires every runner before post time',()=>{const c='2026-10-04T15:45:00+09:00';assert.equal(legacySnapshotEligible([{horse_no:1,generated_at:'2026-10-04T06:00:00Z'},{horse_no:2,generated_at:'2026-10-04T06:10:00Z'}],2,c),true);assert.equal(legacySnapshotEligible([{horse_no:1,generated_at:'2026-10-04T06:00:00Z'},{horse_no:2,generated_at:'2026-10-04T07:00:00Z'}],2,c),false)});
 test('replay marks derive only from rank order',()=>{const x=normalizeReplayRanking([{horseNo:2,evidenceScore:70},{horseNo:1,evidenceScore:80}]);assert.equal(x[0].horseNo,1);assert.equal(x[0].mark,'◎');assert.equal(x[1].mark,'○')});
 

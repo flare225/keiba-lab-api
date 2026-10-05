@@ -83,14 +83,15 @@ jobs:
         run: |
           set -euo pipefail
           body="$(curl -fsS --max-time 15 "$PRODUCTION_URL/v1/lab/precard-context-status")"
+          printf '%s\n' "$body" | jq '{ok,version,raceKey,target,dataQuality,officialCardComparison,warnings,guardrails}'
           ok="$(printf '%s' "$body" | jq -r '.ok // false')"
           race_key="$(printf '%s' "$body" | jq -r '.raceKey // empty')"
           race_date="$(printf '%s' "$body" | jq -r '.target.date // empty')"
           race_name="$(printf '%s' "$body" | jq -r '.target.raceName // empty')"
           status="$(printf '%s' "$body" | jq -r '.target.status // empty')"
-          authoritative="$(printf '%s' "$body" | jq -r '.guardrails.authoritativeForCard // true')"
-          seal_eligible="$(printf '%s' "$body" | jq -r '.guardrails.eligibleForProspectiveSeal // true')"
-          official_required="$(printf '%s' "$body" | jq -r '.guardrails.officialNumberedCardStillRequired // false')"
+          authoritative="$(printf '%s' "$body" | jq -r '.guardrails.authoritativeForCard')"
+          seal_eligible="$(printf '%s' "$body" | jq -r '.guardrails.eligibleForProspectiveSeal')"
+          official_required="$(printf '%s' "$body" | jq -r '.guardrails.officialNumberedCardStillRequired')"
           test "$ok" = "true"
           test "$race_key" = "2026-10-10:東京:11"
           test "$race_date" = "2026-10-10"
@@ -100,7 +101,6 @@ jobs:
           test "$official_required" = "true"
           echo "status=$status" >> "$GITHUB_OUTPUT"
           echo "Saudi RC pre-card target is seeded; status: $status"
-          printf '%s\n' "$body" | jq '{ok,version,raceKey,target,dataQuality,officialCardComparison,warnings,guardrails}'
 
       - name: Write production summary
         shell: bash

@@ -102,6 +102,33 @@ jobs:
           echo "status=$status" >> "$GITHUB_OUTPUT"
           echo "Saudi RC pre-card target is seeded; status: $status"
 
+      - name: Verify independent user-mark audit layer
+        id: marks
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ steps.expected.outputs.version }}
+        run: |
+          set -euo pipefail
+          body="$(curl -fsS --max-time 15 "$PRODUCTION_URL/v1/lab/user-mark-capabilities")"
+          printf '%s\n' "$body" | jq .
+          ok="$(printf '%s' "$body" | jq -r '.ok')"
+          version="$(printf '%s' "$body" | jq -r '.version')"
+          independent="$(printf '%s' "$body" | jq -r '.principles.humanMarksAreIndependentInput')"
+          mutation="$(printf '%s' "$body" | jq -r '.principles.scoreMutation')"
+          official="$(printf '%s' "$body" | jq -r '.principles.officialCardRequiredForPostDrawAndFinal')"
+          precard="$(printf '%s' "$body" | jq -r '.principles.initialCanUseIsolatedPrecardNames')"
+          infer="$(printf '%s' "$body" | jq -r '.principles.horseNumbersNeverInferredBeforeOfficialCard')"
+          frozen="$(printf '%s' "$body" | jq -r '.principles.auditSnapshotPersistedWithRevision')"
+          test "$ok" = "true"
+          test "$version" = "$EXPECTED_VERSION"
+          test "$independent" = "true"
+          test "$mutation" = "false"
+          test "$official" = "true"
+          test "$precard" = "true"
+          test "$infer" = "true"
+          test "$frozen" = "true"
+          echo "verified=true" >> "$GITHUB_OUTPUT"
+
       - name: Write production summary
         shell: bash
         run: |
@@ -113,4 +140,5 @@ jobs:
             echo "- Saudi RC pre-card schema/seed: verified"
             echo "- Saudi RC pre-card status: ${{ steps.precard.outputs.status }}"
             echo "- Pre-card context remains non-authoritative and cannot satisfy prospective LOCK by itself."
+            echo "- User-mark DB audit layer: verified, score mutation disabled"
           } >> "$GITHUB_STEP_SUMMARY"

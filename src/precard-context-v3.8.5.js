@@ -14,7 +14,6 @@ const plain=s=>String(s||'')
   .replace(/&amp;/gi,'&').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>')
   .replace(/&#(\d+);/g,(_,n)=>String.fromCodePoint(Number(n)))
   .replace(/\s+/g,' ').trim();
-const finite=v=>v!==null&&v!==undefined&&Number.isFinite(Number(v));
 const iso=now=>new Date(now??Date.now()).toISOString();
 export function todayJst(now=new Date()){
   return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(now));
@@ -35,13 +34,13 @@ export function parsePrecardHorsePage(html,{expectedRaceName,expectedDate}={}){
     const start=(headings[i].index||0)+headings[i][0].length;
     const end=i+1<headings.length?(headings[i+1].index||String(html).length):String(html).length;
     const blockText=plain(String(html).slice(start,end));
-    const sexAge=blockText.match(/(牡|牝|せん)\s*([2-9])歳?/);
-    if(!sexAge)continue;
+    const sexAge=blockText.match(/(牡|牝|せん)\s*([2-9])歳?/);if(!sexAge)continue;
     const trainerMatch=blockText.match(/調教師\s*[:：]\s*([^（(]{1,40}?)\s*[（(]([^）)]+)[）)]/);
     const sire=pedigreeValue(blockText,'父','母');
     const dam=pedigreeValue(blockText,'母','母の父');
     const damsire=pedigreeValue(blockText,'母の父','ここに注目');
-    const focus=(blockText.split(/ここに注目！?/)[1]||'').trim().slice(0,2000)||null;
+    const focusRaw=(blockText.split(/ここに注目！?/)[1]||'').trim();
+    const focus=(focusRaw.split(/ページトップへ|表示モード|レース関連情報/)[0]||'').trim().slice(0,2000)||null;
     horses.push({name,sex:sexAge[1],age:Number(sexAge[2]),trainer:trainerMatch?.[1]?.trim()||null,stable:trainerMatch?.[2]?.trim()||null,sire,dam,damsire,focus});
     seen.add(name);
   }
@@ -91,7 +90,7 @@ export async function fetchJraPrecardPage(url){
   let body=new TextDecoder(charset).decode(buffer);
   if(charset==='utf-8'&&(body.match(/�/g)||[]).length>4)body=new TextDecoder('shift_jis').decode(buffer);
   const resolved=new URL(response.url||url);
-  if(resolved.origin!=='https://www.jra.go.jp')throw new Error('precard source redirected off JRA');
+  if(resolved.origin!=='https://www.jra.go.jp'||!/\/horse\.html$/.test(resolved.pathname))throw new Error('precard source redirected away from an official JRA horse page');
   return{ok:response.ok,status:response.status,url:resolved.href,body};
 }
 
@@ -105,6 +104,11 @@ async function updateTargetStatus(db,target,{status,error=null,checkedAt=iso(),s
   await db.prepare(`UPDATE lab_precard_targets SET last_checked_at=?,last_status=?,last_error=?,last_success_at=COALESCE(?,last_success_at),last_source_sha256=COALESCE(?,last_source_sha256),updated_at=? WHERE race_key=?`)
     .bind(checkedAt,status,error,successAt,sourceSha,checkedAt,target.race_key).run();
 }
+async function saveEvidence(db,target,page,sourceSha,parsed,checkedAt){
+  await db.prepare(`INSERT INTO lab_precard_source_evidence(race_key,source_url,source_sha256,parsed_count,published_flag,placeholder_flag,fetched_at,parse_version)
+    VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET source_url=excluded.source_url,source_sha256=excluded.source_sha256,parsed_count=excluded.parsed_count,published_flag=excluded.published_flag,placeholder_flag=excluded.placeholder_flag,fetched_at=excluded.fetched_at,parse_version=excluded.parse_version`)
+    .bind(target.race_key,page.url,sourceSha,parsed.horses.length,parsed.published?1:0,parsed.placeholder?1:0,checkedAt,PRECARD_VERSION).run();
+}
 
 export async function ingestPrecardTarget(db,target,{fetchPage=fetchJraPrecardPage,now=new Date()}={}){
   await ensurePrecardTables(db);const checkedAt=iso(now);
@@ -113,12 +117,18 @@ export async function ingestPrecardTarget(db,target,{fetchPage=fetchJraPrecardPa
   if(!page.ok){const error=`JRA source HTTP ${page.status}`;await updateTargetStatus(db,target,{status:'source-error',error,checkedAt});return{ok:false,status:'source-error',raceKey:target.race_key,error}}
   let parsed;try{parsed=parsePrecardHorsePage(page.body,{expectedRaceName:target.race_name,expectedDate:target.race_date});}catch(error){await updateTargetStatus(db,target,{status:'identity-error',error:String(error),checkedAt});return{ok:false,status:'identity-error',raceKey:target.race_key,error:String(error)}}
   const sourceSha=await sha256(page.body);
-  await db.prepare(`INSERT INTO lab_precard_source_evidence(race_key,source_url,source_sha256,parsed_count,published_flag,placeholder_flag,fetched_at,parse_version)
-    VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET source_url=excluded.source_url,source_sha256=excluded.source_sha256,parsed_count=excluded.parsed_count,published_flag=excluded.published_flag,placeholder_flag=excluded.placeholder_flag,fetched_at=excluded.fetched_at,parse_version=excluded.parse_version`)
-    .bind(target.race_key,page.url,sourceSha,parsed.horses.length,parsed.published?1:0,parsed.placeholder?1:0,checkedAt,PRECARD_VERSION).run();
-  if(parsed.placeholder){await updateTargetStatus(db,target,{status:'not-published',checkedAt,sourceSha});return{ok:true,status:'not-published',raceKey:target.race_key,published:false,saved:0,warnings:parsed.warnings,sourceSha256:sourceSha}}
-  if(!parsed.published){await updateTargetStatus(db,target,{status:'parse-empty',error:'No runner blocks parsed from non-placeholder page',checkedAt,sourceSha});return{ok:false,status:'parse-empty',raceKey:target.race_key,published:false,saved:0,warnings:parsed.warnings,sourceSha256:sourceSha}}
+  if(parsed.placeholder){
+    await saveEvidence(db,target,page,sourceSha,parsed,checkedAt);
+    await updateTargetStatus(db,target,{status:'not-published',checkedAt,sourceSha});
+    return{ok:true,status:'not-published',raceKey:target.race_key,published:false,saved:0,warnings:parsed.warnings,sourceSha256:sourceSha};
+  }
+  if(!parsed.published){
+    await saveEvidence(db,target,page,sourceSha,parsed,checkedAt);
+    await updateTargetStatus(db,target,{status:'parse-empty',error:'No runner blocks parsed from non-placeholder page',checkedAt,sourceSha});
+    return{ok:false,status:'parse-empty',raceKey:target.race_key,published:false,saved:0,warnings:parsed.warnings,sourceSha256:sourceSha};
+  }
   if(target.last_source_sha256===sourceSha&&target.last_status==='published'){
+    await saveEvidence(db,target,page,sourceSha,parsed,checkedAt);
     await updateTargetStatus(db,target,{status:'published',checkedAt,successAt:checkedAt,sourceSha});
     return{ok:true,status:'unchanged',raceKey:target.race_key,published:true,saved:0,parsedCount:parsed.horses.length,warnings:parsed.warnings,sourceSha256:sourceSha};
   }
@@ -131,6 +141,7 @@ export async function ingestPrecardTarget(db,target,{fetchPage=fetchJraPrecardPa
   }
   const names=parsed.horses.map(x=>x.name),marks=names.map(()=>'?').join(',');
   await db.prepare(`UPDATE lab_precard_runner_context SET active_in_latest=0 WHERE race_key=? AND horse_name NOT IN (${marks})`).bind(target.race_key,...names).run();
+  await saveEvidence(db,target,page,sourceSha,parsed,checkedAt);
   await updateTargetStatus(db,target,{status:'published',checkedAt,successAt:checkedAt,sourceSha});
   return{ok:true,status:'published',raceKey:target.race_key,published:true,saved:parsed.horses.length,parsedCount:parsed.horses.length,warnings:parsed.warnings,sourceSha256:sourceSha,authoritativeForCard:false,eligibleForSeal:false};
 }
@@ -153,14 +164,16 @@ export async function precardAudit(db,raceKey){
   const featuredNotOnCard=rows.filter(x=>!officialSet.has(x.horse_name)).map(x=>x.horse_name);
   const cardNotFeatured=official.filter(x=>!preSet.has(x.horse_name)).map(x=>x.horse_name);
   const count=rows.length,pedigreeReady=rows.filter(x=>x.sire&&x.dam&&x.damsire).length,trainerReady=rows.filter(x=>x.trainer).length,age2=rows.filter(x=>Number(x.age)===2).length;
+  const sourceAligned=!evidence||!rows.length||rows.every(x=>x.source_sha256===evidence.source_sha256);
   const warnings=[];
   if(evidence?.published_flag&&!rows.length)warnings.push('published-source-with-zero-active-context-rows');
+  if(!sourceAligned)warnings.push('precard-context-source-evidence-mismatch');
   if(rows.some(x=>Number(x.age)!==2))warnings.push('non-two-year-old-context-row');
   if(count&&pedigreeReady<count)warnings.push('precard-pedigree-incomplete');
   if(count&&trainerReady<count)warnings.push('precard-trainer-incomplete');
   if(enriched.some(x=>x.historyRows===0))warnings.push('zero-history-two-year-old-present');
   if(enriched.some(x=>x.historyRows===1))warnings.push('one-history-two-year-old-present');
-  return{ok:true,version:PRECARD_VERSION,stage:'precard-context-audit',raceKey,target:{date:target.race_date,venue:target.venue,raceNo:Number(target.race_no),raceName:target.race_name,sourceUrl:target.source_url,status:target.last_status,lastCheckedAt:target.last_checked_at,lastSuccessAt:target.last_success_at},sourceEvidence:evidence||null,dataQuality:{featuredRunnerCount:count,age2Count:age2,pedigreeCompleteCount:pedigreeReady,pedigreeCoveragePct:count?Math.round(pedigreeReady/count*1000)/10:0,trainerCompleteCount:trainerReady,trainerCoveragePct:count?Math.round(trainerReady/count*1000)/10:0,zeroHistoryCount:enriched.filter(x=>x.historyRows===0).length,oneHistoryCount:enriched.filter(x=>x.historyRows===1).length,twoPlusHistoryCount:enriched.filter(x=>x.historyRows>=2).length},officialCardComparison:race?{status:'available',officialRunnerCount:Number(race.runner_count||official.length),storedOfficialRows:official.length,matchedCount:matched.length,matched,featuredNotOnCard,cardNotFeatured}:{status:'official-card-not-yet-stored',matchedCount:0,matched:[],featuredNotOnCard:[],cardNotFeatured:[]},warnings,runners:enriched,guardrails:{writesJraRunners:false,writesJraRaces:false,authoritativeForCard:false,eligibleForProspectiveSeal:false,officialNumberedCardStillRequired:true,horseNumbersNeverInferredFromPrecardPage:true}};
+  return{ok:true,version:PRECARD_VERSION,stage:'precard-context-audit',raceKey,target:{date:target.race_date,venue:target.venue,raceNo:Number(target.race_no),raceName:target.race_name,sourceUrl:target.source_url,status:target.last_status,lastCheckedAt:target.last_checked_at,lastSuccessAt:target.last_success_at},sourceEvidence:evidence||null,dataQuality:{featuredRunnerCount:count,age2Count:age2,pedigreeCompleteCount:pedigreeReady,pedigreeCoveragePct:count?Math.round(pedigreeReady/count*1000)/10:0,trainerCompleteCount:trainerReady,trainerCoveragePct:count?Math.round(trainerReady/count*1000)/10:0,zeroHistoryCount:enriched.filter(x=>x.historyRows===0).length,oneHistoryCount:enriched.filter(x=>x.historyRows===1).length,twoPlusHistoryCount:enriched.filter(x=>x.historyRows>=2).length,sourceEvidenceAligned:sourceAligned},officialCardComparison:race?{status:'available',officialRunnerCount:Number(race.runner_count||official.length),storedOfficialRows:official.length,matchedCount:matched.length,matched,featuredNotOnCard,cardNotFeatured}:{status:'official-card-not-yet-stored',matchedCount:0,matched:[],featuredNotOnCard:[],cardNotFeatured:[]},warnings,runners:enriched,guardrails:{writesJraRunners:false,writesJraRaces:false,authoritativeForCard:false,eligibleForProspectiveSeal:false,officialNumberedCardStillRequired:true,horseNumbersNeverInferredFromPrecardPage:true}};
 }
 
 export async function runPrecardSweep(event,env,ctx,{fetchPage=fetchJraPrecardPage,now}={}){

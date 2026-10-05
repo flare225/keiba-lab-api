@@ -58,6 +58,17 @@ function componentPresent(v){
   if(typeof v==="object")return [v.score,v.points,v.rawScore,v.normalizedScore].some(x=>Number.isFinite(Number(x)));
   return false;
 }
+async function evidenceDepth(env,race,date,track){
+  const history=(await env.DB.prepare(`SELECT rr.horse_no,COUNT(p.race_date) AS history_rows
+    FROM jra_runners rr LEFT JOIN jra_past_performances p ON p.horse_name=rr.horse_name AND p.race_date<?
+    WHERE rr.race_key=? GROUP BY rr.horse_no ORDER BY rr.horse_no`).bind(date,race.race_key).all()).results||[];
+  const base=(await env.DB.prepare(`SELECT horse_no,model_coverage_pct,confidence_pct FROM lab_prediction_snapshots
+    WHERE race_key=? AND model_version='1.5.0' AND track_condition=? ORDER BY horse_no`).bind(race.race_key,track).all()).results||[];
+  return{
+    historyByNo:new Map(history.map(x=>[Number(x.horse_no),Number(x.history_rows||0)])),
+    baseByNo:new Map(base.map(x=>[Number(x.horse_no),{modelCoveragePct:x.model_coverage_pct==null?null:Number(x.model_coverage_pct),confidencePct:x.confidence_pct==null?null:Number(x.confidence_pct)}]))
+  };
+}
 async function step7ProspectiveSeal(request,env,ctx){
   const u=new URL(request.url),date=u.searchParams.get("date"),venue=u.searchParams.get("venue"),raceNo=Number(u.searchParams.get("race_no")),track=u.searchParams.get("track")||"良";
   if(!validDate(date)||!venue||!Number.isInteger(raceNo)||raceNo<1||raceNo>12)throw new Error("date=YYYY-MM-DD, venue and race_no=1-12 are required");
@@ -93,12 +104,18 @@ async function step7ProspectiveSeal(request,env,ctx){
   const sourceRows=overlay.data?.runners||[];
   if(sourceRows.length!==runners.length||new Set(sourceRows.map(x=>Number(x.horseNo))).size!==runners.length||!sourceRows.every(x=>runners.some(r=>Number(r.horse_no)===Number(x.horseNo)&&r.horse_name===x.horseName)))throw new Error(`prediction coverage incomplete: ${sourceRows.length}/${runners.length}`);
 
-  const predictions=sourceRows.map(r=>({
-    horseNo:Number(r.horseNo),frameNo:Number(r.frameNo),horseName:r.horseName,rank:Number(r.rank),score:Number(r.confidenceAware100Points),
-    workoutOverlayApplied:Boolean(r.workoutOverlayApplied),workoutVerified:Boolean(r.workoutEvidence?.verified),workoutEvidenceConfidence:r.workoutEvidence?.confidence||null,
-    paceStyleImputed:Boolean(r.evidenceFlags?.paceStyleImputed),conditionEvidenceConfidence:r.conditionEvidenceConfidence||null,
-    components:r.baseComponents||null,conditionPrepProxyScore:r.conditionPrepProxyScore??null
-  })).sort((a,b)=>a.rank-b.rank);
+  const depth=await evidenceDepth(env,race,date,track);
+  const predictions=sourceRows.map(r=>{
+    const base=depth.baseByNo.get(Number(r.horseNo))||{};
+    return{
+      horseNo:Number(r.horseNo),frameNo:Number(r.frameNo),horseName:r.horseName,rank:Number(r.rank),score:Number(r.confidenceAware100Points),
+      historyRows:depth.historyByNo.get(Number(r.horseNo))??0,
+      baseEvidenceModelCoveragePct:base.modelCoveragePct??null,baseEvidenceConfidencePct:base.confidencePct??null,
+      workoutOverlayApplied:Boolean(r.workoutOverlayApplied),workoutVerified:Boolean(r.workoutEvidence?.verified),workoutEvidenceConfidence:r.workoutEvidence?.confidence||null,
+      paceStyleImputed:Boolean(r.evidenceFlags?.paceStyleImputed),conditionEvidenceConfidence:r.conditionEvidenceConfidence||null,
+      components:r.baseComponents||null,conditionPrepProxyScore:r.conditionPrepProxyScore??null
+    };
+  }).sort((a,b)=>a.rank-b.rank);
 
   const componentKeys=["basicAbilityResults","recentPerformanceDevelopment","paceStyleFit","courseDistanceFit","ground"];
   const componentCoverage={};
@@ -109,11 +126,16 @@ async function step7ProspectiveSeal(request,env,ctx){
   const verifiedWorkoutCount=predictions.filter(r=>r.workoutVerified).length;
   const paceImputedCount=predictions.filter(r=>r.paceStyleImputed).length;
   const conditionNonVeryLowCount=predictions.filter(r=>!["very-low","none",null].includes(r.conditionEvidenceConfidence)).length;
+  const zeroHistoryCount=predictions.filter(r=>r.historyRows===0).length;
+  const oneHistoryCount=predictions.filter(r=>r.historyRows===1).length;
+  const twoPlusHistoryCount=predictions.filter(r=>r.historyRows>=2).length;
+  const baseConfidenceKnown=predictions.filter(r=>Number.isFinite(r.baseEvidenceConfidencePct)).length;
   const futureDayLock=date>today;
   const sealKind=futureDayLock?"prospective-holdout":"same-day-pre-result-time-unverified";
   const quality={
     predictionCoveragePct:100,
     componentCoverage,
+    evidenceDepth:{zeroHistoryCount,oneHistoryCount,twoPlusHistoryCount,thinHistoryCount:zeroHistoryCount+oneHistoryCount,baseConfidenceKnownCount:baseConfidenceKnown,baseConfidenceCoveragePct:round1(baseConfidenceKnown/predictions.length*100)},
     verifiedWorkoutCount,verifiedWorkoutPct:round1(verifiedWorkoutCount/predictions.length*100),
     paceStyleImputedCount,paceStyleObservedPct:round1((predictions.length-paceImputedCount)/predictions.length*100),
     conditionEvidenceNonVeryLowCount,conditionEvidenceNonVeryLowPct:round1(conditionNonVeryLowCount/predictions.length*100),
@@ -123,20 +145,18 @@ async function step7ProspectiveSeal(request,env,ctx){
   const weights={basicAbilityResults:25,recentPerformanceDevelopment:20,paceStyleFit:20,courseDistanceFit:15,ground:10,conditionPrep:10};
   const sealedAt=new Date().toISOString();
   const snapshot={
-    schemaVersion:"3.3.0",cardEvidence, race:{raceKey:race.race_key,date:race.race_date,venue:race.venue,raceNo:race.race_no,raceName:race.race_name,surface:race.surface,distance:race.distance,runnerCount:runners.length,trackCondition:track},
-    sealKind,sourcePipeline:"repaired-history-parser + confidence-aware overlay",weights,quality,
+    schemaVersion:"3.3.0+evidence-depth",cardEvidence,race:{raceKey:race.race_key,date:race.race_date,venue:race.venue,raceNo:race.race_no,raceName:race.race_name,surface:race.surface,distance:race.distance,runnerCount:runners.length,trackCondition:track},
+    sealKind,sourcePipeline:"repaired-history-parser + confidence-aware overlay + evidence-depth audit",weights,quality,
     top5:predictions.slice(0,5),runners:predictions
   };
   const snapshotJson=JSON.stringify(snapshot);
   const hash=await sha256Hex(snapshotJson);
 
-  // Recheck exact card identity after the prediction pipeline, then commit both seal rows together.
   await requireLockEvidence(env.DB,race,runners);
   await ensureCardSealGuard(env.DB);
   try{
     await writeAtomicSeal(env.DB,{raceKey:race.race_key,date,modelVersion,track,sealKind,weights,snapshotJson,hash,runnerCount:runners.length,futureDayLock,quality,sealedAt});
   }catch(error){
-    // A concurrent caller may have won the unique-key insert. Verify and return that winner.
     const winner=await env.DB.prepare(`SELECT l.snapshot_json,l.seal_kind,l.sealed_at,s.snapshot_sha256,s.quality_json,s.future_day_lock FROM lab_model_locks l JOIN lab_prospective_seals s ON s.race_key=l.race_key AND s.model_version=l.model_version AND s.track_condition=l.track_condition WHERE l.race_key=? AND l.model_version=? AND l.track_condition=?`).bind(race.race_key,modelVersion,track).first();
     if(!winner)throw error;
     const snap=await verifyStoredSeal(winner);
@@ -149,7 +169,7 @@ async function step7ProspectiveSeal(request,env,ctx){
     seal:{modelVersion,sealKind,sealedAt,snapshotSha256:hash,immutable:true,futureDayLock,prospectiveValidationCreditEligible:futureDayLock},
     quality,
     top5:snapshot.top5,
-    guardrails:{officialOutcomeRowsAtSeal:0,targetResultQueried:false,weightMutation:false,resealOverwritesExisting:false,snapshotTamperEvidence:"SHA-256"},
+    guardrails:{officialOutcomeRowsAtSeal:0,targetResultQueried:false,weightMutation:false,resealOverwritesExisting:false,snapshotTamperEvidence:"SHA-256",evidenceDepthRecordedWithoutScoreMutation:true},
     next:futureDayLock?"Keep this snapshot untouched. After the race, ingest official outcomes and run prospective validation against this exact sealed hash.":"This same-day seal is useful operationally but does not receive strict future-day holdout credit because post time is not stored yet."
   };
 }

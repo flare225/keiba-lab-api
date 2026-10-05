@@ -18,7 +18,7 @@ env:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
 
@@ -63,6 +63,58 @@ jobs:
           echo "Last deploy-check response:" >&2
           printf '%s\n' "$last" >&2
           exit 1
+
+      - name: Backfill and verify 2026-10-04 all-race cards
+        id: history
+        shell: bash
+        run: |
+          set -euo pipefail
+          date='2026-10-04'
+          audit_url="$PRODUCTION_URL/v1/lab/storage-audit?from=$date&to=$date"
+          audit="$(curl -fsS --max-time 20 "$audit_url")"
+          program_count="$(printf '%s' "$audit" | jq -r '.totals.programRaces // 0')"
+          complete="$(printf '%s' "$audit" | jq -r '.allCardsComplete // false')"
+          test "$program_count" -gt 0
+
+          if [[ "$complete" != 'true' ]]; then
+            echo "Historical coverage incomplete; backfilling $program_count programs for $date"
+            for ((cursor=0; cursor<program_count; cursor+=8)); do
+              success=false
+              for attempt in 1 2 3; do
+                body="$(curl -fsS --max-time 90 "$PRODUCTION_URL/v1/lab/card-ingest?date=$date&cursor=$cursor&limit=8" || true)"
+                echo "Batch cursor=$cursor attempt=$attempt"
+                printf '%s\n' "$body" | jq '{ok,date,programRaceCount,attempted,storedRaceCards,storedRunners,cursor,nextCursor,runs}' || true
+                batch_ok="$(printf '%s' "$body" | jq -r '.ok // false' 2>/dev/null || true)"
+                if [[ "$batch_ok" == 'true' ]]; then
+                  success=true
+                  break
+                fi
+                sleep $((attempt * 5))
+              done
+              if [[ "$success" != 'true' ]]; then
+                echo "Backfill batch cursor=$cursor did not fully succeed after retries; final audit will determine coverage." >&2
+              fi
+            done
+          else
+            echo "$date is already fully covered; no backfill needed."
+          fi
+
+          final="$(curl -fsS --max-time 20 "$audit_url")"
+          printf '%s\n' "$final" | jq '{ok,from,to,totals,dates,allCardsComplete,missingCards,anomalies}'
+          all_complete="$(printf '%s' "$final" | jq -r '.allCardsComplete // false')"
+          cards="$(printf '%s' "$final" | jq -r '.totals.raceCardsStored // 0')"
+          programs="$(printf '%s' "$final" | jq -r '.totals.programRaces // 0')"
+          runners="$(printf '%s' "$final" | jq -r '.totals.runnersStored // 0')"
+          declared="$(printf '%s' "$final" | jq -r '.totals.declaredRunners // 0')"
+          anomalies="$(printf '%s' "$final" | jq -r '.anomalies | length')"
+          test "$all_complete" = 'true'
+          test "$cards" -eq "$programs"
+          test "$runners" -eq "$declared"
+          test "$anomalies" -eq 0
+          echo "programs=$programs" >> "$GITHUB_OUTPUT"
+          echo "cards=$cards" >> "$GITHUB_OUTPUT"
+          echo "runners=$runners" >> "$GITHUB_OUTPUT"
+          echo "declared=$declared" >> "$GITHUB_OUTPUT"
 
       - name: Read scheduler observability
         id: scheduler
@@ -135,6 +187,8 @@ jobs:
           {
             echo "## KEIBA LABO production smoke"
             echo "- Expected/deployed version: ${{ steps.expected.outputs.version }}"
+            echo "- 2026-10-04 historical coverage: ${{ steps.history.outputs.cards }}/${{ steps.history.outputs.programs }} races"
+            echo "- 2026-10-04 runner coverage: ${{ steps.history.outputs.runners }}/${{ steps.history.outputs.declared }} runners"
             echo "- Scheduler endpoint reachable: yes"
             echo "- Cron heartbeat: ${{ steps.scheduler.outputs.heartbeat }}"
             echo "- Saudi RC pre-card schema/seed: verified"

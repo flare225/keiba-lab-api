@@ -65,6 +65,7 @@ jobs:
           exit 1
 
       - name: Read scheduler observability
+        id: scheduler
         shell: bash
         run: |
           set -euo pipefail
@@ -72,12 +73,44 @@ jobs:
           ok="$(printf '%s' "$body" | jq -r '.ok // false')"
           test "$ok" = "true"
           heartbeat="$(printf '%s' "$body" | jq -r '.cronHeartbeat // "unknown"')"
+          echo "heartbeat=$heartbeat" >> "$GITHUB_OUTPUT"
           echo "Cron heartbeat: $heartbeat"
           printf '%s\n' "$body" | jq '{ok,version,checkedAt,configuredCron,cronHeartbeat,latestScheduled}'
+
+      - name: Verify Saudi RC pre-card schema and seed
+        id: precard
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$(curl -fsS --max-time 15 "$PRODUCTION_URL/v1/lab/precard-context-status")"
+          ok="$(printf '%s' "$body" | jq -r '.ok // false')"
+          race_key="$(printf '%s' "$body" | jq -r '.raceKey // empty')"
+          race_date="$(printf '%s' "$body" | jq -r '.target.date // empty')"
+          race_name="$(printf '%s' "$body" | jq -r '.target.raceName // empty')"
+          status="$(printf '%s' "$body" | jq -r '.target.status // empty')"
+          authoritative="$(printf '%s' "$body" | jq -r '.guardrails.authoritativeForCard // true')"
+          seal_eligible="$(printf '%s' "$body" | jq -r '.guardrails.eligibleForProspectiveSeal // true')"
+          official_required="$(printf '%s' "$body" | jq -r '.guardrails.officialNumberedCardStillRequired // false')"
+          test "$ok" = "true"
+          test "$race_key" = "2026-10-10:東京:11"
+          test "$race_date" = "2026-10-10"
+          test "$race_name" = "サウジアラビアロイヤルカップ"
+          test "$authoritative" = "false"
+          test "$seal_eligible" = "false"
+          test "$official_required" = "true"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "Saudi RC pre-card target is seeded; status: $status"
+          printf '%s\n' "$body" | jq '{ok,version,raceKey,target,dataQuality,officialCardComparison,warnings,guardrails}'
+
+      - name: Write production summary
+        shell: bash
+        run: |
           {
             echo "## KEIBA LABO production smoke"
             echo "- Expected/deployed version: ${{ steps.expected.outputs.version }}"
             echo "- Scheduler endpoint reachable: yes"
-            echo "- Cron heartbeat: $heartbeat"
-            echo "- Note: heartbeat is reported; not-observed/overdue does not fail deployment smoke. Cron proof is audited separately."
+            echo "- Cron heartbeat: ${{ steps.scheduler.outputs.heartbeat }}"
+            echo "- Saudi RC pre-card schema/seed: verified"
+            echo "- Saudi RC pre-card status: ${{ steps.precard.outputs.status }}"
+            echo "- Pre-card context remains non-authoritative and cannot satisfy prospective LOCK by itself."
           } >> "$GITHUB_STEP_SUMMARY"

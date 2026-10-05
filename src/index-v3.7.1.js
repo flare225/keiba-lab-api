@@ -122,12 +122,14 @@ export default{
 
 export async function runScheduled(event,env,ctx,deps={stage:app.fetch,ingest:ingestDay,today}){
  const date=deps.today(),upcoming=Array.from({length:8},(_,i)=>{const d=new Date(`${date}T00:00:00Z`);d.setUTCDate(d.getUTCDate()+i);return d.toISOString().slice(0,10);});
- await deps.stage(new Request(`https://keiba-lab.internal/v1/lab/meeting-prep?dates=${upcoming.join(',')}`),env,ctx);
+ const stageResponse=await deps.stage(new Request(`https://keiba-lab.internal/v1/lab/meeting-prep?dates=${upcoming.join(',')}`),env,ctx);
+ const staging=await stageResponse.json();
+ if(!stageResponse.ok||!staging.ok)throw new Error(`Program staging failed: ${staging.error||'no successful dates'}`);
  const dates=(await env.DB.prepare('SELECT DISTINCT race_date FROM jra_race_program WHERE race_date>=? ORDER BY race_date LIMIT 3').bind(date).all()).results||[];
  const hour=Math.floor(event.scheduledTime/3600000),slot=Math.floor(hour/3)%3;
  // Two dates per run leave source-request capacity for staging and redirects.
  const selected=dates.length<3?dates:dates.filter((_,i)=>i!==hour%3);
  const runs=[];
  for(const row of selected){try{runs.push(await deps.ingest(new Request(`https://keiba-lab.internal/v1/lab/card-ingest?date=${row.race_date}&cursor=${slot*8}`),env,ctx));}catch(error){console.error('card ingestion failed',row.race_date,String(error));runs.push({date:row.race_date,ok:false,error:String(error)});}}
- return {date,runs};
+ return {date,staging:{successfulDates:staging.successfulDates,totalProgramRaces:staging.totalProgramRaces,runs:staging.runs},runs};
 }

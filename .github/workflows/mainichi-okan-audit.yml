@@ -1,4 +1,5 @@
 name: Mainichi Okan pre-race evidence audit
+# v3.25.1 fail-closed verification
 on:
   push:
     branches: [audit/mainichi-okan-pre-race-evidence]

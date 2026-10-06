@@ -69,7 +69,11 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsS --retry 8 --retry-delay 3 --retry-all-errors --max-time 20 "$PRODUCTION_URL/lab/expected-preview" -o /tmp/expected-preview.html
-          node -e "const h=require('fs').readFileSync('/tmp/expected-preview.html','utf8'); if(!h.includes('ライーリーアース')||!h.includes('/lab/mark-comparison-client.js')||!h.includes('comparisonTarget'))process.exit(1)"
+          node -e "const h=require('fs').readFileSync('/tmp/expected-preview.html','utf8'); if(!h.includes('アイルランドトロフィー')||!h.includes('2026-10-11')||!h.includes('/lab/mark-comparison-client.js')||!h.includes('comparisonTarget'))process.exit(1)"
+          curl -fsS --get --max-time 30 "$PRODUCTION_URL/lab/expected-preview" --data-urlencode 'date=2026-10-10' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11' -o /tmp/saudi-preview.html
+          node -e "const h=require('fs').readFileSync('/tmp/saudi-preview.html','utf8');if(!h.includes('サウジアラビアロイヤルカップ')||!h.includes('comparisonTarget'))process.exit(1)"
+          curl -fsS --max-time 60 -X POST "$PRODUCTION_URL/v1/lab/expected-runner-assessment" -H 'content-type: application/json' --data '{"date":"2026-10-11","venue":"東京","raceNo":11,"phase":"initial","sourceSnapshotId":"netkeiba-ireland-20261007-v1","marks":[{"horseName":"カムニャック","mark":"注"}]}' -o /tmp/ireland-assessment.json
+          jq -e '.ok == true and .race.date == "2026-10-11" and .assessment.runnerPool == 18 and .assessment.guardrails.fullExpectedRunnerPool == true and .assessment.guardrails.noExternalFetch == true and .assessment.guardrails.humanMarksUsedInScore == false and all(.audit.historySidecar[].recent[]; .date < "2026-10-11")' /tmp/ireland-assessment.json
           curl -fsS --max-time 20 "$PRODUCTION_URL/lab/mark-comparison-client.js" -o /tmp/mark-comparison-client.js
           curl -fsS --max-time 20 "$PRODUCTION_URL/lab/mark-comparison-core.js" -o /tmp/mark-comparison-core.js
           node -e "const fs=require('fs'),c=fs.readFileSync('/tmp/mark-comparison-client.js','utf8'),r=fs.readFileSync('/tmp/mark-comparison-core.js','utf8');if(!c.includes('/v1/lab/mark-comparison')||!c.includes('initComparison({document})')||!r.includes('buildMarkComparison'))process.exit(1)"

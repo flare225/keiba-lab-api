@@ -5,7 +5,7 @@ import {EXPECTED_SOURCES,validatePreview,historyForExpected,expectedRunnerPrevie
 import {expectedPreviewPage} from '../src/expected-preview-page-v3.30.0.js';
 const source=EXPECTED_SOURCES[0];
 const input={date:source.date,venue:source.venue,raceNo:source.raceNo,phase:'initial',marks:[{horseName:'デミアン',mark:'◎'}]};
-function db(profiles=[],rich=[],failure){return {prepare(sql){assert.doesNotMatch(sql,/\b(?:INSERT|UPDATE|DELETE|odds|popularity)\b/i);return{bind(...args){assert.equal(args.at(-1),source.date);return{async all(){if(failure)throw Error(failure);return{results:sql.includes('FROM jra_past_performances')?profiles:rich}}}}}}}}
+function db(profiles=[],rich=[],failure){return {prepare(sql){assert.doesNotMatch(sql,/\b(?:INSERT|UPDATE|DELETE|odds|popularity)\b/i);return{bind(...args){assert.equal(args.at(-1),source.date);return{async all(){if(failure)throw Error(failure);return{results:sql.includes('lab_expected_history_snapshots')?[]:sql.includes('FROM jra_past_performances')?profiles:rich}}}}}}}}
 test('latest snapshot validates names and preserves human marks without horse numbers',()=>{
  assert.equal(source.names.length,12);assert.ok(source.names.includes('ライーリーアース'));assert.ok(!source.names.includes('レゾルーティオ'));
  assert.deepEqual(validatePreview(input).marks,[{horseName:'デミアン',mark:'◎',horseNo:null}]);
@@ -36,4 +36,14 @@ test('browser page lists all expected runners and its inline script compiles',()
  for(const name of source.names)assert.ok(html.includes(name));
  assert.ok(html.includes('/v1/lab/expected-runner-preview'));
  const scripts=[...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)];assert.ok(scripts.length);for(const [,code] of scripts)new Script(code);
+});
+
+import {EXPECTED_HISTORY_ROWS,ingestExpectedHistory} from '../src/expected-history-snapshot-v3.30.0.js';
+test('verified history seed covers all twelve, has last3f and cannot write official tables',async()=>{
+ assert.equal(new Set(EXPECTED_HISTORY_ROWS.map(r=>r.horse_name)).size,12);
+ assert.equal(EXPECTED_HISTORY_ROWS.length,18);
+ for(const row of EXPECTED_HISTORY_ROWS){assert.ok(row.race_date<source.date);assert.ok(row.last3f>0);assert.ok(source.names.includes(row.horse_name))}
+ const queries=[]; const fake={prepare(sql){queries.push(sql);return{run:async()=>{},bind(){return this}}},batch:async statements=>{assert.equal(statements.length,18)}};
+ const result=await ingestExpectedHistory(fake,source);assert.equal(result.officialTablesModified,false);
+ for(const sql of queries)assert.match(sql,/lab_expected_history_snapshots/);
 });

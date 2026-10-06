@@ -116,6 +116,23 @@ jobs:
           echo "runners=$runners" >> "$GITHUB_OUTPUT"
           echo "declared=$declared" >> "$GITHUB_OUTPUT"
 
+      - name: Backfill replay-safe horse history
+        id: replay_history
+        shell: bash
+        run: |
+          set -euo pipefail
+          for venue in 東京 京都; do
+            before="$(curl -fsS --get --max-time 30 "$PRODUCTION_URL/v1/lab/history-status" --data-urlencode 'date=2026-10-04' --data-urlencode "venue=$venue" --data-urlencode 'race_no=11')"
+            coverage="$(printf '%s' "$before" | jq -r '.coveragePct // 0')"
+            echo "$venue prior-history coverage before: $coverage%"
+            if awk "BEGIN {exit !($coverage < 100)}"; then
+              ingest="$(curl -fsS --get --max-time 150 "$PRODUCTION_URL/v1/lab/history-ingest" --data-urlencode 'date=2026-10-04' --data-urlencode "venue=$venue" --data-urlencode 'race_no=11' --data-urlencode 'limit=5')"
+              printf '%s\n' "$ingest" | jq '{ok,stage,race,historyLimit,profileLinksFound,horsesWithHistory,savedRows,failed,leakageGuard,results:[.results[]|{horseName,status,rows,reason}]}'
+            fi
+            after="$(curl -fsS --get --max-time 30 "$PRODUCTION_URL/v1/lab/history-status" --data-urlencode 'date=2026-10-04' --data-urlencode "venue=$venue" --data-urlencode 'race_no=11')"
+            printf '%s\n' "$after" | jq '{raceKey,runnerCount,horsesCovered,coveragePct,totalHistoryRows,runners}'
+          done
+
       - name: Verify result-blind replay targets
         id: replay
         shell: bash
@@ -130,6 +147,7 @@ jobs:
             available="$(printf '%s' "$body" | jq -r '.replay.available // .prediction.available // false')"
             echo "$item grade=$grade available=$available"
             printf '%s\n' "$body" | jq '{race,evidence,replay:(.replay|{available,model,coverageCeilingPct,top5,meaning,reason,scoredRunners,runnerCount}),guardrails}'
+            test "$grade" != 'NO_RECORD'
             if [[ "$grade" == 'RESULT_BLIND_REPLAY' ]]; then
               test "$(printf '%s' "$body" | jq -r '.guardrails.targetRaceOutcomeQueried')" = 'false'
               test "$(printf '%s' "$body" | jq -r '.guardrails.targetRaceResultFieldsUsed')" = 'false'

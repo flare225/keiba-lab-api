@@ -191,13 +191,18 @@ jobs:
         run: |
           set -euo pipefail
           for venue in 東京 京都; do
-            body="$(curl -fsS --max-time 180 -X POST "$PRODUCTION_URL/v1/lab/result-enrich" -H 'content-type: application/json' --data "{\"date\":\"2026-10-04\",\"venue\":\"$venue\",\"raceNo\":11,\"confirm\":\"INGEST\"}")"
-            printf '%s\\n' "$body" | jq '{ok,stage,raceKey,runnerCount,storedRows,complete,identity,guardrails}'
-            test "$(printf '%s' "$body" | jq -r '.ok // false')" = 'true'
             compare="$(curl -fsS --get --max-time 90 "$PRODUCTION_URL/v1/lab/replay-compare" --data-urlencode 'date=2026-10-04' --data-urlencode "venue=$venue" --data-urlencode 'race_no=11')"
-            printf '%s\\n' "$compare" | jq '{race:.race.raceName,last3fCoverage:.comparison.last3fCoverage,actualTop3:.comparison.actualTop3}'
-            finishers="$(printf '%s' "$compare" | jq -r '.comparison.last3fCoverage.finishers // 0')"
-            recorded="$(printf '%s' "$compare" | jq -r '.comparison.last3fCoverage.recorded // 0')"
+            finishers="$(printf '%s\n' "$compare" | jq -r '.comparison.last3fCoverage.finishers // 0')"
+            recorded="$(printf '%s\n' "$compare" | jq -r '.comparison.last3fCoverage.recorded // 0')"
+            if [[ "$finishers" -eq 0 || "$recorded" -ne "$finishers" ]]; then
+              body="$(curl -fsS --max-time 180 -X POST "$PRODUCTION_URL/v1/lab/result-enrich" -H 'content-type: application/json' --data "{\"date\":\"2026-10-04\",\"venue\":\"$venue\",\"raceNo\":11,\"confirm\":\"INGEST\"}")"
+              printf '%s\n' "$body" | jq '{ok,stage,raceKey,runnerCount,storedRows,complete,identity,guardrails}'
+              test "$(printf '%s' "$body" | jq -r '.ok // false')" = 'true'
+              compare="$(curl -fsS --get --max-time 90 "$PRODUCTION_URL/v1/lab/replay-compare" --data-urlencode 'date=2026-10-04' --data-urlencode "venue=$venue" --data-urlencode 'race_no=11')"
+            fi
+            printf '%s\n' "$compare" | jq '{race:.race.raceName,last3fCoverage:.comparison.last3fCoverage,actualTop3:.comparison.actualTop3}'
+            finishers="$(printf '%s\n' "$compare" | jq -r '.comparison.last3fCoverage.finishers // 0')"
+            recorded="$(printf '%s\n' "$compare" | jq -r '.comparison.last3fCoverage.recorded // 0')"
             test "$finishers" -gt 0
             test "$recorded" -eq "$finishers"
             test "$(printf '%s' "$compare" | jq -r '.comparison.guardrails.resultNeverFeedsReplayScore')" = 'true'

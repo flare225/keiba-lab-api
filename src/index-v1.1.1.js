@@ -266,15 +266,18 @@ function courseFromContext(allText, raceName) {
     if (index >= 0) context = allText.slice(Math.max(0, index - 250), index + 1600);
   }
   const patterns = [
-    /(芝|ダート|障害)\s*([123][0-9]{3})\s*(?:m|メートル)?/i,
-    /([123][0-9]{3})\s*(?:m|メートル)?\s*(芝|ダート|障害)/i,
-    /コース：[^。]{0,120}(芝|ダート|障害)[^0-9]{0,30}([123][0-9]{3})/i,
+    /コース[：:]\s*([123][0-9,，]{3,4})\s*(?:m|メートル)?[^。\n]{0,40}[（(]?\s*(芝|ダート|障害)/i,
+    /コース[：:][^。\n]{0,80}(芝|ダート|障害)[^0-9]{0,30}([123][0-9,，]{3,4})/i,
+    /(芝|ダート|障害)\s*([123][0-9,，]{3,4})\s*(?:m|メートル)?/i,
+    /([123][0-9,，]{3,4})\s*(?:m|メートル)?\s*(芝|ダート|障害)/i,
   ];
   for (const pattern of patterns) {
     const match = context.match(pattern);
     if (!match) continue;
-    if (/^\d/.test(match[1])) return { surface: match[2] || null, distance: Number(match[1]) || null };
-    return { surface: match[1] || null, distance: Number(match[2]) || null };
+    const first = String(match[1] || "").replace(/[,，]/g, "");
+    const second = String(match[2] || "").replace(/[,，]/g, "");
+    if (/^\d/.test(first)) return { surface: match[2] || null, distance: Number(first) || null };
+    return { surface: match[1] || null, distance: Number(second) || null };
   }
   return { surface: null, distance: null };
 }

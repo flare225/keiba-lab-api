@@ -116,6 +116,29 @@ jobs:
           echo "runners=$runners" >> "$GITHUB_OUTPUT"
           echo "declared=$declared" >> "$GITHUB_OUTPUT"
 
+      - name: Verify result-blind replay targets
+        id: replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          mainichi="$(curl -fsS --get --max-time 30 "$PRODUCTION_URL/v1/lab/replay" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11')"
+          kyoto="$(curl -fsS --get --max-time 30 "$PRODUCTION_URL/v1/lab/replay" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=京都' --data-urlencode 'race_no=11')"
+          for item in mainichi kyoto; do
+            body="${!item}"
+            test "$(printf '%s' "$body" | jq -r '.ok // false')" = 'true'
+            grade="$(printf '%s' "$body" | jq -r '.evidence.grade // "NO_RECORD"')"
+            available="$(printf '%s' "$body" | jq -r '.replay.available // .prediction.available // false')"
+            echo "$item grade=$grade available=$available"
+            printf '%s\n' "$body" | jq '{race,evidence,replay:{available,model,coverageCeilingPct,top5,meaning},guardrails}'
+            if [[ "$grade" == 'RESULT_BLIND_REPLAY' ]]; then
+              test "$(printf '%s' "$body" | jq -r '.guardrails.targetRaceOutcomeQueried')" = 'false'
+              test "$(printf '%s' "$body" | jq -r '.guardrails.targetRaceResultFieldsUsed')" = 'false'
+              test "$(printf '%s' "$body" | jq -r '.guardrails.accuracyCredit')" = 'false'
+              test "$(printf '%s' "$body" | jq -r '.replay.top5 | length')" -eq 5
+            fi
+            echo "${item}_grade=$grade" >> "$GITHUB_OUTPUT"
+          done
+
       - name: Read scheduler observability
         id: scheduler
         shell: bash
@@ -189,6 +212,8 @@ jobs:
             echo "- Expected/deployed version: ${{ steps.expected.outputs.version }}"
             echo "- 2026-10-04 historical coverage: ${{ steps.history.outputs.cards }}/${{ steps.history.outputs.programs }} races"
             echo "- 2026-10-04 runner coverage: ${{ steps.history.outputs.runners }}/${{ steps.history.outputs.declared }} runners"
+            echo "- Mainichi Okan evidence: ${{ steps.replay.outputs.mainichi_grade }}"
+            echo "- Kyoto Daishoten evidence: ${{ steps.replay.outputs.kyoto_grade }}"
             echo "- Scheduler endpoint reachable: yes"
             echo "- Cron heartbeat: ${{ steps.scheduler.outputs.heartbeat }}"
             echo "- Saudi RC pre-card schema/seed: verified"

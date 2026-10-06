@@ -133,6 +133,21 @@ jobs:
             printf '%s\n' "$after" | jq '{raceKey,runnerCount,horsesCovered,coveragePct,totalHistoryRows,runners}'
           done
 
+      - name: Refresh replay target course metadata
+        id: replay_course
+        shell: bash
+        run: |
+          set -euo pipefail
+          for spec in '東京 11 1800' '京都 11 2400'; do
+            read -r venue race_no expected <<<"$spec"
+            body="$(curl -fsS --get --max-time 30 "$PRODUCTION_URL/v1/jra/refresh-race" --data-urlencode 'date=2026-10-04' --data-urlencode "venue=$venue" --data-urlencode "race_no=$race_no")"
+            printf '%s\n' "$body" | jq '{ok,stage,raceKey,before,after,guardrails}'
+            test "$(printf '%s' "$body" | jq -r '.ok')" = 'true'
+            test "$(printf '%s' "$body" | jq -r '.after.distance')" -eq "$expected"
+            test "$(printf '%s' "$body" | jq -r '.guardrails.runnerRowsMutated')" = 'false'
+            test "$(printf '%s' "$body" | jq -r '.guardrails.resultFieldsRead')" = 'false'
+          done
+
       - name: Verify result-blind replay targets
         id: replay
         shell: bash

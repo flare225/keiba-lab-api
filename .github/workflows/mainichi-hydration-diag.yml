@@ -1,0 +1,16 @@
+name: Mainichi hydration diagnostic
+on:
+  push:
+    branches: [diag/mainichi-hydration]
+permissions:
+  contents: read
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print Mainichi replay hydration
+        run: |
+          curl -fsS --get --max-time 60 'https://keiba-lab-api.sekai-no-bancyou.workers.dev/v1/lab/replay' \
+            --data-urlencode 'date=2026-10-04' \
+            --data-urlencode 'venue=東京' \
+            --data-urlencode 'race_no=11' | jq '{version,race,evidence,replay,hydration,guardrails}'

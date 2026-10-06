@@ -127,7 +127,7 @@ function parsePastPerformances(html, horseName, profileUrl, beforeDate, limit) {
 
     const body = parseBodyWeight(cells[10] || "");
     const finishRaw = cells[7] || "";
-    const finishPosition = /^\d+$/.test(finishRaw.trim()) ? Number(finishRaw.trim()) : null;
+    const finishPosition = parseInteger(finishRaw);
     const fieldSize = parseInteger(cells[5]);
     const popularity = parseInteger(cells[6]);
     const assignedWeight = parseFloatValue(cells[9]);
@@ -398,3 +398,5 @@ export default {
     if (app.scheduled) return app.scheduled(event, env, ctx);
   },
 };
+
+export {parsePastPerformances};

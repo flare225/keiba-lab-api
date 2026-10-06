@@ -280,14 +280,14 @@ function courseFromContext(allText, raceName) {
     if (index >= 0) context = allText.slice(Math.max(0, index - 250), index + 1600);
   }
   const patterns = [
-    /コース：\s*([123][0-9]{3})\s*(?:メートル|m)?\s*[（(](芝|ダート|障害)/i,
+    /コース[：:]\s*([123][0-9,，]{3,4})\s*(?:メートル|m)?[^。\n]{0,40}[（(]?\s*(芝|ダート|障害)/i,
     /(芝|ダート|障害)\s*([123][0-9]{3})\s*(?:m|メートル)?/i,
     /([123][0-9]{3})\s*(?:m|メートル)?\s*(芝|ダート|障害)/i,
   ];
   for (const pattern of patterns) {
     const match = context.match(pattern);
     if (!match) continue;
-    if (/^\d/.test(match[1])) return { surface: match[2] || null, distance: Number(match[1]) || null };
+    if (/^\d/.test(match[1])) return { surface: match[2] || null, distance: Number(String(match[1]).replace(/[,，]/g,'')) || null };
     return { surface: match[1] || null, distance: Number(match[2]) || null };
   }
   return { surface: null, distance: null };
@@ -410,4 +410,4 @@ export default {
   },
 };
 // Shared with date-specific ingestion; keep the existing repair behavior.
-export {fetchHtml, extractLinks, metaFromRacecardUrl, parseRace, extractRunners};
+export {fetchHtml, extractLinks, metaFromRacecardUrl, parseRace, extractRunners, courseFromContext};

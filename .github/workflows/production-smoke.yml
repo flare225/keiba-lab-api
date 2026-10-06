@@ -161,6 +161,8 @@ jobs:
             grade="$(printf '%s' "$body" | jq -r '.evidence.grade // "NO_RECORD"')"
             available="$(printf '%s' "$body" | jq -r '.replay.available // .prediction.available // false')"
             echo "$item grade=$grade available=$available"
+            test "$grade" = 'RESULT_BLIND_REPLAY'
+            test "$available" = 'true'
             printf '%s\n' "$body" | jq '{race,evidence,replay:(.replay|{available,model,coverageCeilingPct,top5,meaning,reason,scoredRunners,runnerCount}),guardrails}'
             test "$grade" != 'NO_RECORD'
             if [[ "$grade" == 'RESULT_BLIND_REPLAY' ]]; then

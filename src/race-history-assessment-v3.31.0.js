@@ -11,7 +11,7 @@ export async function assessmentContext(db,input){
  if(!race){const expected=EXPECTED_SOURCES.find(s=>s.date===t.date&&s.venue===t.venue&&s.raceNo===t.raceNo);if(expected)return{...expected,official:false};throw Error('正式出馬表がまだ保存されていません。出馬表の取り込み後に精査できます。')}
  const runners=(await db.prepare('SELECT horse_no,horse_name,age FROM jra_runners WHERE race_key=? ORDER BY horse_no').bind(race.race_key).all()).results||[];
  if(!runners.length||runners.length!==Number(race.runner_count)||new Set(runners.map(r=>r.horse_name)).size!==runners.length)throw Error('正式出馬表の保存が不完全です。精査を保留します。');
- if(!['芝','ダート'].includes(race.surface)||!Number.isFinite(Number(race.distance))||Number(race.distance)<=0)throw Error('芝・ダートと距離のデータを確認できません。精査を保留します。');
+ if(!['芝','ダート','障害','障害芝','障害ダート','芝・ダート'].includes(race.surface)||!Number.isFinite(Number(race.distance))||Number(race.distance)<=0)throw Error('芝・ダートと距離のデータを確認できません。精査を保留します。');
  return{raceKey:race.race_key,...t,raceName:race.race_name,surface:race.surface,distance:Number(race.distance),names:runners.map(r=>r.horse_name),runners,official:true,provider:'stored-JRA-card',snapshotId:null};
 }
 export async function raceHistoryAssessment(db,input){

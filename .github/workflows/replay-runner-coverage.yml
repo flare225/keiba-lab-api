@@ -1,0 +1,23 @@
+name: Replay runner coverage audit
+on:
+  push:
+    branches: [audit/replay-runner-coverage]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect result-blind inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://keiba-lab-api.sekai-no-bancyou.workers.dev'
+          for venue in 東京 京都; do
+            echo "=== $venue 11R safe-core ==="
+            curl -fsS --get "$base/v1/lab/rank" --data-urlencode 'date=2026-10-04' --data-urlencode "venue=$venue" --data-urlencode 'race_no=11' |
+              jq '{race, leakageGuard, runners:[.runners[]|{horseNo,horseName,historyRows,evidenceScore,evidenceRank,confidencePct,modelCoveragePct,missingBlocks}]}'
+            echo "=== $venue 11R replay ==="
+            curl -fsS --get "$base/v1/lab/replay" --data-urlencode 'date=2026-10-04' --data-urlencode "venue=$venue" --data-urlencode 'race_no=11' |
+              jq '{race,evidence,replay,cutoff,guardrails}'
+          done

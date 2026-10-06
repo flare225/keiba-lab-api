@@ -15,8 +15,8 @@ async function legacyOutcomeIngest(request,env,ctx,date,venue,raceNo){const u=ne
 async function enrichRace(request,env,ctx,{date,venue,raceNo}){
  const {race,runners}=await raceAndRunners(env.DB,date,venue,raceNo);
  await ensureResultDetailTables(env.DB);
- const existing=await one(env.DB,'SELECT COUNT(*) n,COUNT(DISTINCT horse_no) distinct_n,MAX(source_sha256) source_sha256 FROM lab_race_result_details WHERE race_key=?',[race.race_key]);
- if(Number(existing?.n||0)===runners.length&&Number(existing?.distinct_n||0)===runners.length)return{ok:true,idempotent:true,raceKey:race.race_key,storedRows:runners.length,runnerCount:runners.length,complete:true,sourceSha256:existing?.source_sha256||null};
+ const existing=await one(env.DB,'SELECT COUNT(*) n,COUNT(DISTINCT horse_no) distinct_n,COUNT(CASE WHEN finish_position IS NOT NULL AND last3f IS NULL THEN 1 END) missing_last3f,MAX(source_sha256) source_sha256 FROM lab_race_result_details WHERE race_key=?',[race.race_key]);
+ if(Number(existing?.n||0)===runners.length&&Number(existing?.distinct_n||0)===runners.length&&Number(existing?.missing_last3f||0)===0)return{ok:true,idempotent:true,raceKey:race.race_key,storedRows:runners.length,runnerCount:runners.length,complete:true,last3fMissing:0,sourceSha256:existing?.source_sha256||null};
  const legacy=await legacyOutcomeIngest(request,env,ctx,date,venue,raceNo);
  const source=await one(env.DB,"SELECT source_url,COUNT(*) n FROM lab_race_outcomes WHERE race_key=? AND source_url IS NOT NULL GROUP BY source_url ORDER BY n DESC LIMIT 1",[race.race_key]);
  if(!source?.source_url)return{ok:false,raceKey:race.race_key,runnerCount:runners.length,complete:false,error:'official JRA result page has not been resolved yet',legacy};
@@ -28,15 +28,15 @@ async function enrichRace(request,env,ctx,{date,venue,raceNo}){
 }
 
 async function learningStatus(env,date){
- const races=await rows(env.DB,`SELECT r.race_key,r.venue,r.race_no,r.race_name,r.runner_count,COUNT(d.id) detail_rows,COUNT(DISTINCT d.horse_no) detail_distinct FROM jra_races r LEFT JOIN lab_race_result_details d ON d.race_key=r.race_key WHERE r.race_date=? GROUP BY r.race_key ORDER BY r.venue,r.race_no`,[date]);
- const normalized=races.map(r=>({...r,runner_count:Number(r.runner_count||0),detail_rows:Number(r.detail_rows||0),detail_distinct:Number(r.detail_distinct||0),complete:Number(r.runner_count||0)>0&&Number(r.detail_rows||0)===Number(r.runner_count||0)&&Number(r.detail_distinct||0)===Number(r.runner_count||0)}));
+ const races=await rows(env.DB,`SELECT r.race_key,r.venue,r.race_no,r.race_name,r.runner_count,COUNT(d.id) detail_rows,COUNT(DISTINCT d.horse_no) detail_distinct,COUNT(CASE WHEN d.finish_position IS NOT NULL THEN 1 END) finishers,COUNT(CASE WHEN d.finish_position IS NOT NULL AND d.last3f IS NOT NULL THEN 1 END) last3f_rows,COUNT(CASE WHEN d.finish_position IS NOT NULL AND d.last3f IS NULL THEN 1 END) last3f_missing FROM jra_races r LEFT JOIN lab_race_result_details d ON d.race_key=r.race_key WHERE r.race_date=? GROUP BY r.race_key ORDER BY r.venue,r.race_no`,[date]);
+ const normalized=races.map(r=>({...r,runner_count:Number(r.runner_count||0),detail_rows:Number(r.detail_rows||0),detail_distinct:Number(r.detail_distinct||0),finishers:Number(r.finishers||0),last3f_rows:Number(r.last3f_rows||0),last3f_missing:Number(r.last3f_missing||0),complete:Number(r.runner_count||0)>0&&Number(r.detail_rows||0)===Number(r.runner_count||0)&&Number(r.detail_distinct||0)===Number(r.runner_count||0)}));
  const complete=normalized.filter(r=>r.complete).length,totalRunners=normalized.reduce((s,r)=>s+r.runner_count,0),stored=normalized.reduce((s,r)=>s+r.detail_rows,0);
  return{ok:true,version:VERSION,date,races:normalized.length,completeRaces:complete,incompleteRaces:normalized.length-complete,runnerRows:{expected:totalRunners,stored,coveragePct:totalRunners?Math.round(stored/totalRunners*1000)/10:0},learningReady:normalized.length>0&&complete===normalized.length,details:normalized};
 }
 
 async function dayBatch(request,env,ctx,date,limit=4){
  await ensureResultDetailTables(env.DB);
- const candidates=await rows(env.DB,`SELECT r.venue,r.race_no,r.race_key,r.runner_count,COUNT(d.id) detail_rows FROM jra_races r LEFT JOIN lab_race_result_details d ON d.race_key=r.race_key WHERE r.race_date=? GROUP BY r.race_key HAVING COUNT(d.id)<r.runner_count ORDER BY r.venue,r.race_no LIMIT ?`,[date,Math.max(1,Math.min(12,Number(limit)||4))]);
+ const candidates=await rows(env.DB,`SELECT r.venue,r.race_no,r.race_key,r.runner_count,COUNT(d.id) detail_rows,COUNT(CASE WHEN d.finish_position IS NOT NULL AND d.last3f IS NULL THEN 1 END) last3f_missing FROM jra_races r LEFT JOIN lab_race_result_details d ON d.race_key=r.race_key WHERE r.race_date=? GROUP BY r.race_key HAVING COUNT(d.id)<r.runner_count OR COUNT(CASE WHEN d.finish_position IS NOT NULL AND d.last3f IS NULL THEN 1 END)>0 ORDER BY r.venue,r.race_no LIMIT ?`,[date,Math.max(1,Math.min(12,Number(limit)||4))]);
  const processed=[];
  for(const c of candidates){try{processed.push(await enrichRace(request,env,ctx,{date,venue:c.venue,raceNo:Number(c.race_no)}))}catch(e){processed.push({ok:false,raceKey:c.race_key,error:String(e?.message||e)})}}
  return{ok:true,version:VERSION,stage:'result-day-enrich-batch',date,attempted:processed.length,succeeded:processed.filter(x=>x.ok).length,processed,status:await learningStatus(env,date)};

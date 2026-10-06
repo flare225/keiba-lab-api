@@ -59,6 +59,6 @@ export default{
   if(app.scheduled)await app.scheduled(event,env,ctx);
   if(!env.DB)return;
   const now=jstParts();
-  if(now.hour>=18&&now.hour<=23){try{const req=new Request('https://scheduled.local/v1/lab/result-day-enrich');await dayBatch(req,env,ctx,now.date,4)}catch(e){console.log('result-day-enrich scheduled error',String(e))}}
+  if(!env.LAB_BOUNDED_RESULT_COLLECTION&&now.hour>=18&&now.hour<=23){try{const req=new Request('https://scheduled.local/v1/lab/result-day-enrich');await dayBatch(req,env,ctx,now.date,4)}catch(e){console.log('result-day-enrich scheduled error',String(e))}}
  }
 };

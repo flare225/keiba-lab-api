@@ -1,5 +1,5 @@
 export const REPLAY_EVIDENCE={VERIFIED:'VERIFIED',LEGACY:'LEGACY_SAVED',REPLAY:'RESULT_BLIND_REPLAY',NONE:'NO_RECORD'};
-export const OFFICIAL_CUTOFFS={'2026-10-04:東京:11':{raceStartAt:'2026-10-04T15:45:00+09:00',source:'JRA official race programme/result',verified:true}};
+export const OFFICIAL_CUTOFFS={'2026-10-04:東京:11':{raceStartAt:'2026-10-04T15:45:00+09:00',raceName:'毎日王冠',source:'JRA official race programme/result',verified:true},'2026-10-04:京都:11':{raceStartAt:'2026-10-04T15:30:00+09:00',raceName:'京都大賞典',source:'JRA official race programme/result',verified:true}};
 export const markForRank=r=>({1:'◎',2:'○',3:'▲',4:'△',5:'☆'})[Number(r)]||null;
 export function cutoffFor(raceKey){return OFFICIAL_CUTOFFS[raceKey]||null}
 export function legacySnapshotEligible(rows=[],runnerCount,cutoff){

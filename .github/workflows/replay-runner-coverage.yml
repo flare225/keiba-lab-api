@@ -16,7 +16,7 @@ jobs:
           for venue in 東京 京都; do
             echo "=== $venue 11R safe-core ==="
             curl -fsS --get "$base/v1/lab/rank" --data-urlencode 'date=2026-10-04' --data-urlencode "venue=$venue" --data-urlencode 'race_no=11' |
-              jq '{race, leakageGuard, runners:[.runners[]|{horseNo,horseName,historyRows,evidenceScore,evidenceRank,confidencePct,modelCoveragePct,missingBlocks}]}'
+              jq '{race, leakageGuard, runners:[.runners[]|{horseNo,horseName,historyRows,evidenceScore,evidenceRank,confidencePct,modelCoveragePct,missingBlocks,detail}]}'
             echo "=== $venue 11R replay ==="
             curl -fsS --get "$base/v1/lab/replay" --data-urlencode 'date=2026-10-04' --data-urlencode "venue=$venue" --data-urlencode 'race_no=11' |
               jq '{race,evidence,replay,cutoff,guardrails}'

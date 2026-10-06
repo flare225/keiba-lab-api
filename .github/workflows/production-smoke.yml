@@ -69,7 +69,10 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsS --retry 8 --retry-delay 3 --retry-all-errors --max-time 20 "$PRODUCTION_URL/lab/expected-preview" -o /tmp/expected-preview.html
-          node -e "const h=require('fs').readFileSync('/tmp/expected-preview.html','utf8'); if(!h.includes('ライーリーアース')||!h.includes('/v1/lab/race-history-assessment'))process.exit(1)"
+          node -e "const h=require('fs').readFileSync('/tmp/expected-preview.html','utf8'); if(!h.includes('ライーリーアース')||!h.includes('/lab/mark-comparison-client.js')||!h.includes('comparisonTarget'))process.exit(1)"
+          curl -fsS --max-time 20 "$PRODUCTION_URL/lab/mark-comparison-client.js" -o /tmp/mark-comparison-client.js
+          curl -fsS --max-time 20 "$PRODUCTION_URL/lab/mark-comparison-core.js" -o /tmp/mark-comparison-core.js
+          node -e "const fs=require('fs'),c=fs.readFileSync('/tmp/mark-comparison-client.js','utf8'),r=fs.readFileSync('/tmp/mark-comparison-core.js','utf8');if(!c.includes('/v1/lab/mark-comparison')||!c.includes('initComparison({document})')||!r.includes('buildMarkComparison'))process.exit(1)"
           curl -fsS --retry 8 --retry-delay 3 --retry-all-errors --max-time 20 "$PRODUCTION_URL/v1/lab/expected-runners" -o /tmp/expected-runners.json
           jq -e '.ok == true and (.runners|length) == 12 and all(.runners[]; .horseNo == null)' /tmp/expected-runners.json
           curl -fsS --retry 8 --retry-delay 3 --retry-all-errors --max-time 30 -X POST "$PRODUCTION_URL/v1/lab/expected-history-ingest" -H 'content-type: application/json' --data '{"date":"2026-10-10","venue":"東京","raceNo":11,"confirm":"INGEST"}' -o /tmp/expected-ingest.json
@@ -77,6 +80,8 @@ jobs:
           curl -fsS --max-time 60 -X POST "$PRODUCTION_URL/v1/lab/expected-runner-preview" -H 'content-type: application/json' --data '{"date":"2026-10-10","venue":"東京","raceNo":11,"phase":"initial","sourceSnapshotId":"netkeiba-saudi-20261005-v1","marks":[{"horseName":"デミアン","mark":"◎"},{"horseName":"フィリオソラーレ","mark":"○"}]}' -o /tmp/expected-comparison.json
           jq -e '.ok == true and .source.provider == "netkeiba" and .guardrails.scoreMutation == false and .guardrails.eligibleForProspectiveSeal == false and (.audit.marked|length) == 2 and all(.audit.historySidecar[]; .available == true and .summary.last3fRecorded > 0) and all(.audit.marked[]; .horseNo == null and .laboScore == null) and all(.audit.historySidecar[].recent[]; .date < "2026-10-10" and .date >= "2026-01-01")' /tmp/expected-comparison.json
           jq '{version,source,marked:.audit.marked,history:.audit.historySidecar,guardrails}' /tmp/expected-comparison.json
+          curl -fsS --max-time 60 -X POST "$PRODUCTION_URL/v1/lab/mark-comparison" -H 'content-type: application/json' --data '{"date":"2026-10-10","venue":"東京","raceNo":11,"phase":"initial","marks":[{"horseName":"デミアン","mark":"注"}]}' -o /tmp/instant-comparison.json
+          jq -e '.ok == true and .comparison.runnerPool == 12 and (.comparison.rows|length) == 1 and .comparison.guardrails.humanMarksUsedInScore == false and .comparison.guardrails.targetResultUsed == false and .comparison.guardrails.noForcedTieBreak == true and (.comparison.rows[0].reasons|length) == 4 and (.comparison.rows[0].gaps|length) > 0 and all(.audit.historySidecar[].recent[]; .date < "2026-10-10")' /tmp/instant-comparison.json
 
       - name: Verify common assessment on Tokyo and Kyoto races
         shell: bash

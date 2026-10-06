@@ -11,7 +11,7 @@ jobs:
         run: |
           node <<'NODE'
           const url='https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002019102632/59';
-          const res=await fetch(url,{headers:{'user-agent':'Mozilla/5.0'}}); const html=new TextDecoder('shift_jis').decode(await res.arrayBuffer());
+          const res=await fetch(url,{headers:{'user-agent':'keiba-lab/1.3.0 (+official JRA history ingestion)'}}); const html=new TextDecoder('shift_jis').decode(await res.arrayBuffer());
           const clean=s=>s.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&nbsp;|&#160;/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim();
           for(const m of html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)){
             const cells=[...m[1].matchAll(/<(?:td|th)\b[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)].map(x=>clean(x[1]));

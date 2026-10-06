@@ -19,58 +19,29 @@ env:
 jobs:
   result-audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 3
     steps:
-      - name: Wait for v3.9.0+ deployment
+      - name: Audit stored result coverage without triggering collection
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 18); do
-            body="$(curl -fsS --max-time 10 "$PRODUCTION_URL/v1/lab/deploy-check" 2>/dev/null || true)"
-            version="$(printf '%s' "$body" | jq -r '.version // empty' 2>/dev/null || true)"
-            if [[ "$version" =~ ^3\.(9|[1-9][0-9])\. ]]; then
-              echo "Production result-learning API available at v$version"
-              exit 0
-            fi
-            sleep 5
-          done
-          echo 'Production did not expose v3.9.0+ in time' >&2
-          exit 1
-
-      - name: Backfill verified rich official results
-        shell: bash
-        run: |
-          set -euo pipefail
-          status_url="$PRODUCTION_URL/v1/lab/result-learning-status?date=$AUDIT_DATE"
-          for pass in 1 2 3 4; do
-            status="$(curl -fsS --max-time 20 "$status_url")"
-            ready="$(printf '%s' "$status" | jq -r '.learningReady // false')"
-            if [[ "$ready" == 'true' ]]; then
-              echo "$AUDIT_DATE rich results already complete."
-              break
-            fi
-            echo "Rich result backfill pass $pass"
-            body="$(curl -fsS --max-time 150 -X POST -H 'content-type: application/json' --data "{\"date\":\"$AUDIT_DATE\",\"confirm\":\"INGEST\",\"limit\":8}" "$PRODUCTION_URL/v1/lab/result-day-enrich")"
-            printf '%s\n' "$body" | jq '{ok,version,date,attempted,succeeded,status:{races:.status.races,completeRaces:.status.completeRaces,incompleteRaces:.status.incompleteRaces,runnerRows:.status.runnerRows,learningReady:.status.learningReady},failures:[.processed[]|select(.ok!=true)|{raceKey,error,identity}]}'
-          done
-
-      - name: Verify learning readiness
-        shell: bash
-        run: |
-          set -euo pipefail
-          final="$(curl -fsS --max-time 20 "$PRODUCTION_URL/v1/lab/result-learning-status?date=$AUDIT_DATE")"
-          printf '%s\n' "$final" | jq '{ok,version,date,races,completeRaces,incompleteRaces,runnerRows,learningReady,details:[.details[]|select(.complete!=true)]}'
-          test "$(printf '%s' "$final" | jq -r '.learningReady // false')" = 'true'
-          test "$(printf '%s' "$final" | jq -r '.incompleteRaces // -1')" -eq 0
-          expected="$(printf '%s' "$final" | jq -r '.runnerRows.expected // 0')"
-          stored="$(printf '%s' "$final" | jq -r '.runnerRows.stored // -1')"
-          test "$expected" -gt 0
-          test "$stored" -eq "$expected"
+          status="$(curl -fsS --max-time 30 "$PRODUCTION_URL/v1/lab/history-result-status?date=$AUDIT_DATE")"
+          printf '%s\n' "$status" | jq '{ok,version,date,races,completeRaces,richCompleteRaces,incompleteRichRaces,runnerRows,last3fMissing,cornersMissing,learningReady}'
+          printf '%s' "$status" | jq -e '
+            .ok == true and .races > 0 and
+            .completeRaces == .races and .incompleteRaces == 0 and
+            .runnerRows.expected > 0 and .runnerRows.stored == .runnerRows.expected and
+            .richCompleteRaces == ([.details[] | select(.richComplete == true)] | length) and
+            .incompleteRichRaces == (.races - .richCompleteRaces) and
+            .learningReady == (.races > 0 and .richCompleteRaces == .races) and
+            .last3fMissing >= 0 and .cornersMissing >= 0
+          ' > /dev/null
           {
-            echo '## KEIBA LABO historical rich-result audit'
+            echo '## KEIBA LABO stored-result audit'
             echo "- Date: $AUDIT_DATE"
-            echo "- Complete races: $(printf '%s' "$final" | jq -r '.completeRaces')/$(printf '%s' "$final" | jq -r '.races')"
-            echo "- Rich result runner rows: $stored/$expected"
-            echo '- Learning readiness: PASS'
-            echo '- Source: verified official JRA result pages with runner-identity gate and immutable SHA-256 revisions'
+            echo "- All-runner result rows: $(printf '%s' "$status" | jq -r '.runnerRows.stored')/$(printf '%s' "$status" | jq -r '.runnerRows.expected')"
+            echo "- Rich-complete races: $(printf '%s' "$status" | jq -r '.richCompleteRaces')/$(printf '%s' "$status" | jq -r '.races')"
+            echo "- Pending detail collection: $(printf '%s' "$status" | jq -r '.incompleteRichRaces') races"
+            echo '- Audit reads stored data only; no backfill is triggered.'
+            echo '- Result coverage does not mean model training or validated accuracy improvement.'
           } >> "$GITHUB_STEP_SUMMARY"

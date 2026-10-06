@@ -68,9 +68,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsS --max-time 20 "$PRODUCTION_URL/lab/expected-preview" -o /tmp/expected-preview.html
+          curl -fsS --retry 8 --retry-delay 3 --retry-all-errors --max-time 20 "$PRODUCTION_URL/lab/expected-preview" -o /tmp/expected-preview.html
           node -e "const h=require('fs').readFileSync('/tmp/expected-preview.html','utf8'); if(!h.includes('ライーリーアース')||!h.includes('/v1/lab/expected-runner-preview'))process.exit(1)"
-          curl -fsS --max-time 20 "$PRODUCTION_URL/v1/lab/expected-runners" -o /tmp/expected-runners.json
+          curl -fsS --retry 8 --retry-delay 3 --retry-all-errors --max-time 20 "$PRODUCTION_URL/v1/lab/expected-runners" -o /tmp/expected-runners.json
           jq -e '.ok == true and (.runners|length) == 12 and all(.runners[]; .horseNo == null)' /tmp/expected-runners.json
           curl -fsS --max-time 60 -X POST "$PRODUCTION_URL/v1/lab/expected-runner-preview" -H 'content-type: application/json' --data '{"date":"2026-10-10","venue":"東京","raceNo":11,"phase":"initial","sourceSnapshotId":"netkeiba-saudi-20261005-v1","marks":[{"horseName":"デミアン","mark":"◎"},{"horseName":"フィリオソラーレ","mark":"○"}]}' -o /tmp/expected-comparison.json
           jq -e '.ok == true and .source.provider == "netkeiba" and .guardrails.scoreMutation == false and .guardrails.eligibleForProspectiveSeal == false and (.audit.marked|length) == 2 and all(.audit.marked[]; .horseNo == null and .laboScore == null) and all(.audit.historySidecar[].recent[]; .date < "2026-10-10" and .date >= "2026-01-01")' /tmp/expected-comparison.json

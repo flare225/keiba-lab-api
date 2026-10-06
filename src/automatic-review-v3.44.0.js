@@ -1,5 +1,7 @@
 const finite=v=>typeof v==='number'&&Number.isFinite(v);
 const clean=v=>String(v??'').trim();
+export function normalizeFinishStatus(value){return({'scratched':'取消','excluded':'除外','did-not-finish':'中止','disqualified':'失格','finished':'完走'})[value]||value||null;}
+export function normalizeHistoryStatuses(history){return{...history,runners:(history.runners||[]).map(r=>({...r,finishStatus:normalizeFinishStatus(r.finishStatus)}))};}
 export function parseIndividualCorners(text,pool){
  const s=clean(text);if(!s||!/^\d{1,2}(?:[\s\-－−→]+\d{1,2}){0,3}$/.test(s))return null;
  const values=s.split(/[\s\-－−→]+/).map(Number);return values.every(v=>Number.isInteger(v)&&v>=1&&v<=pool)?values:null;
@@ -13,6 +15,7 @@ export function reviewMarkBasis(history){
  return{kind:'none',label:'確認できる事前印なし',marks:[]};
 }
 export function buildAutomaticReview(history,{focusHorseName=null}={}){
+ history=normalizeHistoryStatuses(history);
  const rows=history.runners||[],n=Number(history.race?.runnerCount),basis=reviewMarkBasis(history);
  if(!history.ok||!Number.isInteger(n)||n<1||n>18||!rows.length||rows.length>n||new Set(rows.map(r=>r.horseName)).size!==rows.length||new Set(rows.map(r=>r.horseNo)).size!==rows.length||rows.some(r=>!r.horseName||!Number.isInteger(r.horseNo)||r.horseNo<1||r.horseNo>n))return{available:false,reason:'全馬の保存済み結果の対応を確認できません。',fields:{},facts:[]};
  if(focusHorseName&&!rows.some(r=>r.horseName===focusHorseName))throw Error('回顧対象の馬を確認してください。');

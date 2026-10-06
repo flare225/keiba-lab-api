@@ -406,6 +406,8 @@ async function refreshExistingRaceMetadata(db, date, venue, raceNo) {
   return {ok:true,stage:"race-metadata-refreshed",version:"1.1.4",raceKey:existing.race_key,before:{raceName:existing.race_name,surface:existing.surface,distance:Number(existing.distance||0),fetchedAt:existing.fetched_at},after:{raceName:parsed.raceName,surface:parsed.surface,distance:Number(parsed.distance),fetchedAt},guardrails:{runnerRowsMutated:false,resultFieldsRead:false,sourceUrl:page.url}};
 }
 
+export { courseFromContext };
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);

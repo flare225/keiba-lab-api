@@ -1,4 +1,5 @@
 import app from "./index-v1.3.2.js";
+import { decodeJraProfileRaceCells } from "./history-profile-layout-v3.27.0.js";
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data, null, 2), {
@@ -128,17 +129,18 @@ function parsePastPerformances(html, horseName, profileUrl, beforeDate, limit) {
     if (!raceDate || !course.distance) continue;
     if (raceDate >= beforeDate) continue; // strict look-ahead leakage guard
 
-    // Observed JRA horse-profile history structure (2026):
+    // Observed JRA horse-profile history structure (verified 2026-10-06):
     // 0 date, 1 venue, 2 race name, 3 surface+distance, 4 going,
-    // 5 field size, 6 horse no, 7 popularity, 8 finish,
-    // 9 jockey, 10 assigned weight, 11 body weight, 12 time, 13 last 3F.
-    const fieldSize = integerOrNull(cells[5]);
-    const popularity = integerOrNull(cells[7]);
-    const finishText = String(cells[8] || "").trim();
-    const finishPosition = /^\d+$/.test(finishText) ? Number(finishText) : null;
-    const assignedWeight = numberOrNull(cells[10]);
-    const body = parseBodyWeight(cells[11]);
-    const last3f = numberOrNull(cells[13]);
+    // 5 field size, 6 popularity, 7 finish, 8 jockey,
+    // 9 assigned weight, 10 body weight, 11 time, 12 Rt, 13 winner.
+    // There is no horse-number or last-3F column in this profile table.
+    const decoded = decodeJraProfileRaceCells(cells);
+    const fieldSize = decoded.fieldSize;
+    const popularity = decoded.popularity;
+    const finishPosition = decoded.finishPosition;
+    const assignedWeight = decoded.assignedWeight;
+    const body = {bodyWeight:decoded.bodyWeight,bodyWeightChange:decoded.bodyWeightChange};
+    const last3f = null;
 
     rows.push({
       horseName,
@@ -151,11 +153,11 @@ function parsePastPerformances(html, horseName, profileUrl, beforeDate, limit) {
       fieldSize,
       popularity,
       odds: null,
-      jockey: cells[9] || null,
+      jockey: decoded.jockey,
       assignedWeight,
       bodyWeight: body.bodyWeight,
       bodyWeightChange: body.bodyWeightChange,
-      timeText: cells[12] || null,
+      timeText: decoded.timeText,
       last3f,
       cornerPositions: null,
       trackCondition: normalizeCondition(cells[4]),

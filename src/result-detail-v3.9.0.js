@@ -13,7 +13,7 @@ function sexAge(v){const m=String(v||'').replace(/\s/g,'').match(/(牡|牝|せ�
 function finish(v){const s=norm(v);const m=s.match(/^(\d{1,2})(?:着)?$/);if(m)return{position:Number(m[1]),status:'finished'};if(/中止/.test(s))return{position:null,status:'did-not-finish'};if(/取消/.test(s))return{position:null,status:'scratched'};if(/除外/.test(s))return{position:null,status:'excluded'};if(/失格/.test(s))return{position:null,status:'disqualified'};return{position:null,status:s||'unknown'};}
 
 const ALIASES={
- finish:['着順'],frame:['枠','枠番'],horseNo:['馬番'],horseName:['馬名'],sexAge:['性齢','性年齢'],assignedWeight:['斤量'],jockey:['騎手'],time:['タイム','走破タイム'],margin:['着差'],passing:['通過','通過順位'],last3f:['上り','上がり','上り3F','上がり3F'],popularity:['人気','単勝人気'],odds:['単勝','単勝オッズ'],bodyWeight:['馬体重']
+ finish:['着順'],frame:['枠','枠番'],horseNo:['馬番'],horseName:['馬名'],sexAge:['性齢','性年齢'],assignedWeight:['斤量'],jockey:['騎手'],time:['タイム','走破タイム'],margin:['着差'],passing:['通過','通過順位'],last3f:['推定上り','推定上がり','上り','上がり','上り3F','上がり3F'],popularity:['人気','単勝人気'],odds:['単勝','単勝オッズ'],bodyWeight:['馬体重']
 };
 function headerMap(headers){
  const out={};

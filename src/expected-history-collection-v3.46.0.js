@@ -1,0 +1,37 @@
+import {EXPECTED_SOURCES} from './expected-runner-preview-v3.30.0.js';
+import {collectionStatus,collectHistoryBatch,officialUrl,jstDay,scheduledCollection} from './history-collection-v3.37.0.js';
+
+// The dated supplementary roster never becomes an official card or a prediction seal.
+// Only profile links already published on an age-consistent JRA card may be reused.
+async function rows(db,query,args=[]){try{return (await db.prepare(query).bind(...args).all()).results||[];}catch(e){if(/no such table/.test(String(e)))return [];throw e;}}
+export function upcomingExpectedSources(now,sources=EXPECTED_SOURCES){const today=jstDay(now),until=new Date(Date.parse(today+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);return sources.filter(s=>s.date>=today&&s.date<=until);}
+export async function expectedHistoryContext(db,source){
+ const links=await rows(db,"SELECT l.horse_name,l.profile_url,l.source_url FROM lab_history_profile_links l JOIN jra_races r ON r.race_key=l.race_key JOIN jra_runners x ON x.race_key=r.race_key AND x.horse_name=l.horse_name AND x.age=l.age WHERE l.source_url=r.source_url AND r.race_date>=? AND r.race_date<? AND x.age=(?-(CAST(substr(?,1,4) AS INTEGER)-CAST(substr(r.race_date,1,4) AS INTEGER))) AND l.horse_name IN (SELECT value FROM json_each(?)) ORDER BY l.checked_at DESC LIMIT 216",[String(Number(source.date.slice(0,4))-source.age+2)+'-01-01',source.date,source.age,source.date,JSON.stringify(source.names)]);
+ const byName=new Map();for(const l of links){try{officialUrl(l.source_url);const url=officialUrl(l.profile_url,true);if(!byName.has(l.horse_name))byName.set(l.horse_name,new Set());byName.get(l.horse_name).add(url);}catch{}}
+ return {race:{race_key:'expected:'+source.snapshotId,race_date:source.date,venue:source.venue,race_no:source.raceNo,race_name:source.raceName,source_url:null,runner_count:source.names.length},runners:source.names.map(horse_name=>({horse_no:null,horse_name,age:source.age,profile_url:byName.get(horse_name)?.size===1?[...byName.get(horse_name)][0]:null}))};
+}
+export async function expectedHistoryStatus(db,now=Date.now(),sources=EXPECTED_SOURCES){
+ const races=[];for(const source of upcomingExpectedSources(now,sources)){
+  const context=await expectedHistoryContext(db,source);
+  const formal=(await rows(db,'SELECT r.race_key FROM jra_races r WHERE r.race_date=? AND r.venue=? AND r.race_no=? AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key)',[source.date,source.venue,source.raceNo])).length>0;
+  let status;try{status=await collectionStatus(db,{historyLimit:10},now,context);}catch(e){if(!/no such table/.test(String(e)))throw e;status=null;}
+  races.push({date:source.date,venue:source.venue,raceNo:source.raceNo,raceName:source.raceName,snapshotId:source.snapshotId,formalCardSaved:formal,available:!!status,runnerCount:source.names.length,withStoredHistory:status?.runners.filter(r=>r.storedRows>0).length??null,pendingHorses:status?.pendingHorses??null,profileLinksFound:context.runners.filter(r=>r.profile_url).length,runners:status?.runners.map(r=>({horseName:r.horseName,storedRows:r.storedRows,last3fRows:r.last3fRows,profileLinkKnown:!!r.profileUrl,collectionState:r.collectionState,due:r.due,lastCheckedAt:r.lastCheckedAt}))||[]});
+ }
+ return {races,rosterCoverage:'保存済みの出走想定スナップショットのみ。全レースの想定馬を取得済みという意味ではありません。',guardrails:{readOnly:true,externalRequests:0,officialCardsNeverCreated:true,horseNumbersNeverInferred:true,sourcePriority:'JRA',sameGlobalSourceBudget:true}};
+}
+export async function collectUpcomingExpectedHistory(db,deps={}){
+ const now=deps.now||Date.now;
+ for(const source of upcomingExpectedSources(now(),deps.sources||EXPECTED_SOURCES)){
+  const formal=await rows(db,'SELECT r.race_key FROM jra_races r WHERE r.race_date=? AND r.venue=? AND r.race_no=? AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key)',[source.date,source.venue,source.raceNo]);
+  if(formal.length)continue;
+  const context=await expectedHistoryContext(db,source);
+  const r=await collectHistoryBatch(db,{historyLimit:10,batchSize:1},{...deps,context});
+  if(r.attempted||r.status==='cooldown')return {...r,stage:'expected-runner-prior-history',snapshotId:source.snapshotId,authoritativeForCard:false};
+ }
+ return {ok:true,status:'idle',externalRequests:0};
+}
+export async function scheduledWeekendHistory(db,deps={}){
+ const expected=await collectUpcomingExpectedHistory(db,deps);
+ if(expected.attempted||expected.status==='cooldown')return expected;
+ return scheduledCollection(db,deps);
+}

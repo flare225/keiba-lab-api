@@ -35,3 +35,12 @@ test('preserves non-finish status without inventing a finish position',()=>{
  assert.equal(p.rows[1].finishPosition,null);
  assert.equal(p.rows[1].finishStatus,'did-not-finish');
 });
+
+
+test('parses JRA 推定上り as the official per-horse last 3 furlongs value',()=>{
+ const estimated=html.replace('<th>上り</th>','<th>推定上り</th>');
+ const p=parseOfficialResultDetails(estimated,runners);
+ assert.equal(p.ok,true);
+ assert.equal(p.rows[0].last3f,33.5);
+ assert.equal(p.rows[1].last3f,33.3);
+});

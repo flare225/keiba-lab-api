@@ -1,6 +1,6 @@
 {
   "name": "keiba-lab-api",
-  "main": "src/index-v3.32.0.js",
+  "main": "src/index-v3.33.0.js",
   "compatibility_date": "2026-10-03",
   "d1_databases": [
     {
@@ -12,7 +12,8 @@
   "triggers": {
     "crons": [
       "0 * * * *",
-      "30 * * * *"
+      "30 * * * *",
+      "45 * * * *"
     ]
   }
 }

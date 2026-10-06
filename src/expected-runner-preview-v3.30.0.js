@@ -7,6 +7,16 @@ export const EXPECTED_SOURCES = [{
  corroboratingUrl:'https://race.netkeiba.com/race/shutuba.html?race_id=202605040311&rf=shutuba_submenu',
  names:['アイファーマーリン','アゴルディーノ','ギブリ','グルーヴェンス','サトノハクマイ','ジップスパーク','デミアン','ニシノトラノスケ','ハンサム','フィリオソラーレ','ベルウッドディープ','ライーリーアース']
 }];
+export const MAIN_EXPECTED_SOURCE={
+ raceKey:'2026-10-11:東京:11',date:'2026-10-11',venue:'東京',raceNo:11,raceName:'アイルランドトロフィー',surface:'芝',distance:1800,
+ snapshotId:'netkeiba-ireland-20261007-v1',provider:'netkeiba',sourcePublishedAt:null,observedAt:'2026-10-06T23:30:00Z',priority:0,
+ sourceUrl:'https://race.netkeiba.com/race/shutuba.html?race_id=202605040411',corroboratingUrl:'https://www.jra.go.jp/keiba/race/093/horse.html',officialHorsePage:'https://www.jra.go.jp/keiba/race/093/horse.html',
+ sourceNotice:'10月7日に確認した登録一覧18頭。出走確定・枠順は未確認です。JRAの出走馬情報は全登録馬の一覧ではありません。',
+ ages:{'ウイントワイライト':4,'ヴォンフレ':4,'カネラフィーナ':4,'カムニャック':4,'クイーンズウォーク':5,'クランフォード':5,'ジョスラン':4,'セキトバイースト':5,'チェルビアット':4,'テリオスララ':4,'ニシノティアモ':5,'ハワイアンティアレ':5,'ミアネーロ':5,'ミラビリスマジック':5,'ムイ':4,'ラヴァンダ':5,'ルージュソリテール':4,'ワタシマツワ':4}
+};
+MAIN_EXPECTED_SOURCE.names=Object.keys(MAIN_EXPECTED_SOURCE.ages);
+EXPECTED_SOURCES.push(MAIN_EXPECTED_SOURCE);
+export function expectedAge(source,name){const age=Number(source.ages?.[name]??source.age);if(!Number.isInteger(age)||age<2||age>20)throw Error('想定馬の年齢を確認できません。');return age;}
 const MARKS = ['◎','○','▲','△','☆','注','消'];
 export const PREVIEW_GUARDS={readOnly:true,scoreMutation:false,markMutation:false,authoritativeForCard:false,eligibleForProspectiveSeal:false,horseNumbersNeverInferred:true,targetResultsExcluded:true,oddsAndPopularityExcluded:true,sourceIsDatedSnapshot:true};
 export function sourceFor(input={}){
@@ -45,11 +55,11 @@ async function query(db,sql,args,source,warnings){
  }
 }
 export async function historyForExpected(db,source,horseName,limit=8){
- const beforeDate=source.date,fromDate=String(Number(beforeDate.slice(0,4))-source.age+2)+'-01-01',warnings=[];
+ const age=expectedAge(source,horseName),beforeDate=source.date,fromDate=String(Number(beforeDate.slice(0,4))-age+2)+'-01-01',warnings=[];
  const cap=Math.max(1,Math.min(8,Number(limit)||8));
  const rich=await query(db,
   'SELECT r.race_date,r.venue,r.race_name,r.surface,r.distance,r.runner_count AS field_size,COALESCE(d.finish_position,o.finish_position) AS finish_position,d.finish_status,d.time_text,d.time_seconds,d.corner_positions,d.last3f,d.source_url FROM jra_runners x JOIN jra_races r ON r.race_key=x.race_key LEFT JOIN lab_race_outcomes o ON o.race_key=x.race_key AND o.horse_no=x.horse_no LEFT JOIN lab_race_result_details d ON d.race_key=x.race_key AND d.horse_no=x.horse_no WHERE x.horse_name=? AND x.age=(? - (CAST(strftime(\'%Y\',?) AS INTEGER)-CAST(strftime(\'%Y\',r.race_date) AS INTEGER))) AND r.race_date>=? AND r.race_date<? ORDER BY r.race_date DESC,r.race_no DESC LIMIT 20',
-  [horseName,source.age,beforeDate,fromDate,beforeDate],'official-result',warnings);
+  [horseName,age,beforeDate,fromDate,beforeDate],'official-result',warnings);
  const profiles=await query(db,
   'SELECT race_date,venue,race_name,surface,distance,finish_position,field_size,time_text,last3f,corner_positions,track_condition,source_url FROM jra_past_performances WHERE horse_name=? AND race_date>=? AND race_date<? ORDER BY race_date DESC LIMIT 20',
   [horseName,fromDate,beforeDate],'stored-profile-history',warnings);
@@ -103,3 +113,4 @@ export async function expectedRunnerPreview(db,input={}){
   audit:{mode:'expected-context-only',marked:marks.map(m=>({...m,laboRank:null,laboScore:null})),historySidecar,guardrails:PREVIEW_GUARDS},
   guardrails:PREVIEW_GUARDS};
 }
+

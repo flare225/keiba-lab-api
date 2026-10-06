@@ -4,9 +4,11 @@ const escapeHtml=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 export function expectedPreviewPage(source=EXPECTED_SOURCES[0]){
 const rows=source.names.map(name=>'<label class="inputrow"><span>'+(source.runners?.find(r=>r.horse_name===name)?escapeHtml(source.runners.find(r=>r.horse_name===name).horse_no)+'番 ':'')+escapeHtml(name)+'</span><select class="mark-select" data-horse="'+escapeHtml(name)+'" aria-label="'+escapeHtml(name)+'の初期印"><option value="">未指定</option>'+['◎','○','▲','△','☆','注','消'].map(mark=>'<option value="'+mark+'">'+mark+'</option>').join('')+'</select></label>').join('');
 let rendered=TEMPLATE.replace('__RACE_TITLE__',escapeHtml(source.date+' '+source.venue+source.raceNo+'R '+source.raceName+' / '+source.surface+source.distance+'m')).replace('__SOURCE_URL__',escapeHtml(source.sourceUrl)).replace('__CORROBORATING_URL__',escapeHtml(source.corroboratingUrl)).replace('__ROWS__',rows).replace('__SOURCE_DATA__',JSON.stringify({date:source.date,venue:source.venue,raceNo:source.raceNo,snapshotId:source.snapshotId}).replace(/</g,'\\u003c'));
+if(source.sourceNotice)rendered=rendered.replace('10月5日掲載の想定12頭を採用。10月6日に掲載内容を確認した一覧です。変更の可能性があります。',escapeHtml(source.sourceNotice));
 if(source.official){
  rendered=rendered.replace(/<div class="source">[\s\S]*?<\/div>/,'<div class="source"><b>保存済みJRA出馬表</b><p class="meta">対象レースの全出走馬から精査します。履歴の取得元と不足項目は各馬の欄に表示します。</p></div>').replace('想定馬に初期印を付ける','出走馬に初期印を付ける');
  rendered=rendered.replace('想定馬一覧：netkeiba 10月5日掲載の想定12頭を採用。10月6日に掲載内容を確認した一覧です。変更の可能性があります。','保存済みJRA出馬表の全出走馬を対象に精査します。履歴の取得元と不足項目は各馬の欄に表示します。').replace(/<a href=\"[^\"]*\">掲載記事を確認<\/a> · <a href=\"[^\"]*\">現在の掲載一覧を確認<\/a>/,'').replace('枠・馬番は未確定。ここで付ける印は仮比較用です。正式な出走確定や事前LOCKは、JRA公式出馬表と照合してから確認します。','馬番は保存済みJRA出馬表に基づきます。ここでの参考評価は、正式予想やLOCKを変更しません。');
 }
 return rendered;
 }
+

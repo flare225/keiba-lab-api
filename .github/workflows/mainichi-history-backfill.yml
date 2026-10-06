@@ -1,0 +1,32 @@
+name: Mainichi Okan safe history backfill
+on:
+  push:
+    branches: [ops/mainichi-history-backfill-20261006]
+permissions:
+  contents: read
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      BASE: https://keiba-lab-api.sekai-no-bancyou.workers.dev
+    steps:
+      - name: Read history coverage before
+        run: |
+          curl -fsS --get "$BASE/v1/lab/history-status" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11' | jq '{raceKey,runnerCount,horsesCovered,coveragePct,totalHistoryRows,runners}'
+      - name: Backfill official prior performances only
+        run: |
+          body="$(curl -fsS --get --max-time 180 "$BASE/v1/lab/history-ingest" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11' --data-urlencode 'limit=10')"
+          printf '%s\n' "$body" | jq '{ok,stage,race,historyLimit,profileLinksFound,horsesWithHistory,savedRows,failed,leakageGuard,results}'
+          test "$(printf '%s' "$body" | jq -r '.leakageGuard')" = 'Only races before 2026-10-04 are stored'
+      - name: Verify replay after backfill
+        run: |
+          body="$(curl -fsS --get --max-time 60 "$BASE/v1/lab/replay" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11')"
+          printf '%s\n' "$body" | jq '{race,evidence,replay:{available:.replay.available,model:.replay.model,coverageCeilingPct:.replay.coverageCeilingPct,top5:.replay.top5,reason:.replay.reason,scoredRunners:.replay.scoredRunners,runnerCount:.replay.runnerCount},guardrails}'
+          grade="$(printf '%s' "$body" | jq -r '.evidence.grade')"
+          echo "grade=$grade"
+          if [[ "$grade" == 'RESULT_BLIND_REPLAY' ]]; then
+            test "$(printf '%s' "$body" | jq -r '.guardrails.targetRaceOutcomeQueried')" = 'false'
+            test "$(printf '%s' "$body" | jq -r '.guardrails.targetRaceResultFieldsUsed')" = 'false'
+            test "$(printf '%s' "$body" | jq -r '.replay.top5|length')" -eq 5
+          fi

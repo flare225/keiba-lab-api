@@ -10,7 +10,7 @@ export function officialUrl(value,profile=false){
  if(profile&&(!/^\/JRADB\/accessU\.html$/i.test(u.pathname)||!/^pw01dud\d{2}/i.test(u.searchParams.get('CNAME')||'')))throw Error('JRA競走馬プロフィールのURLを確認できません。');
  return u.href;
 }
-async function ensure(db){
+export async function ensureCollectionTables(db){
  await ensureHistoryTable(db);
  await db.prepare('CREATE TABLE IF NOT EXISTS lab_history_collection_receipts(race_key TEXT NOT NULL,horse_name TEXT NOT NULL,policy_version TEXT NOT NULL,requested_limit INTEGER NOT NULL,status TEXT NOT NULL,rows_found INTEGER NOT NULL,checked_at INTEGER NOT NULL,profile_url TEXT,error TEXT,PRIMARY KEY(race_key,horse_name))').run();
  await db.prepare('CREATE TABLE IF NOT EXISTS lab_history_collection_budget(name TEXT PRIMARY KEY,locked_until INTEGER NOT NULL,next_batch_at INTEGER NOT NULL,lock_token TEXT)').run();
@@ -52,7 +52,7 @@ async function saveReceipt(db,key,item,limit,status,rows,stamp,profileUrl=null,e
 export async function collectHistoryBatch(db,input,deps={}){
  const now=deps.now||Date.now,fetcher=deps.fetcher||fetch,wait=deps.wait||(ms=>new Promise(r=>setTimeout(r,ms)));
  const limit=integer(input.historyLimit??10,10,1,20),batchSize=limit>10?1:integer(input.batchSize??1,1,1,2);
- await ensure(db);const context=await raceContext(db,input),before=await collectionStatus(db,{...input,historyLimit:limit},now());
+ await ensureCollectionTables(db);const context=await raceContext(db,input),before=await collectionStatus(db,{...input,historyLimit:limit},now());
  const selected=before.runners.filter(r=>r.due).sort((a,b)=>a.storedRows-b.storedRows||a.horseNo-b.horseNo).slice(0,batchSize);
  if(!selected.length)return{ok:true,status:'complete',attempted:0,externalRequests:0,before,after:before,policy:COLLECTION_POLICY};
  const stamp=now(),token=crypto.randomUUID();
@@ -92,7 +92,7 @@ export async function collectHistoryBatch(db,input,deps={}){
  return{ok:results.every(r=>r.status!=='failed'),status:results.some(r=>r.status==='failed')?'partial':'collected',attempted:results.length,externalRequests:requests,results,before,after,addedRows:after.totalStoredRows-before.totalStoredRows,nextBatchAt:new Date(now()+cooldown).toISOString(),policy:COLLECTION_POLICY,guardrails:{targetDateExcluded:true,officialSourceOnly:true,lockedPredictionWrites:false,noOddsIngested:true,last3fMayRemainMissing:true}};
 }
 export async function scheduledCollection(db,deps={}){
- const now=deps.now||Date.now;await ensure(db);const today=jstDay(now());
+ const now=deps.now||Date.now;await ensureCollectionTables(db);const today=jstDay(now());
  await db.prepare("INSERT OR IGNORE INTO lab_history_collection_targets(race_key,date,venue,race_no,history_limit,status) SELECT race_key,race_date,venue,race_no,10,'pending' FROM jra_races WHERE race_date>=? AND race_date<=? AND runner_count>0").bind(dayOffset(today,-7),dayOffset(today,7)).run();
  const targets=(await db.prepare("SELECT * FROM lab_history_collection_targets WHERE status='pending' OR (date>=? AND COALESCE(last_run_at,0)<?) ORDER BY CASE WHEN date>=? THEN 0 ELSE 1 END,COALESCE(last_run_at,0),date,race_no DESC LIMIT 3").bind(today,now()-86400000,today).all()).results||[];
  for(const t of targets){const input={date:t.date,venue:t.venue,raceNo:t.race_no,historyLimit:t.history_limit,batchSize:1};const result=await collectHistoryBatch(db,input,deps);await db.prepare('UPDATE lab_history_collection_targets SET status=?,last_run_at=? WHERE race_key=?').bind(result.after?.remainingHorses===0?'complete':'pending',now(),t.race_key).run();if(result.externalRequests||result.status==='cooldown')return result}

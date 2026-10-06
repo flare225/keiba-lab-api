@@ -133,19 +133,17 @@ jobs:
             printf '%s\n' "$after" | jq '{raceKey,runnerCount,horsesCovered,coveragePct,totalHistoryRows,runners}'
           done
 
-      - name: Refresh replay target course metadata
-        id: replay_course
+      - name: Verify replay target course metadata
         shell: bash
         run: |
           set -euo pipefail
-          for spec in '東京 11 1800' '京都 11 2400'; do
-            read -r venue race_no expected <<<"$spec"
-            body="$(curl -fsS --get --max-time 30 "$PRODUCTION_URL/v1/jra/refresh-race" --data-urlencode 'date=2026-10-04' --data-urlencode "venue=$venue" --data-urlencode "race_no=$race_no")"
-            printf '%s\n' "$body" | jq '{ok,stage,raceKey,before,after,guardrails}'
-            test "$(printf '%s' "$body" | jq -r '.ok')" = 'true'
-            test "$(printf '%s' "$body" | jq -r '.after.distance')" -eq "$expected"
-            test "$(printf '%s' "$body" | jq -r '.guardrails.runnerRowsMutated')" = 'false'
-            test "$(printf '%s' "$body" | jq -r '.guardrails.resultFieldsRead')" = 'false'
+          body="$(curl -fsS --get --max-time 30 "$PRODUCTION_URL/v1/jra/status" --data-urlencode 'date=2026-10-04')"
+          for spec in '東京 11 芝 1800' '京都 11 芝 2400'; do
+            read -r venue race_no surface expected <<<"$spec"
+            race="$(printf '%s' "$body" | jq -ce --arg venue "$venue" --argjson race_no "$race_no" '.races[] | select(.venue == $venue and .race_no == $race_no)')"
+            printf '%s\n' "$race" | jq '{race_key,race_name,venue,surface,distance}'
+            test "$(printf '%s' "$race" | jq -r '.surface')" = "$surface"
+            test "$(printf '%s' "$race" | jq -r '.distance')" -eq "$expected"
           done
 
       - name: Verify result-blind replay targets

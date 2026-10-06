@@ -60,12 +60,12 @@ function parseJapaneseDate(value) {
 }
 
 function parseCourse(value) {
-  const m = String(value || "").replace(/\s+/g, "").match(/(芝|ダート|ダ|障害)([123][0-9]{3})/);
-  if (!m) return { surface: null, distance: null };
-  return {
-    surface: m[1] === "ダ" ? "ダート" : m[1],
-    distance: Number(m[2]),
-  };
+  const s = String(value || "").replace(/[\s,，]/g, "");
+  let m = s.match(/(芝|ダート|ダ|障害)([123][0-9]{3})/);
+  if (m) return { surface: m[1] === "ダ" ? "ダート" : m[1], distance: Number(m[2]) };
+  m = s.match(/([123][0-9]{3})(芝|ダート|ダ|障害)/);
+  if (m) return { surface: m[2] === "ダ" ? "ダート" : m[2], distance: Number(m[1]) };
+  return { surface: null, distance: null };
 }
 
 function numberOrNull(value) {
@@ -130,15 +130,17 @@ function parsePastPerformances(html, horseName, profileUrl, beforeDate, limit) {
 
     // Observed JRA horse-profile history structure (2026):
     // 0 date, 1 venue, 2 race name, 3 surface+distance, 4 going,
-    // 5 field size, 6 horse no, 7 popularity, 8 finish,
-    // 9 jockey, 10 assigned weight, 11 body weight, 12 time, 13 last 3F.
+    // 5 field size, 6 popularity, 7 finish, 8 jockey,
+    // 9 assigned weight, 10 body weight, 11 time, 12 rating, 13 winner/runner-up.
+    // Do not treat the rating/winner columns as last-3F data.
     const fieldSize = integerOrNull(cells[5]);
-    const popularity = integerOrNull(cells[7]);
-    const finishText = String(cells[8] || "").trim();
-    const finishPosition = /^\d+$/.test(finishText) ? Number(finishText) : null;
-    const assignedWeight = numberOrNull(cells[10]);
-    const body = parseBodyWeight(cells[11]);
-    const last3f = numberOrNull(cells[13]);
+    const popularity = integerOrNull(cells[6]);
+    const finishText = String(cells[7] || "").trim();
+    const finishMatch = finishText.match(/^(\d+)(?:着)?$/);
+    const finishPosition = finishMatch ? Number(finishMatch[1]) : null;
+    const assignedWeight = numberOrNull(cells[9]);
+    const body = parseBodyWeight(cells[10]);
+    const last3f = null;
 
     rows.push({
       horseName,
@@ -151,11 +153,11 @@ function parsePastPerformances(html, horseName, profileUrl, beforeDate, limit) {
       fieldSize,
       popularity,
       odds: null,
-      jockey: cells[9] || null,
+      jockey: cells[8] || null,
       assignedWeight,
       bodyWeight: body.bodyWeight,
       bodyWeightChange: body.bodyWeightChange,
-      timeText: cells[12] || null,
+      timeText: cells[11] || null,
       last3f,
       cornerPositions: null,
       trackCondition: normalizeCondition(cells[4]),
@@ -354,6 +356,8 @@ async function historyIngest(url, db) {
     results,
   };
 }
+
+export { parseCourse, parsePastPerformances };
 
 export default {
   async fetch(request, env, ctx) {

@@ -53,16 +53,18 @@ export async function historyForExpected(db,source,horseName,limit=8){
  const profiles=await query(db,
   'SELECT race_date,venue,race_name,surface,distance,finish_position,field_size,time_text,last3f,corner_positions,track_condition,source_url FROM jra_past_performances WHERE horse_name=? AND race_date>=? AND race_date<? ORDER BY race_date DESC LIMIT 20',
   [horseName,fromDate,beforeDate],'stored-profile-history',warnings);
+ const expectedStored=await query(db,'SELECT payload_json FROM lab_expected_history_snapshots WHERE snapshot_id=? AND horse_name=? AND race_date>=? AND race_date<? ORDER BY race_date DESC LIMIT 20',[source.snapshotId,horseName,fromDate,beforeDate],'netkeiba-history',warnings);
+ const expected=expectedStored.map(r=>{try{return JSON.parse(r.payload_json)}catch{throw Error('過去DBの保存データを読み込めません。')}});
  const valid=r=>typeof r.race_date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(r.race_date)&&r.race_date>=fromDate&&r.race_date<beforeDate;
  const byRace=new Map();let conflict=false;
- for(const raw of [...profiles.map(r=>({...r,dbSource:'stored-profile-history'})),...rich.map(r=>({...r,dbSource:'official-result'}))].filter(valid)){
+ for(const raw of [...expected.map(r=>({...r,dbSource:'netkeiba-dated-history'})),...profiles.map(r=>({...r,dbSource:'stored-profile-history'})),...rich.map(r=>({...r,dbSource:'official-result'}))].filter(valid)){
   const row={date:raw.race_date,venue:raw.venue||null,raceName:raw.race_name||null,surface:raw.surface||null,distance:number(raw.distance),fieldSize:number(raw.field_size),finish:number(raw.finish_position),finishStatus:raw.finish_status||null,time:raw.time_text||null,timeSeconds:number(raw.time_seconds)??seconds(raw.time_text),last3f:number(raw.last3f),cornerPositions:raw.corner_positions||null,trackCondition:raw.track_condition||null,sourceUrl:raw.source_url||null,dbSource:raw.dbSource};
   const key=row.date+'|'+row.venue;
   const old=byRace.get(key);
   if(old){
    for(const field of ['finish','surface','distance'])if(old[field]!=null&&row[field]!=null&&old[field]!==row[field])conflict=true;
    for(const [field,value] of Object.entries(row))if(value!=null)old[field]=value;
-   old.dbSource='official-result+stored-profile-history';
+   old.dbSource=[...new Set([old.dbSource,row.dbSource])].join('+');
   }else byRace.set(key,row);
  }
  const recent=[...byRace.values()].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,cap);
@@ -101,4 +103,3 @@ export async function expectedRunnerPreview(db,input={}){
   audit:{mode:'expected-context-only',marked:marks.map(m=>({...m,laboRank:null,laboScore:null})),historySidecar,guardrails:PREVIEW_GUARDS},
   guardrails:PREVIEW_GUARDS};
 }
-

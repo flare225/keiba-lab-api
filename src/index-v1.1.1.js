@@ -266,15 +266,18 @@ function courseFromContext(allText, raceName) {
     if (index >= 0) context = allText.slice(Math.max(0, index - 250), index + 1600);
   }
   const patterns = [
-    /(芝|ダート|障害)\s*([123][0-9]{3})\s*(?:m|メートル)?/i,
-    /([123][0-9]{3})\s*(?:m|メートル)?\s*(芝|ダート|障害)/i,
-    /コース：[^。]{0,120}(芝|ダート|障害)[^0-9]{0,30}([123][0-9]{3})/i,
+    /コース[：:]\s*([123][0-9,，]{3,4})\s*(?:m|メートル)?[^。\n]{0,40}[（(]?\s*(芝|ダート|障害)/i,
+    /コース[：:][^。\n]{0,80}(芝|ダート|障害)[^0-9]{0,30}([123][0-9,，]{3,4})/i,
+    /(芝|ダート|障害)\s*([123][0-9,，]{3,4})\s*(?:m|メートル)?/i,
+    /([123][0-9,，]{3,4})\s*(?:m|メートル)?\s*(芝|ダート|障害)/i,
   ];
   for (const pattern of patterns) {
     const match = context.match(pattern);
     if (!match) continue;
-    if (/^\d/.test(match[1])) return { surface: match[2] || null, distance: Number(match[1]) || null };
-    return { surface: match[1] || null, distance: Number(match[2]) || null };
+    const first = String(match[1] || "").replace(/[,，]/g, "");
+    const second = String(match[2] || "").replace(/[,，]/g, "");
+    if (/^\d/.test(first)) return { surface: match[2] || null, distance: Number(first) || null };
+    return { surface: match[1] || null, distance: Number(second) || null };
   }
   return { surface: null, distance: null };
 }
@@ -389,6 +392,22 @@ async function repairMissingRaces(db, date) {
   };
 }
 
+async function refreshExistingRaceMetadata(db, date, venue, raceNo) {
+  if (!validDate(date) || !venue || !Number.isInteger(raceNo) || raceNo < 1 || raceNo > 12) throw new Error("date, venue, race_no required");
+  const existing = await db.prepare("SELECT race_key,race_name,surface,distance,source_url,runner_count,fetched_at FROM jra_races WHERE race_date=? AND venue=? AND race_no=?").bind(date, venue, raceNo).first();
+  if (!existing?.source_url) throw new Error("existing race/source_url not found");
+  const page = await fetchHtml(existing.source_url);
+  if (!page.ok) throw new Error(`race page HTTP ${page.status}`);
+  const parsed = parseRepairPage(page, date, venue, raceNo);
+  if (!parsed.raceName || !parsed.surface || !Number.isFinite(Number(parsed.distance)) || Number(parsed.distance) < 1000 || Number(parsed.distance) > 4000) throw new Error("official course metadata parse validation failed");
+  if (parsed.runnerCount && Number(existing.runner_count) && parsed.runnerCount !== Number(existing.runner_count)) throw new Error("runner-count drift; metadata refresh refused");
+  const fetchedAt = new Date().toISOString();
+  await db.prepare("UPDATE jra_races SET race_name=?,surface=?,distance=?,source_url=?,fetched_at=? WHERE race_key=?").bind(parsed.raceName, parsed.surface, Number(parsed.distance), page.url, fetchedAt, existing.race_key).run();
+  return {ok:true,stage:"race-metadata-refreshed",version:"1.1.4",raceKey:existing.race_key,before:{raceName:existing.race_name,surface:existing.surface,distance:Number(existing.distance||0),fetchedAt:existing.fetched_at},after:{raceName:parsed.raceName,surface:parsed.surface,distance:Number(parsed.distance),fetchedAt},guardrails:{runnerRowsMutated:false,resultFieldsRead:false,sourceUrl:page.url}};
+}
+
+export { courseFromContext };
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -406,6 +425,18 @@ export default {
     if (url.pathname === "/v1/jra/status") {
       if (!env.DB) return json({ ok: false, error: "D1 binding DB is not configured" }, 500);
       return statusResponse(url, env);
+    }
+
+    if (url.pathname === "/v1/jra/refresh-race") {
+      if (!env.DB) return json({ ok: false, error: "D1 binding DB is not configured" }, 500);
+      try {
+        const date = url.searchParams.get("date");
+        const venue = url.searchParams.get("venue");
+        const raceNo = Number(url.searchParams.get("race_no"));
+        return json(await refreshExistingRaceMetadata(env.DB, date, venue, raceNo));
+      } catch (error) {
+        return json({ ok: false, version: "1.1.4", error: String(error) }, 400);
+      }
     }
 
     if (url.pathname === "/v1/jra/repair") {

@@ -116,6 +116,33 @@ jobs:
           echo "runners=$runners" >> "$GITHUB_OUTPUT"
           echo "declared=$declared" >> "$GITHUB_OUTPUT"
 
+      - name: Repair replay-safe Mainichi Okan history if needed
+        id: replay_repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          before="$(curl -fsS --get --max-time 30 "$PRODUCTION_URL/v1/lab/replay" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11')"
+          grade="$(printf '%s' "$before" | jq -r '.evidence.grade // "NO_RECORD"')"
+          if [[ "$grade" == 'NO_RECORD' ]]; then
+            echo "Mainichi Okan replay needs safe input repair."
+            meta="$(curl -fsS --get --max-time 30 "$PRODUCTION_URL/v1/jra/refresh-race" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11')"
+            printf '%s\n' "$meta" | jq '{ok,stage,raceKey,before,after,guardrails}'
+            test "$(printf '%s' "$meta" | jq -r '.ok')" = 'true'
+            test "$(printf '%s' "$meta" | jq -r '.after.distance')" -eq 1800
+            hist="$(curl -fsS --get --max-time 120 "$PRODUCTION_URL/v1/lab/history-ingest" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11' --data-urlencode 'limit=5')"
+            printf '%s\n' "$hist" | jq '{ok,stage,race,historyLimit,profileLinksFound,horsesWithHistory,savedRows,failed,leakageGuard,results:[.results[]|{horseNo,horseName,status,rows,newestPriorRace,oldestSavedRace}]}'
+            test "$(printf '%s' "$hist" | jq -r '.ok')" = 'true'
+            test "$(printf '%s' "$hist" | jq -r '.failed')" -eq 0
+            test "$(printf '%s' "$hist" | jq -r '.horsesWithHistory')" -eq 17
+          else
+            echo "Mainichi Okan replay already has evidence grade $grade; no repair needed."
+          fi
+          after="$(curl -fsS --get --max-time 30 "$PRODUCTION_URL/v1/lab/replay" --data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11')"
+          printf '%s\n' "$after" | jq '{race,evidence,replay:(.replay|{available,model,coverageCeilingPct,top5,reason}),guardrails}'
+          test "$(printf '%s' "$after" | jq -r '.evidence.grade')" = 'RESULT_BLIND_REPLAY'
+          test "$(printf '%s' "$after" | jq -r '.replay.top5 | length')" -eq 5
+          echo "grade=$(printf '%s' "$after" | jq -r '.evidence.grade')" >> "$GITHUB_OUTPUT"
+
       - name: Verify result-blind replay targets
         id: replay
         shell: bash
@@ -212,7 +239,7 @@ jobs:
             echo "- Expected/deployed version: ${{ steps.expected.outputs.version }}"
             echo "- 2026-10-04 historical coverage: ${{ steps.history.outputs.cards }}/${{ steps.history.outputs.programs }} races"
             echo "- 2026-10-04 runner coverage: ${{ steps.history.outputs.runners }}/${{ steps.history.outputs.declared }} runners"
-            echo "- Mainichi Okan evidence: ${{ steps.replay.outputs.mainichi_grade }}"
+            echo "- Mainichi Okan evidence: ${{ steps.replay.outputs.mainichi_grade }} (safe history repair: ${{ steps.replay_repair.outputs.grade }})"
             echo "- Kyoto Daishoten evidence: ${{ steps.replay.outputs.kyoto_grade }}"
             echo "- Scheduler endpoint reachable: yes"
             echo "- Cron heartbeat: ${{ steps.scheduler.outputs.heartbeat }}"

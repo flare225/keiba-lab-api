@@ -157,6 +157,15 @@ jobs:
             echo "${item}_grade=$grade" >> "$GITHUB_OUTPUT"
           done
 
+      - name: Diagnose upcoming JRA program staging
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$(curl -fsS --get --max-time 30 "$PRODUCTION_URL/v1/lab/program-debug" --data-urlencode 'date=2026-10-10')"
+          printf '%s\n' "$body" | jq '{ok,version,stage,date,httpStatus,sourceUrl,encoding,decodeScore,venueHeadersFound,raceCount,gradedCount,venueSummary,error,debug}'
+          staged="$(curl -fsS --max-time 15 "$PRODUCTION_URL/v1/lab/storage-audit?from=2026-10-10&to=2026-10-10")"
+          printf '%s\n' "$staged" | jq '{ok,from,to,totals,dates}'
+
       - name: Read scheduler observability
         id: scheduler
         shell: bash

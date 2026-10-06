@@ -1,4 +1,4 @@
-import {buildAutomaticReview,applyReviewFields} from './automatic-review-v3.44.0.js';
+import {buildAutomaticReview,applyReviewFields,normalizeHistoryStatuses} from './automatic-review-v3.44.0.js';
 import {MEMO_KEY,MEMO_FIELDS,parseMemoStore,createMemo,storeMemo,composeReviewArticle,upcomingWatch,memoRaceKey} from './review-note-core-v3.43.0.js';
 export function initReviewNote({document,storage,fetcher=globalThis.fetch,clipboard,now=Date.now}){
  try{if(storage===undefined)storage=globalThis.localStorage;}catch{storage=null;}
@@ -9,7 +9,7 @@ export function initReviewNote({document,storage,fetcher=globalThis.fetch,clipbo
  if(!storage&&readable)status.textContent='このブラウザでは保存が利用できません。本文の作成・コピーは利用できます。';
  save.disabled=!storage||!readable;copy.disabled=true;
  const draft=()=>({fields:Object.fromEntries(Object.keys(MEMO_FIELDS).map(k=>[k,document.getElementById('memo-'+k).value.trim()])),watch:[...document.querySelectorAll('.watch-note')].filter(e=>e.value.trim()).map(e=>({horseName:e.dataset.horse,note:e.value.trim()}))});
- function render(){if(!history)return;output.value=composeReviewArticle(history,draft()).replace('回顧メモは手入力の観察です。','回顧メモは結果表の整理と入力した観察です。');copy.disabled=false;}
+ function render(){if(!history)return;output.value=composeReviewArticle(normalizeHistoryStatuses(history),draft()).replace('回顧メモは手入力の観察です。','回顧メモは結果表の整理と入力した観察です。');copy.disabled=false;}
  function edited(){document.getElementById('draftStatus').textContent='編集内容は未保存です。本文には現在の入力を反映しています。';render();}
  function refreshAutoReview(){
   const autoStatus=document.getElementById('autoReviewStatus');

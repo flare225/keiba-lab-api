@@ -8,9 +8,14 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Print Mainichi replay hydration
+      - name: Print Mainichi replay hydration and readback
         run: |
-          curl -fsS --get --max-time 60 'https://keiba-lab-api.sekai-no-bancyou.workers.dev/v1/lab/replay' \
-            --data-urlencode 'date=2026-10-04' \
-            --data-urlencode 'venue=東京' \
-            --data-urlencode 'race_no=11' | jq '{version,race,evidence,replay,hydration,guardrails}'
+          set -euo pipefail
+          base='https://keiba-lab-api.sekai-no-bancyou.workers.dev'
+          args=(--data-urlencode 'date=2026-10-04' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11')
+          echo '=== REPLAY ==='
+          curl -fsS --get --max-time 60 "$base/v1/lab/replay" "${args[@]}" | jq '{version,race,evidence,replay,hydration,guardrails}'
+          echo '=== HISTORY STATUS ==='
+          curl -fsS --get --max-time 30 "$base/v1/lab/history-status" "${args[@]}" | jq '{version,raceKey,runnerCount,horsesCovered,coveragePct,totalHistoryRows,runners}'
+          echo '=== RANK READBACK ==='
+          curl -fsS --get --max-time 30 "$base/v1/lab/rank" "${args[@]}" | jq '{version,race,leakageGuard,runners:[.runners[]|{horseNo,horseName,historyRows,evidenceScore,evidenceRank,missingBlocks}]}'

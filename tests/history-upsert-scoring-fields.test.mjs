@@ -1,0 +1,2 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';
+test('history re-ingest repairs every scoring field used by replay',()=>{const s=fs.readFileSync(new URL('../src/index-v1.3.0.js',import.meta.url),'utf8');for(const field of ['finish_position','field_size','popularity','odds','last3f','corner_positions','track_condition'])assert.match(s,new RegExp(field+'=excluded\\.'+field),field+' must be repaired on conflict')});

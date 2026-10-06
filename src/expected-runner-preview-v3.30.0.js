@@ -48,12 +48,12 @@ export async function historyForExpected(db,source,horseName,limit=8){
  const beforeDate=source.date,fromDate=String(Number(beforeDate.slice(0,4))-source.age+2)+'-01-01',warnings=[];
  const cap=Math.max(1,Math.min(8,Number(limit)||8));
  const rich=await query(db,
-  'SELECT r.race_date,r.venue,r.race_name,r.surface,r.distance,r.runner_count AS field_size,COALESCE(d.finish_position,o.finish_position) AS finish_position,d.finish_status,d.time_text,d.time_seconds,d.corner_positions,d.last3f,d.source_url FROM jra_runners x JOIN jra_races r ON r.race_key=x.race_key LEFT JOIN lab_race_outcomes o ON o.race_key=x.race_key AND o.horse_no=x.horse_no LEFT JOIN lab_race_result_details d ON d.race_key=x.race_key AND d.horse_no=x.horse_no WHERE x.horse_name=? AND x.age=? AND r.race_date>=? AND r.race_date<? ORDER BY r.race_date DESC,r.race_no DESC LIMIT 20',
-  [horseName,source.age,fromDate,beforeDate],'official-result',warnings);
+  'SELECT r.race_date,r.venue,r.race_name,r.surface,r.distance,r.runner_count AS field_size,COALESCE(d.finish_position,o.finish_position) AS finish_position,d.finish_status,d.time_text,d.time_seconds,d.corner_positions,d.last3f,d.source_url FROM jra_runners x JOIN jra_races r ON r.race_key=x.race_key LEFT JOIN lab_race_outcomes o ON o.race_key=x.race_key AND o.horse_no=x.horse_no LEFT JOIN lab_race_result_details d ON d.race_key=x.race_key AND d.horse_no=x.horse_no WHERE x.horse_name=? AND x.age=(? - (CAST(strftime(\'%Y\',?) AS INTEGER)-CAST(strftime(\'%Y\',r.race_date) AS INTEGER))) AND r.race_date>=? AND r.race_date<? ORDER BY r.race_date DESC,r.race_no DESC LIMIT 20',
+  [horseName,source.age,beforeDate,fromDate,beforeDate],'official-result',warnings);
  const profiles=await query(db,
   'SELECT race_date,venue,race_name,surface,distance,finish_position,field_size,time_text,last3f,corner_positions,track_condition,source_url FROM jra_past_performances WHERE horse_name=? AND race_date>=? AND race_date<? ORDER BY race_date DESC LIMIT 20',
   [horseName,fromDate,beforeDate],'stored-profile-history',warnings);
- const expectedStored=await query(db,'SELECT payload_json FROM lab_expected_history_snapshots WHERE snapshot_id=? AND horse_name=? AND race_date>=? AND race_date<? ORDER BY race_date DESC LIMIT 20',[source.snapshotId,horseName,fromDate,beforeDate],'netkeiba-history',warnings);
+ const expectedStored=source.snapshotId==='no-expected-supplement'?[]:await query(db,'SELECT payload_json FROM lab_expected_history_snapshots WHERE snapshot_id=? AND horse_name=? AND race_date>=? AND race_date<? ORDER BY race_date DESC LIMIT 20',[source.snapshotId,horseName,fromDate,beforeDate],'netkeiba-history',warnings);
  const expected=expectedStored.map(r=>{try{return JSON.parse(r.payload_json)}catch{throw Error('過去DBの保存データを読み込めません。')}});
  const valid=r=>typeof r.race_date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(r.race_date)&&r.race_date>=fromDate&&r.race_date<beforeDate;
  const byRace=new Map();let conflict=false;
@@ -87,7 +87,7 @@ export async function historyForExpected(db,source,horseName,limit=8){
  else if(finished.length<3)warnings.push('sparse-prior-history');
  if(last3fs.length<recent.length)warnings.push('last3f-incomplete');
  return{horseName,beforeDate,fromDate,antiLeakageRule:'from_date <= race_date < target_date',
-  identityBasis:'exact-horse-name + two-year-old-history-window; official entrant identity pending',
+  identityBasis:'exact-horse-name + age-consistent-birth-cohort-window',
   available:!conflict&&recent.length>0,summary,recent:conflict?[]:recent,warnings};
 }
 export async function expectedRunnerPreview(db,input={}){

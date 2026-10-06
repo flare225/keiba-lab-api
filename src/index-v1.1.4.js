@@ -274,6 +274,9 @@ function findRaceName(html) {
 }
 
 function courseFromContext(allText, raceName) {
+  // Prefer the published race course; prior-start distances must not override it.
+  const official = allText.match(/コース\s*[:：]\s*([1-4](?:,\d{3}|\d{3}))\s*(?:メートル|m)\s*[（(]\s*(芝|ダート|障害)/i);
+  if (official) return { surface: official[2], distance: Number(official[1].replace(/,/g, "")) };
   let context = allText.slice(0, 5000);
   if (raceName) {
     const index = allText.indexOf(raceName);

@@ -1,0 +1,20 @@
+name: JRA profile cell layout audit
+on:
+  push:
+    branches: [audit/jra-profile-cell-layout]
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print sanitized first race row cells
+        shell: bash
+        run: |
+          node <<'NODE'
+          const url='https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002019102632/59';
+          const html=await (await fetch(url,{headers:{'user-agent':'Mozilla/5.0'}})).text();
+          const clean=s=>s.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&nbsp;|&#160;/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim();
+          for(const m of html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)){
+            const cells=[...m[1].matchAll(/<(?:td|th)\b[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)].map(x=>clean(x[1]));
+            if(cells.some(x=>x.includes('2026年6月7日'))){console.log(JSON.stringify(cells));break;}
+          }
+          NODE

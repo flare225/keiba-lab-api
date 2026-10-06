@@ -157,6 +157,20 @@ jobs:
             echo "${item}_grade=$grade" >> "$GITHUB_OUTPUT"
           done
 
+      - name: Verify replay result comparison ordering
+        shell: bash
+        run: |
+          set -euo pipefail
+          for venue in 東京 京都; do
+            body="$(curl -fsS --get --max-time 60 "$PRODUCTION_URL/v1/lab/replay-compare" --data-urlencode 'date=2026-10-04' --data-urlencode "venue=$venue" --data-urlencode 'race_no=11')"
+            printf '%s\n' "$body" | jq '{race,evidence,replay:{top5:.replay.top5},comparison,comparisonPolicy}'
+            test "$(printf '%s' "$body" | jq -r '.comparison.available')" = 'true'
+            test "$(printf '%s' "$body" | jq -r '.comparison.guardrails.resultNeverFeedsReplayScore')" = 'true'
+            test "$(printf '%s' "$body" | jq -r '.comparisonPolicy.targetResultCanAffectMarks')" = 'false'
+            test "$(printf '%s' "$body" | jq -r '.comparisonPolicy.replayAccuracyCredit')" = 'false'
+            test "$(printf '%s' "$body" | jq -r '.comparison.marks|length')" -eq 5
+          done
+
       - name: Diagnose upcoming JRA program staging
         shell: bash
         run: |

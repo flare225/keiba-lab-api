@@ -33,9 +33,9 @@ async function raceContext(db,input){
  if(!runners.length||runners.length!==Number(race.runner_count))throw Error('正式出馬表の保存が不完全です。');
  return{race,runners};
 }
-export async function collectionStatus(db,input,now=Date.now()){
- const {race,runners}=await raceContext(db,input),limit=integer(input.historyLimit??10,10,1,20),out=[];
- const statistics=(await db.prepare("SELECT p.horse_name,COUNT(*) stored_rows,MIN(p.race_date) oldest_date,MAX(p.race_date) newest_date,SUM(CASE WHEN p.last3f>0 THEN 1 ELSE 0 END) last3f_rows,SUM(CASE WHEN p.corner_positions IS NOT NULL AND p.corner_positions<>'' THEN 1 ELSE 0 END) corner_rows FROM jra_past_performances p JOIN jra_runners rr ON rr.horse_name=p.horse_name WHERE rr.race_key=? AND p.race_date>=MAX('2016-01-01',printf('%d-01-01',CAST(substr(?,1,4) AS INTEGER)-rr.age+2)) AND p.race_date<? GROUP BY p.horse_name").bind(race.race_key,race.race_date,race.race_date).all()).results||[];
+export async function collectionStatus(db,input,now=Date.now(),context=null){
+ const {race,runners}=context||await raceContext(db,input),limit=integer(input.historyLimit??10,10,1,20),out=[];
+ const statistics=(await (context?db.prepare("SELECT p.horse_name,COUNT(*) stored_rows,MIN(p.race_date) oldest_date,MAX(p.race_date) newest_date,SUM(CASE WHEN p.last3f>0 THEN 1 ELSE 0 END) last3f_rows,SUM(CASE WHEN p.corner_positions IS NOT NULL AND p.corner_positions<>'' THEN 1 ELSE 0 END) corner_rows FROM jra_past_performances p JOIN json_each(?) rr ON json_extract(rr.value,'$.horse_name')=p.horse_name WHERE p.race_date>=MAX('2016-01-01',printf('%d-01-01',CAST(substr(?,1,4) AS INTEGER)-CAST(json_extract(rr.value,'$.age') AS INTEGER)+2)) AND p.race_date<? GROUP BY p.horse_name").bind(JSON.stringify(runners),race.race_date,race.race_date):db.prepare("SELECT p.horse_name,COUNT(*) stored_rows,MIN(p.race_date) oldest_date,MAX(p.race_date) newest_date,SUM(CASE WHEN p.last3f>0 THEN 1 ELSE 0 END) last3f_rows,SUM(CASE WHEN p.corner_positions IS NOT NULL AND p.corner_positions<>'' THEN 1 ELSE 0 END) corner_rows FROM jra_past_performances p JOIN jra_runners rr ON rr.horse_name=p.horse_name WHERE rr.race_key=? AND p.race_date>=MAX('2016-01-01',printf('%d-01-01',CAST(substr(?,1,4) AS INTEGER)-rr.age+2)) AND p.race_date<? GROUP BY p.horse_name").bind(race.race_key,race.race_date,race.race_date)).all()).results||[];
  const byStats=new Map(statistics.map(x=>[x.horse_name,x]));let receipts=[];
  try{receipts=(await db.prepare('SELECT * FROM lab_history_collection_receipts WHERE race_key=?').bind(race.race_key).all()).results||[]}catch(e){if(!/no such table/.test(String(e)))throw e}
  const byReceipt=new Map(receipts.map(x=>[x.horse_name,x]));
@@ -43,7 +43,7 @@ export async function collectionStatus(db,input,now=Date.now()){
   const age=Number(r.age);if(!Number.isInteger(age)||age<2||age>20)throw Error('出走馬の年齢を確認できません。');
   const fromDate=[COLLECTION_POLICY.archiveFromDate,String(Number(race.race_date.slice(0,4))-age+2)+'-01-01'].sort().at(-1);
   const stats=byStats.get(r.horse_name),rec=byReceipt.get(r.horse_name);
-  out.push({horseNo:Number(r.horse_no),horseName:r.horse_name,age,fromDate,storedRows:Number(stats?.stored_rows||0),last3fRows:Number(stats?.last3f_rows||0),cornerRows:Number(stats?.corner_rows||0),oldestDate:stats?.oldest_date||null,newestDate:stats?.newest_date||null,lastCheckedAt:rec?.checked_at?new Date(rec.checked_at).toISOString():null,collectionState:rec?.status||'not-checked',due:collectionDue(rec,race.race_date,limit,now),profileUrl:rec?.profile_url||null});
+  out.push({horseNo:r.horse_no==null?null:Number(r.horse_no),horseName:r.horse_name,age,fromDate,storedRows:Number(stats?.stored_rows||0),last3fRows:Number(stats?.last3f_rows||0),cornerRows:Number(stats?.corner_rows||0),oldestDate:stats?.oldest_date||null,newestDate:stats?.newest_date||null,lastCheckedAt:rec?.checked_at?new Date(rec.checked_at).toISOString():null,collectionState:rec?.status||'not-checked',due:collectionDue(rec,race.race_date,limit,now),profileUrl:rec?.profile_url||r.profile_url||null});
  }
  return{ok:true,race:{raceKey:race.race_key,date:race.race_date,venue:race.venue,raceNo:Number(race.race_no),raceName:race.race_name},historyLimit:limit,runnerCount:out.length,pendingHorses:out.filter(x=>x.due).length,remainingHorses:out.filter(x=>x.due||x.collectionState==='failed').length,totalStoredRows:out.reduce((s,x)=>s+x.storedRows,0),last3fRows:out.reduce((s,x)=>s+x.last3fRows,0),runners:out,policy:COLLECTION_POLICY};
 }
@@ -53,9 +53,9 @@ async function saveReceipt(db,key,item,limit,status,rows,stamp,profileUrl=null,e
 export async function collectHistoryBatch(db,input,deps={}){
  const now=deps.now||Date.now,fetcher=deps.fetcher||fetch,wait=deps.wait||(ms=>new Promise(r=>setTimeout(r,ms)));
  const limit=integer(input.historyLimit??10,10,1,20),batchSize=limit>10?1:integer(input.batchSize??1,1,1,2);
- await ensureCollectionTables(db);const context=await raceContext(db,input),before=await collectionStatus(db,{...input,historyLimit:limit},now());
- const selected=before.runners.filter(r=>r.due).sort((a,b)=>a.storedRows-b.storedRows||a.horseNo-b.horseNo).slice(0,batchSize);
- if(!selected.length)return{ok:true,status:'complete',attempted:0,externalRequests:0,before,after:before,policy:COLLECTION_POLICY};
+ await ensureCollectionTables(db);const context=deps.context||await raceContext(db,input),before=await collectionStatus(db,{...input,historyLimit:limit},now(),deps.context||null);
+ const selected=before.runners.filter(r=>r.due&&(!deps.context||r.profileUrl||r.storedRows>=limit)).sort((a,b)=>a.storedRows-b.storedRows||a.horseNo-b.horseNo).slice(0,batchSize);
+ if(!selected.length)return{ok:true,status:deps.context&&before.remainingHorses?'awaiting-profile-links':'complete',attempted:0,externalRequests:0,before,after:before,policy:COLLECTION_POLICY};
  const stamp=now(),token=crypto.randomUUID();
  const claim=await db.prepare("UPDATE lab_history_collection_budget SET locked_until=?,lock_token=? WHERE name='jra-history' AND locked_until<=? AND next_batch_at<=?").bind(stamp+120000,token,stamp,stamp).run();
  if(Number(claim.meta?.changes||0)!==1)return{ok:true,status:'cooldown',attempted:0,externalRequests:0,policy:COLLECTION_POLICY};
@@ -90,7 +90,7 @@ export async function collectHistoryBatch(db,input,deps={}){
    }catch(error){await saveReceipt(db,context.race.race_key,item,limit,'failed',0,now(),profileUrl,String(error.message||error));results.push({horseName:item.horseName,status:'failed',savedRows:0,error:String(error.message||error)});if(cooldown>COLLECTION_POLICY.minBatchGapMs)break}
   }
  }finally{await db.prepare("UPDATE lab_history_collection_budget SET locked_until=0,next_batch_at=?,lock_token=NULL WHERE name='jra-history' AND lock_token=?").bind(now()+cooldown,token).run()}
- const after=await collectionStatus(db,{...input,historyLimit:limit},now());
+ const after=await collectionStatus(db,{...input,historyLimit:limit},now(),deps.context||null);
  return{ok:results.every(r=>r.status!=='failed'),status:results.some(r=>r.status==='failed')?'partial':'collected',attempted:results.length,externalRequests:requests,results,before,after,addedRows:after.totalStoredRows-before.totalStoredRows,nextBatchAt:new Date(now()+cooldown).toISOString(),policy:COLLECTION_POLICY,guardrails:{targetDateExcluded:true,officialSourceOnly:true,lockedPredictionWrites:false,noOddsIngested:true,last3fMayRemainMissing:true}};
 }
 export async function scheduledCollection(db,deps={}){

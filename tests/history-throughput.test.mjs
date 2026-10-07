@@ -31,3 +31,13 @@ test('past debut races remain queued but cannot precede actionable training hist
  assert.equal(result.before.race.raceKey,'r');
  assert.equal(sql.prepare("SELECT status FROM lab_history_collection_targets WHERE race_key='debut'").get().status,'pending');sql.close();
 });
+
+test('untried runners advance before repeating a failed lower-numbered runner',async()=>{
+ const {sql,db}=await database();let stamp=Date.parse('2026-10-06T03:00:00Z');const deps={now:()=>stamp,wait:async()=>{},fetcher:async url=>response(url.includes('accessU')?history:'<a href="'+profile+'">HorseB</a>')};
+ const first=await collectHistoryBatch(db,{...target,batchSize:1},deps);assert.equal(first.results[0].horseName,'HorseA');assert.equal(first.results[0].status,'failed');stamp+=3600001;const second=await collectHistoryBatch(db,{...target,batchSize:1},deps);assert.equal(second.results[0].horseName,'HorseB');assert.equal(second.results[0].status,'checked');sql.close();
+});
+test('race with all failed runners awaiting retry cannot block a different pending race',async()=>{
+ const {sql,db}=await database();let stamp=Date.parse('2026-10-06T03:00:00Z');const deps={now:()=>stamp,wait:async()=>{},fetcher:async()=>response('<html>No published links</html>')};await collectHistoryBatch(db,target,deps);stamp+=61000;
+ sql.exec("INSERT INTO jra_races VALUES('next','2026-10-04','京都',10,'次の対象','https://www.jra.go.jp/card',1);INSERT INTO jra_runners VALUES('next',1,'HorseC',5)");
+ const result=await scheduledCollection(db,{...deps,fetcher:async url=>response(url.includes('accessU')?history.replaceAll('HorseA','HorseC'):'<a href="'+profile+'">HorseC</a>')});assert.equal(result.before.race.raceKey,'next');assert.equal(result.results[0].status,'checked');sql.close();
+});

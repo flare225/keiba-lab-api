@@ -1,3 +1,5 @@
+import {IRELAND_HISTORY_ROWS,IRELAND_HISTORY_SOURCE_URL,IRELAND_HISTORY_OBSERVED_AT} from './expected-history-snapshot-v3.48.0.js';
+import {expectedAge} from './expected-runner-preview-v3.30.0.js';
 // Public netkeiba five-start table observed 2026-10-06. No forecast odds or target results.
 export const HISTORY_SOURCE_URL='https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040311&rf=shutuba_submenu';
 export const HISTORY_SNAPSHOT_ID='netkeiba-saudi-history-20261006-v1';
@@ -17,10 +19,13 @@ const rows={
 };
 export const EXPECTED_HISTORY_ROWS=Object.entries(rows).flatMap(([horse_name,starts])=>starts.map(([race_date,venue,race_name,distance,finish_position,field_size,time_text,last3f,corner_positions,track_condition])=>({horse_name,race_date,venue,race_name,surface:'芝',distance,finish_position,field_size,time_text,last3f,corner_positions,track_condition,source_url:HISTORY_SOURCE_URL})));
 export async function ingestExpectedHistory(db,source){
- if(source.snapshotId!=='netkeiba-saudi-20261005-v1')throw Error('対象一覧が更新されています。');
- for(const row of EXPECTED_HISTORY_ROWS){if(!source.names.includes(row.horse_name)||row.race_date>=source.date||row.race_date<'2026-01-01')throw Error('過去走スナップショットの検証に失敗しました。')}
+ const ireland=source.snapshotId==='netkeiba-ireland-20261007-v1';
+ if(!ireland&&source.snapshotId!=='netkeiba-saudi-20261005-v1')throw Error('対象一覧が更新されています。');
+ const selected=ireland?IRELAND_HISTORY_ROWS.map(r=>({...r,source_url:IRELAND_HISTORY_SOURCE_URL,observed_at:IRELAND_HISTORY_OBSERVED_AT})):EXPECTED_HISTORY_ROWS;
+ for(const row of selected){const from=String(Number(source.date.slice(0,4))-expectedAge(source,row.horse_name)+2)+'-01-01';if(!source.names.includes(row.horse_name)||row.race_date>=source.date||row.race_date<from||!Number.isInteger(row.finish_position)||row.finish_position<1||row.finish_position>row.field_size||!(row.last3f>0)||!/^\d+(?:-\d+){1,3}$/.test(row.corner_positions))throw Error('過去走スナップショットの検証に失敗しました。')}
  await db.prepare('CREATE TABLE IF NOT EXISTS lab_expected_history_snapshots (snapshot_id TEXT NOT NULL,horse_name TEXT NOT NULL,race_date TEXT NOT NULL,venue TEXT NOT NULL,payload_json TEXT NOT NULL,source_url TEXT NOT NULL,ingested_at TEXT NOT NULL,PRIMARY KEY(snapshot_id,horse_name,race_date,venue))').run();
  const now=new Date().toISOString();
- await db.batch(EXPECTED_HISTORY_ROWS.map(row=>db.prepare('INSERT OR IGNORE INTO lab_expected_history_snapshots(snapshot_id,horse_name,race_date,venue,payload_json,source_url,ingested_at) VALUES(?,?,?,?,?,?,?)').bind(source.snapshotId,row.horse_name,row.race_date,row.venue,JSON.stringify(row),row.source_url,now)));
- return{ok:true,snapshotId:HISTORY_SNAPSHOT_ID,runnerCount:source.names.length,historyRows:EXPECTED_HISTORY_ROWS.length,sourceUrl:HISTORY_SOURCE_URL,officialTablesModified:false,scoreMutation:false,markMutation:false};
+ await db.batch(selected.map(row=>db.prepare('INSERT OR IGNORE INTO lab_expected_history_snapshots(snapshot_id,horse_name,race_date,venue,payload_json,source_url,ingested_at) VALUES(?,?,?,?,?,?,?)').bind(source.snapshotId,row.horse_name,row.race_date,row.venue,JSON.stringify(row),row.source_url,now)));
+ return{ok:true,snapshotId:ireland?'netkeiba-ireland-history-20261007-v1':HISTORY_SNAPSHOT_ID,runnerCount:source.names.length,historyRows:selected.length,sourceUrl:ireland?IRELAND_HISTORY_SOURCE_URL:HISTORY_SOURCE_URL,officialTablesModified:false,scoreMutation:false,markMutation:false};
 }
+

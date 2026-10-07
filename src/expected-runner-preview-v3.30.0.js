@@ -68,7 +68,7 @@ export async function historyForExpected(db,source,horseName,limit=8){
  const valid=r=>typeof r.race_date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(r.race_date)&&r.race_date>=fromDate&&r.race_date<beforeDate;
  const byRace=new Map();let conflict=false;
  for(const raw of [...expected.map(r=>({...r,dbSource:'netkeiba-dated-history'})),...profiles.map(r=>({...r,dbSource:'stored-profile-history'})),...rich.map(r=>({...r,dbSource:'official-result'}))].filter(valid)){
-  const row={date:raw.race_date,venue:raw.venue||null,raceName:raw.race_name||null,surface:raw.surface||null,distance:number(raw.distance),fieldSize:number(raw.field_size),finish:number(raw.finish_position),finishStatus:raw.finish_status||null,time:raw.time_text||null,timeSeconds:number(raw.time_seconds)??seconds(raw.time_text),last3f:number(raw.last3f),cornerPositions:raw.corner_positions||null,trackCondition:raw.track_condition||null,sourceUrl:raw.source_url||null,dbSource:raw.dbSource};
+  const row={date:raw.race_date,venue:raw.venue||null,raceName:raw.race_name||null,surface:raw.surface||null,distance:number(raw.distance),fieldSize:number(raw.field_size),finish:number(raw.finish_position),finishStatus:raw.finish_status||null,time:raw.time_text||null,timeSeconds:number(raw.time_seconds)??seconds(raw.time_text),last3f:number(raw.last3f),cornerPositions:raw.corner_positions||null,trackCondition:raw.track_condition||null,sourceUrl:raw.source_url||null,supplementalSourceUrl:raw.dbSource==='netkeiba-dated-history'?raw.source_url||null:null,dbSource:raw.dbSource};
   const key=row.date+'|'+row.venue;
   const old=byRace.get(key);
   if(old){

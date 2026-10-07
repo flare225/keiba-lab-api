@@ -1,6 +1,6 @@
 import app from './index-v3.47.0.js';
 import {sourceFor,expectedAge} from './expected-runner-preview-v3.30.0.js';
-export const VERSION='3.48.0';
+export const VERSION='3.48.1';
 export default{async fetch(request,env,ctx){
  const u=new URL(request.url);
  const r=await app.fetch(request,env,ctx);

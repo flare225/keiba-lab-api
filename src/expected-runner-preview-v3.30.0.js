@@ -1,6 +1,6 @@
 export const EXPECTED_SOURCES = [{
  raceKey:'2026-10-10:東京:11',date:'2026-10-10',venue:'東京',raceNo:11,
- raceName:'サウジアラビアロイヤルカップ',surface:'芝',distance:1600,age:2,
+ raceName:'サウジアラビアロイヤルカップ',surface:'芝',distance:1600,age:2,priority:0,
  snapshotId:'netkeiba-saudi-20261005-v1',provider:'netkeiba',sourcePublishedAt:'2026-10-05T12:00:00+09:00',
  observedAt:'2026-10-06T04:13:11Z',
  sourceUrl:'https://own.netkeiba.com/news/news_detail.html?id=344704',

@@ -30,9 +30,12 @@ jobs:
           expected="$(node - <<'NODE'
           const fs = require('fs');
           const text = fs.readFileSync('wrangler.jsonc', 'utf8');
-          const m = text.match(/"main"\s*:\s*"src\/index-v([^"/]+)\.js"/);
+          const m = text.match(/"main"\s*:\s*"([^"]+)"/);
           if (!m) process.exit(2);
-          process.stdout.write(m[1]);
+          const main = fs.readFileSync(m[1], 'utf8');
+          const version = main.match(/export const VERSION\s*=\s*['"]([^'"]+)['"]/);
+          if (!version) process.exit(3);
+          process.stdout.write(version[1]);
           NODE
           )"
           test -n "$expected"

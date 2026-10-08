@@ -11,6 +11,22 @@ const history='<h1>HorseA HorseB</h1><table>'+row('2026年10月4日','当日')+r
 const card='<a href="'+profile+'">HorseA</a><a href="'+profile+'">HorseB</a>';
 async function database(){const sql=new DatabaseSync(':memory:');sql.exec("CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,race_name TEXT,source_url TEXT,runner_count INTEGER);CREATE TABLE jra_runners(race_key TEXT,horse_no INTEGER,horse_name TEXT,age INTEGER);INSERT INTO jra_races VALUES('r','2026-10-04','京都',11,'試験','https://www.jra.go.jp/card',2);INSERT INTO jra_runners VALUES('r',1,'HorseA',5),('r',2,'HorseB',5);");const db={prepare(query){const wrap=(args=[])=>({bind(...a){return wrap(a)},async all(){return{results:sql.prepare(query).all(...args)}},async first(){return sql.prepare(query).get(...args)||null},async run(){const r=sql.prepare(query).run(...args);return{meta:{changes:Number(r.changes)}}}});return wrap()},async batch(ss){return Promise.all(ss.map(s=>s.run()))}};await ensureHistoryTable(db);return{sql,db}}
 const response=html=>new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}});
+test('expired cards collect both horses via stored matching result source within three requests',async()=>{
+ for(const mode of ['valid','wrong-race','wrong-age','missing-horse']){
+  const {db,sql}=await database();
+  const resultUrl='https://www.jra.go.jp/JRADB/accessS.html?CNAME=pw01sde1008202604021120261004/15';
+  sql.exec('CREATE TABLE lab_race_result_details(race_key TEXT,source_url TEXT)');
+  sql.prepare('INSERT INTO lab_race_result_details VALUES(?,?)').run('r',mode==='wrong-race'?resultUrl.replace('20261004','20261003'):resultUrl);
+  const names=mode==='missing-horse'?['HorseA']:['HorseA','HorseB'];
+  const result='<table><tr><th>着順</th><th>馬番</th><th>馬名</th><th>性齢</th></tr>'+names.map((n,i)=>'<tr><td>'+(i+1)+'</td><td>'+(i+1)+'</td><td><a href="'+profile+'">'+n+'</a></td><td>牡'+(mode==='wrong-age'?4:5)+'</td></tr>').join('')+'</table>';
+  const urls=[];const r=await collectHistoryBatch(db,target,{now:()=>Date.parse('2026-10-06T03:00:00Z'),wait:async()=>{},fetcher:async url=>{urls.push(url);return response(url.includes('accessS')?result:url.includes('accessU')?history:'掲載は終了しております');}});
+  assert.ok(urls.length<=3,mode);
+  assert.equal(r.addedRows,mode==='valid'?4:0,mode);
+  assert.equal(urls.filter(u=>u.includes('accessU')).length,mode==='valid'?2:0,mode);
+  assert.equal(sql.prepare("SELECT COUNT(*) n FROM jra_past_performances WHERE race_date>='2026-10-04'").get().n,0);
+  if(mode==='valid')assert.deepEqual(urls,[resultUrl,profile,profile]);sql.close();
+ }
+});
 test('cross-race fallback verifies provenance, cohort and unique profile before fetching',async()=>{
  for(const mode of ['valid','wrong-age','changed-source','conflicting','future','external-source']){
   const {db,sql}=await database();await ensureCollectionTables(db);

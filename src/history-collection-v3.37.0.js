@@ -1,5 +1,6 @@
 import {parsePastPerformances,extractProfileLinks,ensureHistoryTable} from './collection-profile-parser-v3.32.0.js';
 import {targetInput} from './race-history-assessment-v3.31.0.js';
+import {storedHistoryResultSource,resultProfileLinks} from './history-result-profile-source.js';
 export const COLLECTION_POLICY={version:'bounded-jra-profile-v1',concurrency:1,maxHorsesPerBatch:2,maxExternalRequestsPerBatch:3,minRequestGapMs:5000,minBatchGapMs:60000,futureRefreshMs:86400000,archiveFromDate:'2016-01-01',scheduledHorsesPerRun:2,sourcePriority:'JRA',targetDateExcluded:true,preserveExistingRichFields:true,profileLinkCache:true,scheduledRunsPerHour:6};
 const integer=(v,defaultValue,min,max)=>Number.isInteger(Number(v))?Math.max(min,Math.min(max,Number(v))):defaultValue;
 const dayOffset=(date,n)=>new Date(Date.parse(date+'T00:00:00Z')+n*86400000).toISOString().slice(0,10);
@@ -70,13 +71,17 @@ export async function collectHistoryBatch(db,input,deps={}){
   return new TextDecoder(/charset\s*=\s*["']?utf-?8/i.test(response.headers.get('content-type')||'')?'utf-8':'shift_jis').decode(bytes);
  }
  try{
-  let links=null;
+  let links=null,resultSourceChecked=false;
   for(const item of selected){
    let profileUrl=item.profileUrl;
    try{
     if(item.storedRows>=limit){await saveReceipt(db,context.race.race_key,item,limit,'stored-enough',item.storedRows,now());results.push({horseName:item.horseName,status:'stored-enough',savedRows:0});continue}
     if(!profileUrl){const known=await db.prepare('SELECT source_url FROM jra_past_performances WHERE horse_name=? AND race_date>=? AND race_date<? AND source_url IS NOT NULL ORDER BY fetched_at DESC LIMIT 1').bind(item.horseName,item.fromDate,context.race.race_date).first();try{profileUrl=officialUrl(known?.source_url,true)}catch{}}
     if(!profileUrl){const cached=await db.prepare('SELECT profile_url FROM lab_history_profile_links WHERE race_key=? AND horse_name=? AND age=? AND source_url=? AND (?<? OR checked_at>?)').bind(context.race.race_key,item.horseName,item.age,context.race.source_url,context.race.race_date,jstDay(now()),now()-86400000).first();if(cached)profileUrl=officialUrl(cached.profile_url,true)}
+    if(!profileUrl&&!links&&!resultSourceChecked){
+     resultSourceChecked=true;const resultUrl=await storedHistoryResultSource(db,context.race,jstDay(now()));
+     if(resultUrl)links=resultProfileLinks(await page(resultUrl),context.runners,resultUrl);
+    }
     if(!profileUrl){if(!links){const html=await page(officialUrl(context.race.source_url));links=extractProfileLinks(html,context.runners.map(r=>r.horse_name),context.race.source_url);const pairs=context.runners.filter(r=>links.has(r.horse_name)).map(r=>[r.horse_name,Number(r.age),officialUrl(links.get(r.horse_name),true)]);if(pairs.length)await db.prepare("INSERT INTO lab_history_profile_links SELECT ?,json_extract(value,'$[0]'),CAST(json_extract(value,'$[1]') AS INTEGER),json_extract(value,'$[2]'),?,? FROM json_each(?) WHERE 1 ON CONFLICT(race_key,horse_name) DO UPDATE SET age=excluded.age,profile_url=excluded.profile_url,source_url=excluded.source_url,checked_at=excluded.checked_at").bind(context.race.race_key,context.race.source_url,now(),JSON.stringify(pairs)).run()}profileUrl=links.get(item.horseName)}
     if(!profileUrl){
      const prior=(await db.prepare("SELECT DISTINCT l.profile_url,l.source_url FROM lab_history_profile_links l JOIN jra_races r ON r.race_key=l.race_key JOIN jra_runners x ON x.race_key=r.race_key AND x.horse_name=l.horse_name AND x.age=l.age WHERE l.source_url=r.source_url AND l.horse_name=? AND r.race_date>=? AND r.race_date<? AND x.age=(?-(CAST(substr(?,1,4) AS INTEGER)-CAST(substr(r.race_date,1,4) AS INTEGER)))").bind(item.horseName,item.fromDate,context.race.race_date,item.age,context.race.race_date).all()).results||[];

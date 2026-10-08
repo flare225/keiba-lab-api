@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {Script} from 'node:vm';
-import {collectHistoryBatch,collectionStatus,collectionDue,officialUrl,scheduledCollection,ensureCollectionTables} from '../src/history-collection-v3.37.0.js';
+import {collectHistoryBatch,collectionStatus,collectionDue,officialUrl,scheduledCollection,ensureCollectionTables,COLLECTION_POLICY} from '../src/history-collection-v3.37.0.js';
 import {ensureHistoryTable} from '../src/collection-profile-parser-v3.32.0.js';
 const target={date:'2026-10-04',venue:'京都',raceNo:11,historyLimit:10,batchSize:2};
 const profile='https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002021105521/7D';
@@ -11,6 +11,13 @@ const history='<h1>HorseA HorseB</h1><table>'+row('2026年10月4日','当日')+r
 const card='<a href="'+profile+'">HorseA</a><a href="'+profile+'">HorseB</a>';
 async function database(){const sql=new DatabaseSync(':memory:');sql.exec("CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,race_name TEXT,source_url TEXT,runner_count INTEGER);CREATE TABLE jra_runners(race_key TEXT,horse_no INTEGER,horse_name TEXT,age INTEGER);INSERT INTO jra_races VALUES('r','2026-10-04','京都',11,'試験','https://www.jra.go.jp/card',2);INSERT INTO jra_runners VALUES('r',1,'HorseA',5),('r',2,'HorseB',5);");const db={prepare(query){const wrap=(args=[])=>({bind(...a){return wrap(a)},async all(){return{results:sql.prepare(query).all(...args)}},async first(){return sql.prepare(query).get(...args)||null},async run(){const r=sql.prepare(query).run(...args);return{meta:{changes:Number(r.changes)}}}});return wrap()},async batch(ss){return Promise.all(ss.map(s=>s.run()))}};await ensureHistoryTable(db);return{sql,db}}
 const response=html=>new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}});
+test('completed past target reopens for an old zero-row receipt after parser correction',async()=>{
+ const {db,sql}=await database(),stamp=Date.parse('2026-10-09T00:00:00Z');await ensureCollectionTables(db);
+ sql.exec("INSERT INTO lab_history_collection_targets(race_key,date,venue,race_no,history_limit,status) VALUES('r','2026-10-04','京都',11,10,'complete')");
+ for(const name of ['HorseA','HorseB'])sql.prepare('INSERT INTO lab_history_collection_receipts VALUES(?,?,?,?,?,?,?,?,?)').run('r',name,COLLECTION_POLICY.version,10,'checked',0,stamp-86400000,profile,null);
+ const result=await scheduledCollection(db,{trainingOnly:true,now:()=>stamp,wait:async()=>{},fetcher:async()=>response(history)});
+ assert.equal(result.attempted,2);assert.ok(result.addedRows>0);sql.close();
+});
 test('reserved training collection excludes future cards even if their queue priority is higher',async()=>{
  const {db,sql}=await database();sql.exec("INSERT INTO jra_races VALUES('future','2026-10-10','東京',11,'未来','https://www.jra.go.jp/card',1);INSERT INTO jra_runners VALUES('future',1,'FutureHorse',2)");
  const result=await scheduledCollection(db,{trainingOnly:true,now:()=>Date.parse('2026-10-09T00:00:00Z'),wait:async()=>{},fetcher:async url=>response(url.includes('accessU')?history:card)});

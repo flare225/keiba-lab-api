@@ -1,6 +1,7 @@
 import {EXPECTED_SOURCES,expectedAge} from './expected-runner-preview-v3.30.0.js';
 import {discoverExpectedProfiles} from './expected-profile-discovery-v3.47.0.js';
 import {readConfirmedPredraw} from './confirmed-predraw-roster.js';
+import {completeCollectedTraining} from './history-learning-completion.js';
 import {collectionStatus,collectHistoryBatch,officialUrl,jstDay,scheduledCollection} from './history-collection-v3.37.0.js';
 
 // The dated supplementary roster never becomes an official card or a prediction seal.
@@ -49,9 +50,9 @@ export async function scheduledWeekendHistory(db,deps={}){
  const now=deps.now||Date.now;
  if(Math.floor(now()/540000)%2===1){
   const training=await (deps.trainingCollector||scheduledCollection)(db,{...deps,trainingOnly:true});
-  if(training.attempted||training.externalRequests||training.status==='cooldown')return {...training,historyLane:'training'};
+  if(training.attempted||training.externalRequests||training.status==='cooldown')return completeCollectedTraining(db,{...training,historyLane:'training'},now());
  }
  const expected=await collectUpcomingExpectedHistory(db,deps);
  if(expected.attempted||expected.externalRequests||expected.status==='cooldown')return expected;
- return scheduledCollection(db,deps);
+ return completeCollectedTraining(db,await scheduledCollection(db,deps),now());
 }

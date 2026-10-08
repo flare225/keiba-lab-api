@@ -25,8 +25,8 @@ function parseJapaneseDate(value) {
 }
 
 function parseCourse(value) {
-  const m = String(value || "").replace(/\s+/g, "").match(/(芝|ダート|ダ|障害)([123][0-9]{3})/);
-  if (!m) return { surface: null, distance: null };
+  const m = String(value || "").replace(/\s+/g, "").match(/^(芝|ダート|ダ|障害)(\d{3,4})(?:m|メートル)?$/);
+  if (!m || Number(m[2]) < 400 || Number(m[2]) > 7000) return { surface: null, distance: null };
   return {
     surface: m[1] === "ダ" ? "ダート" : m[1],
     distance: Number(m[2]),

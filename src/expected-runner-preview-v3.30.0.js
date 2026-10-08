@@ -3,6 +3,7 @@ export const EXPECTED_SOURCES = [{
  raceName:'サウジアラビアロイヤルカップ',surface:'芝',distance:1600,age:2,priority:0,
  snapshotId:'netkeiba-saudi-20261005-v1',provider:'netkeiba',sourcePublishedAt:'2026-10-05T12:00:00+09:00',
  observedAt:'2026-10-06T04:13:11Z',
+ officialHorsePage:'https://www.jra.go.jp/keiba/race/092/horse.html',
  sourceUrl:'https://own.netkeiba.com/news/news_detail.html?id=344704',
  corroboratingUrl:'https://race.netkeiba.com/race/shutuba.html?race_id=202605040311&rf=shutuba_submenu',
  names:['アイファーマーリン','アゴルディーノ','ギブリ','グルーヴェンス','サトノハクマイ','ジップスパーク','デミアン','ニシノトラノスケ','ハンサム','フィリオソラーレ','ベルウッドディープ','ライーリーアース']

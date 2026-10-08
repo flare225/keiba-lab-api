@@ -2,6 +2,7 @@ import app from './index-v3.7.0.js';
 import {fetchHtml, extractLinks, metaFromRacecardUrl, parseRace} from './index-v1.1.4.js';
 import {persistFullDay} from './index.js';
 import {inspectSourceCard,ensureEvidenceTable,sha256,runnerFingerprint} from './card-evidence.js';
+import {saveConfirmedPredraw} from './confirmed-predraw-roster.js';
 
 const VERSION='3.7.1';
 const json=(data,status=200)=>new Response(JSON.stringify(data,null,2),{status,headers:{'content-type':'application/json; charset=UTF-8','access-control-allow-origin':'*'}});
@@ -78,6 +79,11 @@ export async function ingestDay(request,env,ctx,deps={discover,fetchHtml,parseRa
    if(!page.ok||!matches(resolved,date,p.venue,p.race_no))throw new Error('Source HTTP failure or redirected race identity mismatch');
    const race=deps.parseRace(page,date,p.venue,Number(p.race_no));
    const evidence=(deps.inspectSourceCard||inspectSourceCard)(page.body);
+   if(!evidence.allHorseNumbersObserved){
+    const roster=await (deps.saveConfirmedPredraw||saveConfirmedPredraw)(env.DB,page.body,page.url,{date,venue:p.venue,raceNo:p.race_no});
+    runs.push({raceKey,ok:true,status:'confirmed-predraw-saved',confirmedRunners:roster.runners.length,formalCardSaved:false});
+    continue;
+   }
    if(evidence.sourceRowCount!==race.runnerCount||!evidence.allHorseNumbersObserved)throw new Error('Source horse rows or observed numbers do not match parsed card');
    if(evidence.declaredCount!==null&&evidence.declaredCount!==race.runnerCount)throw new Error('Official head count does not match parsed card');
    race.runners=race.runners.map(x=>({...x,frameNo:evidence.frames.get(x.horseNo)??null}));
@@ -93,7 +99,7 @@ export async function ingestDay(request,env,ctx,deps={discover,fetchHtml,parseRa
   }catch(error){runs.push({raceKey,ok:false,status:'failed',error:String(error)});}
  }
  const nextCursor=cursor+limit<programs.length?cursor+limit:null;
- return {ok:runs.length>0&&runs.every(x=>x.ok),stage:'all-race-card-ingest',version:VERSION,date,programRaceCount:programs.length,attempted:runs.length,storedRaceCards:runs.filter(x=>x.ok).length,storedRunners:runs.reduce((s,x)=>s+(x.runnerCount||0),0),cursor,nextCursor,runs,discoveryErrors:discovery.errors,completion:'This response reports this batch only; storage-audit determines coverage.'};
+ return {ok:runs.length>0&&runs.every(x=>x.ok),stage:'all-race-card-ingest',version:VERSION,date,programRaceCount:programs.length,attempted:runs.length,storedRaceCards:runs.filter(x=>x.status==='saved').length,storedRunners:runs.reduce((s,x)=>s+(x.runnerCount||0),0),confirmedPredrawRosters:runs.filter(x=>x.status==='confirmed-predraw-saved').length,cursor,nextCursor,runs,discoveryErrors:discovery.errors,completion:'This response reports this batch only; storage-audit determines coverage.'};
 }
 
 export default{

@@ -16,12 +16,13 @@ export async function expectedHistoryContext(db,source){
 }
 export async function expectedHistoryStatus(db,now=Date.now(),sources=EXPECTED_SOURCES){
  const races=[];for(const source of upcomingExpectedSources(now,sources)){
-  const context=await expectedHistoryContext(db,source);
-  const formal=(await rows(db,'SELECT r.race_key FROM jra_races r WHERE r.race_date=? AND r.venue=? AND r.race_no=? AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key)',[source.date,source.venue,source.raceNo])).length>0;
+  const formalRace=(await rows(db,'SELECT r.* FROM jra_races r WHERE r.race_date=? AND r.venue=? AND r.race_no=? AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key)',[source.date,source.venue,source.raceNo]))[0];
+  const formal=!!formalRace;
+  const context=formal?{race:formalRace,runners:await rows(db,'SELECT horse_no,horse_name,age FROM jra_runners WHERE race_key=? ORDER BY horse_no',[formalRace.race_key])}:await expectedHistoryContext(db,source);
   let status;try{status=await collectionStatus(db,{historyLimit:10},now,context);}catch(e){if(!/no such table/.test(String(e)))throw e;status=null;}
-  races.push({date:source.date,venue:source.venue,raceNo:source.raceNo,raceName:source.raceName,snapshotId:source.snapshotId,formalCardSaved:formal,available:!!status,runnerCount:source.names.length,withStoredHistory:status?.runners.filter(r=>r.storedRows>0).length??null,pendingHorses:status?.pendingHorses??null,profileLinksFound:context.runners.filter(r=>r.profile_url).length,runners:status?.runners.map(r=>({horseName:r.horseName,storedRows:r.storedRows,last3fRows:r.last3fRows,profileLinkKnown:!!r.profileUrl,collectionState:r.collectionState,due:r.due,lastCheckedAt:r.lastCheckedAt}))||[]});
+  races.push({date:source.date,venue:source.venue,raceNo:source.raceNo,raceName:source.raceName,snapshotId:source.snapshotId,formalCardSaved:formal,rosterBasis:formal?'official-card':'expected-snapshot',available:!!status,runnerCount:context.runners.length,withStoredHistory:status?.runners.filter(r=>r.storedRows>0).length??null,pendingHorses:status?.pendingHorses??null,profileLinksFound:status?status.runners.filter(r=>r.profileUrl).length:context.runners.filter(r=>r.profile_url).length,runners:status?.runners.map(r=>({horseName:r.horseName,storedRows:r.storedRows,last3fRows:r.last3fRows,profileLinkKnown:!!r.profileUrl,collectionState:r.collectionState,due:r.due,lastCheckedAt:r.lastCheckedAt}))||[]});
  }
- return {races,rosterCoverage:'保存済みの出走想定スナップショットのみ。全レースの想定馬を取得済みという意味ではありません。',guardrails:{readOnly:true,externalRequests:0,officialCardsNeverCreated:true,horseNumbersNeverInferred:true,sourcePriority:'JRA',sameGlobalSourceBudget:true}};
+ return {races,rosterCoverage:'対象の週末レースを表示。全馬分の正式出馬表を保存したレースは正式出走馬、それまでは保存済み想定馬を集計します。全レースの取得完了を示すものではありません。',guardrails:{readOnly:true,externalRequests:0,officialCardsNeverCreated:true,horseNumbersNeverInferred:true,sourcePriority:'JRA',sameGlobalSourceBudget:true}};
 }
 export async function collectUpcomingExpectedHistory(db,deps={}){
  const now=deps.now||Date.now;

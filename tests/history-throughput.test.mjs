@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {Script} from 'node:vm';
-import {collectHistoryBatch,collectionStatus,collectionDue,officialUrl,scheduledCollection} from '../src/history-collection-v3.37.0.js';
+import {collectHistoryBatch,collectionStatus,collectionDue,officialUrl,scheduledCollection,ensureCollectionTables} from '../src/history-collection-v3.37.0.js';
 import {ensureHistoryTable} from '../src/collection-profile-parser-v3.32.0.js';
 const target={date:'2026-10-04',venue:'京都',raceNo:11,historyLimit:10,batchSize:2};
 const profile='https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002021105521/7D';
@@ -11,6 +11,25 @@ const history='<h1>HorseA HorseB</h1><table>'+row('2026年10月4日','当日')+r
 const card='<a href="'+profile+'">HorseA</a><a href="'+profile+'">HorseB</a>';
 async function database(){const sql=new DatabaseSync(':memory:');sql.exec("CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,race_name TEXT,source_url TEXT,runner_count INTEGER);CREATE TABLE jra_runners(race_key TEXT,horse_no INTEGER,horse_name TEXT,age INTEGER);INSERT INTO jra_races VALUES('r','2026-10-04','京都',11,'試験','https://www.jra.go.jp/card',2);INSERT INTO jra_runners VALUES('r',1,'HorseA',5),('r',2,'HorseB',5);");const db={prepare(query){const wrap=(args=[])=>({bind(...a){return wrap(a)},async all(){return{results:sql.prepare(query).all(...args)}},async first(){return sql.prepare(query).get(...args)||null},async run(){const r=sql.prepare(query).run(...args);return{meta:{changes:Number(r.changes)}}}});return wrap()},async batch(ss){return Promise.all(ss.map(s=>s.run()))}};await ensureHistoryTable(db);return{sql,db}}
 const response=html=>new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}});
+test('cross-race fallback verifies provenance, cohort and unique profile before fetching',async()=>{
+ for(const mode of ['valid','wrong-age','changed-source','conflicting','future','external-source']){
+  const {db,sql}=await database();await ensureCollectionTables(db);
+  sql.exec("INSERT INTO jra_races VALUES('prior','2025-09-01','京都',1,'前走','https://www.jra.go.jp/prior',1);INSERT INTO jra_runners VALUES('prior',1,'HorseA',4)");
+  sql.prepare('INSERT INTO lab_history_profile_links VALUES(?,?,?,?,?,?)').run('prior','HorseA',4,profile,'https://www.jra.go.jp/prior',1);
+  if(mode==='wrong-age')sql.exec("UPDATE lab_history_profile_links SET age=3");
+  if(mode==='changed-source')sql.exec("UPDATE jra_races SET source_url='https://www.jra.go.jp/changed' WHERE race_key='prior'");
+  if(mode==='future')sql.exec("UPDATE jra_races SET race_date='2026-10-05' WHERE race_key='prior';UPDATE jra_runners SET age=5 WHERE race_key='prior';UPDATE lab_history_profile_links SET age=5");
+  if(mode==='external-source')sql.exec("UPDATE jra_races SET source_url='https://example.com/card' WHERE race_key='prior';UPDATE lab_history_profile_links SET source_url='https://example.com/card'");
+  if(mode==='conflicting'){
+   sql.exec("INSERT INTO jra_races SELECT 'other',race_date,venue,2,race_name,source_url,1 FROM jra_races WHERE race_key='prior';INSERT INTO jra_runners VALUES('other',1,'HorseA',4)");
+   sql.prepare('INSERT INTO lab_history_profile_links VALUES(?,?,?,?,?,?)').run('other','HorseA',4,profile.replace('105521','105522'),'https://www.jra.go.jp/prior',2);
+  }
+  const urls=[];const r=await collectHistoryBatch(db,{...target,batchSize:1},{now:()=>Date.parse('2026-10-06T03:00:00Z'),wait:async()=>{},fetcher:async url=>{urls.push(url);return response(url.includes('accessU')?history:'<html>no links</html>');}});
+  assert.equal(r.addedRows,mode==='valid'?2:0,mode);
+  assert.equal(urls.filter(u=>u.includes('accessU')).length,mode==='valid'?1:0,mode);
+  assert.equal(r.results[0].status,mode==='valid'?'checked':'failed',mode);sql.close();
+ }
+});
 test('SQLite bounded batch excludes cutoff/cohort, preserves rich fields and resumes without refetch',async()=>{const {sql,db}=await database();sql.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,last3f,corner_positions,fetched_at) VALUES(?,?,?,?,?,?,?)').run('HorseA','2026-09-01','京都','過去レース',33.3,'2-2-1','old');let stamp=Date.parse('2026-10-06T03:00:00Z');const urls=[],gaps=[];const deps={now:()=>stamp,wait:async ms=>{gaps.push(ms);stamp+=ms},fetcher:async url=>{urls.push(url);return response(url.includes('accessU')?history:card)}};const result=await collectHistoryBatch(db,target,deps);assert.equal(result.externalRequests,3);assert.equal(result.attempted,2);assert.deepEqual(gaps,[5000,5000]);assert.equal(result.addedRows,3);const saved=sql.prepare("SELECT * FROM jra_past_performances WHERE horse_name='HorseA' AND race_date='2026-09-01'").get();assert.equal(saved.last3f,33.3);assert.equal(saved.corner_positions,'2-2-1');assert.equal(saved.odds,null);assert.equal(sql.prepare("SELECT COUNT(*) n FROM jra_past_performances WHERE race_date='2026-10-04' OR race_date='2020-09-01'").get().n,0);const again=await collectHistoryBatch(db,target,deps);assert.equal(again.status,'complete');assert.equal(urls.length,3);assert.equal((await collectionStatus(db,target,stamp)).last3fRows,1);sql.close()});
 test('429 defers all collection for one hour and failed receipt stays pending',async()=>{const {sql,db}=await database();let stamp=Date.parse('2026-10-06T03:00:00Z');const deps={now:()=>stamp,wait:async()=>{},fetcher:async()=>new Response('',{status:429})};const first=await collectHistoryBatch(db,target,deps);assert.equal(first.externalRequests,1);assert.equal(first.after.remainingHorses,2);stamp+=61000;assert.equal((await collectHistoryBatch(db,target,deps)).status,'cooldown');assert.equal(sql.prepare('SELECT next_batch_at FROM lab_history_collection_budget').get().next_batch_at,Date.parse('2026-10-06T04:00:00Z'));sql.close()});
 test('unknown table cannot be accepted as zero history; 20-row batch clamps to one horse',async()=>{const {sql,db}=await database();const now=()=>Date.parse('2026-10-06T03:00:00Z');const result=await collectHistoryBatch(db,{...target,historyLimit:20},{now,wait:async()=>{},fetcher:async url=>response(url.includes('accessU')?'<h1>HorseA</h1>maintenance':card)});assert.equal(result.attempted,1);assert.equal(result.results[0].status,'failed');assert.match(result.results[0].error,/履歴ゼロ/);sql.close()});

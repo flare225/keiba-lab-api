@@ -1,5 +1,6 @@
 import app from './index-v3.45.0.js';
-import {expectedHistoryStatus,scheduledWeekendHistory} from './expected-history-collection-v3.46.0.js';
+import {expectedHistoryStatus,scheduledWeekendHistory,collectUpcomingExpectedHistory} from './expected-history-collection-v3.46.0.js';
+import {EXPECTED_SOURCES} from './expected-runner-preview-v3.30.0.js';
 import {runSourceCoordinator,SOURCE_CRON,LEGACY_SOURCE_CRONS} from './source-coordinator-v3.40.0.js';
 import {collectArchiveBatch} from './archive-collection-v3.39.0.js';
 import {scheduledRichResult} from './rich-result-collection-v3.39.0.js';
@@ -11,6 +12,11 @@ export default{async fetch(request,env,ctx){
  const u=new URL(request.url);
  if(u.pathname==='/v1/lab/deploy-check')return json({ok:true,version:VERSION,build:'pre-card-expected-jra-history-priority-shared-budget',now:new Date().toISOString()});
  try{
+  if(u.pathname==='/v1/lab/expected-history-batch'&&request.method==='POST'){
+   const b=await request.json(),source=EXPECTED_SOURCES.find(s=>s.date===b.date&&s.venue===b.venue&&s.raceNo===Number(b.raceNo));
+   if(b.confirm!=='COLLECT'||!source)return json({ok:false,error:'対象レースとconfirm COLLECTを指定してください。'},400);
+   return json({...await runPipelineJob(env.DB,'history','manual',()=>collectUpcomingExpectedHistory(env.DB,{sources:[source]})),version:VERSION});
+  }
   if(u.pathname==='/v1/lab/expected-history-status'&&request.method==='GET')return json({ok:true,...await expectedHistoryStatus(env.DB),version:VERSION});
   if(['/v1/lab/source-coordinator-batch','/v1/lab/history-priority-batch'].includes(u.pathname)&&request.method==='POST'){
    const b=await request.json();if(b.confirm!=='COLLECT')return json({ok:false,error:'確認指定が必要です。',version:VERSION},400);

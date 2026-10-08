@@ -11,6 +11,11 @@ const history='<h1>HorseA HorseB</h1><table>'+row('2026年10月4日','当日')+r
 const card='<a href="'+profile+'">HorseA</a><a href="'+profile+'">HorseB</a>';
 async function database(){const sql=new DatabaseSync(':memory:');sql.exec("CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,race_name TEXT,source_url TEXT,runner_count INTEGER);CREATE TABLE jra_runners(race_key TEXT,horse_no INTEGER,horse_name TEXT,age INTEGER);INSERT INTO jra_races VALUES('r','2026-10-04','京都',11,'試験','https://www.jra.go.jp/card',2);INSERT INTO jra_runners VALUES('r',1,'HorseA',5),('r',2,'HorseB',5);");const db={prepare(query){const wrap=(args=[])=>({bind(...a){return wrap(a)},async all(){return{results:sql.prepare(query).all(...args)}},async first(){return sql.prepare(query).get(...args)||null},async run(){const r=sql.prepare(query).run(...args);return{meta:{changes:Number(r.changes)}}}});return wrap()},async batch(ss){return Promise.all(ss.map(s=>s.run()))}};await ensureHistoryTable(db);return{sql,db}}
 const response=html=>new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}});
+test('reserved training collection excludes future cards even if their queue priority is higher',async()=>{
+ const {db,sql}=await database();sql.exec("INSERT INTO jra_races VALUES('future','2026-10-10','東京',11,'未来','https://www.jra.go.jp/card',1);INSERT INTO jra_runners VALUES('future',1,'FutureHorse',2)");
+ const result=await scheduledCollection(db,{trainingOnly:true,now:()=>Date.parse('2026-10-09T00:00:00Z'),wait:async()=>{},fetcher:async url=>response(url.includes('accessU')?history:card)});
+ assert.equal(result.before.race.raceKey,'r');assert.equal(sql.prepare("SELECT status FROM lab_history_collection_targets WHERE race_key='future'").get().status,'pending');sql.close();
+});
 test('expired cards collect both horses via stored matching result source within three requests',async()=>{
  for(const mode of ['valid','wrong-race','wrong-age','missing-horse']){
   const {db,sql}=await database();

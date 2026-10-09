@@ -5,7 +5,7 @@ const date='2026-10-10',url='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01
 const meta={date,venue:'東京',raceNo:11,url};
 const programs=[{program_key:`${date}:東京:11`,race_date:date,venue:'東京',race_no:11}];
 const card={runnerCount:2,runners:[{horseNo:1,name:'テストア'},{horseNo:2,name:'テストイ'}]};
-const env={DB:{prepare(){return{bind(){return{all:async()=>({results:programs})}}}}}};
+const env={DB:{prepare(){return{bind(){return{all:async()=>({results:programs}),first:async()=>null}}}}}};
 function deps(overrides={}){return{inspectSourceCard:()=>({sourceRowCount:2,declaredCount:2,allHorseNumbersObserved:true,allFramesObserved:true,frames:new Map([[1,1],[2,2]])}),saveEvidence:async()=>{},discover:async()=>({found:new Map([[programs[0].program_key,meta]]),errors:[]}),fetchHtml:async()=>({ok:true,url,body:''}),parseRace:()=>card,persistFullDay:async(db,probe)=>{assert.equal(probe.date,date);assert.equal(probe.races.length,1);return{saved:[{raceKey:programs[0].program_key,status:'saved',runnerCount:2}]};},...overrides};}
 const request=()=>new Request(`https://test/v1/lab/card-ingest?date=${date}`);
 test('valid dates reject normalized and impossible calendar dates',()=>{assert.equal(validDate('2026-02-30'),false);assert.equal(validDate('2026-99-99'),false);assert.equal(validDate(date),true);});

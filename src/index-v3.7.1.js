@@ -2,7 +2,7 @@ import app from './index-v3.7.0.js';
 import {fetchHtml, extractLinks, metaFromRacecardUrl, parseRace} from './index-v1.1.4.js';
 import {persistFullDay} from './index.js';
 import {inspectSourceCard,ensureEvidenceTable,sha256,runnerFingerprint} from './card-evidence.js';
-import {saveConfirmedPredraw} from './confirmed-predraw-roster.js';
+import {saveConfirmedPredraw,readConfirmedPredraw} from './confirmed-predraw-roster.js';
 
 const VERSION='3.7.1';
 const json=(data,status=200)=>new Response(JSON.stringify(data,null,2),{status,headers:{'content-type':'application/json; charset=UTF-8','access-control-allow-origin':'*'}});
@@ -63,6 +63,18 @@ export async function storageAudit(db,from,to){
  return {ok:anomalies.length===0&&!races.some(x=>x.race_key&&!x.complete),stage:'all-race-storage-audit',version:VERSION,from,to,totals,dates,races,anomalies,allCardsComplete:!!races.length&&races.every(x=>x.complete)&&!anomalies.length,missingCards:races.filter(x=>!x.race_key).map(x=>x.program_key),note:'declaredRunners is the card parser count; independent official total verification is still required before LOCK.'};
 }
 
+export async function publishedCardSources(db,date,programs,discoverLinks=discover){
+ const found=new Map(),missing=[];
+ for(const p of programs){
+  const saved=await readConfirmedPredraw(db,{date,venue:p.venue,raceNo:p.race_no});
+  let meta=null;
+  try{const url=new URL(saved?.source_url);if(saved?.source_sha256&&url.origin==='https://www.jra.go.jp'&&url.pathname==='/JRADB/accessD.html'&&!url.username&&!url.password)meta=metaFromRacecardUrl(url.href);}catch{}
+  if(matches(meta,date,p.venue,p.race_no))found.set(keyOf(date,p.venue,p.race_no),meta);else missing.push(p);
+ }
+ const discovered=missing.length?await discoverLinks(date,missing):{found:new Map(),errors:[],pagesVisited:0};
+ for(const [key,meta] of discovered.found)found.set(key,meta);
+ return {...discovered,found};
+}
 export async function ingestDay(request,env,ctx,deps={discover,fetchHtml,parseRace,persistFullDay}){
  const u=new URL(request.url),date=u.searchParams.get('date');
  if(!validDate(date))throw new Error('date=valid YYYY-MM-DD is required');
@@ -70,7 +82,8 @@ export async function ingestDay(request,env,ctx,deps={discover,fetchHtml,parseRa
  if(!Number.isInteger(cursor)||cursor<0||!Number.isInteger(limit)||limit<1||limit>8)throw new Error('cursor >= 0, limit=1-8 required');
  const programs=(await env.DB.prepare('SELECT program_key,race_date,venue,race_no,source_url FROM jra_race_program WHERE race_date=? ORDER BY venue,race_no').bind(date).all()).results||[];
  if(!programs.length)throw new Error('No staged program for requested date');
- const discovery=await deps.discover(date,programs),runs=[];
+ const targets=programs.slice(cursor,cursor+limit);
+ const discovery=await publishedCardSources(env.DB,date,targets,deps.discover),runs=[];
  for(const p of programs.slice(cursor,cursor+limit)){
   const raceKey=keyOf(date,p.venue,p.race_no),meta=discovery.found.get(raceKey);
   if(!meta){runs.push({raceKey,ok:false,status:'card-not-discovered',error:'Publication status is unverified; discovery failure is not proof of unpublished cards'});continue;}

@@ -89,7 +89,8 @@ export async function ingestDay(request,env,ctx,deps={discover,fetchHtml,parseRa
   if(!meta){runs.push({raceKey,ok:false,status:'card-not-discovered',error:'Publication status is unverified; discovery failure is not proof of unpublished cards'});continue;}
   try{
    const page=await deps.fetchHtml(meta.url),resolved=metaFromRacecardUrl(page.url);
-   if(!page.ok||!matches(resolved,date,p.venue,p.race_no))throw new Error('Source HTTP failure or redirected race identity mismatch');
+   if(!page.ok)throw new Error(`Official card fetch rejected: HTTP ${page.status}; parameterError=${/<title>[^<]*パラメータエラー/.test(page.body||'')}`);
+   if(!matches(resolved,date,p.venue,p.race_no))throw new Error('Official card redirect changed race identity');
    const race=deps.parseRace(page,date,p.venue,Number(p.race_no));
    const evidence=(deps.inspectSourceCard||inspectSourceCard)(page.body);
    if(!evidence.allHorseNumbersObserved){

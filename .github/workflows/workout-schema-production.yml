@@ -1,0 +1,40 @@
+name: Live workout schema smoke
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/workout-evidence-v3.49.0.js'
+      - 'src/index-v3.49.0.js'
+      - '.github/workflows/workout-schema-production.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      WORKER: https://keiba-lab-api.sekai-no-bancyou.workers.dev
+    steps:
+      - name: Read Tokyo 11R workout status without modifying D1
+        shell: bash
+        run: |
+          set -euo pipefail
+          for date in 2026-10-10 2026-10-11; do
+            response="$(curl -fsS --retry 2 --retry-delay 2 --max-time 25 \
+              --get "$WORKER/v1/lab/workouts" \
+              --data-urlencode "date=$date" \
+              --data-urlencode "venue=東京" \
+              --data-urlencode "race_no=11")"
+            if ! printf '%s' "$response" | jq -e '
+                .ok == true and .version == "3.49.1" and
+                .modelIncorporated == false and
+                (.error == null) and
+                ([ "stored", "not-collected", "official-card-incomplete", "no-official-card" ] | index(input.stage)) != null' >/dev/null 2>&1; then
+              echo "Workout read failed for $date, report follows:" >&2
+              printf '%s' "$response" | jq -c '{ok,version,stage,error}' >&2 || true
+              exit 1
+            fi
+            echo "verified date=$date version=3.49.1 no SQL error"
+            printf '%s' "$response" | jq -c '{stage,tableReady,coverage,modelIncorporated}'
+          done

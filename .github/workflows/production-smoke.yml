@@ -22,6 +22,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Audit Oct 11 official card coverage before version gate (read-only)
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          echo '=== 2026-10-11 stored JRA cards (read-only; no import or mutation) ==='
+          for endpoint in '/v1/lab/storage-audit?from=2026-10-11&to=2026-10-11' '/v1/jra/status?date=2026-10-11'; do
+            file="$(mktemp)"
+            status="$(curl -sS --max-time 25 -o "$file" -w '%{http_code}' "$PRODUCTION_URL$endpoint" || true)"
+            echo "$endpoint HTTP $status"
+            jq -c '{ok,stage,version,error,totals,dates,missingCards,allCardsComplete,anomalies,races:(.races|if type == "array" then map({race_key,venue,race_no,race_name,runner_count,stored_runners,complete,officialCountVerified}) else null end)}' "$file" || head -c 400 "$file"
+          done
+          echo 'If the audit is unavailable, do not infer missing races are complete.'
+
       - name: Resolve expected Worker version
         id: expected
         shell: bash

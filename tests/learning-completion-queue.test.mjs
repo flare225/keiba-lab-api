@@ -12,7 +12,7 @@ test('scheduler completes ready training race before older untouched missing-his
 test('fitted shadow candidate automatically captures next-day race before results (SQLite regression: ORDER BY 0)',async()=>{
  const {db,sql}=dbFixture();
  await freezeExperiment(db,Date.parse('2026-10-06T05:00:00Z'));
- sql.exec("INSERT INTO jra_races VALUES('2026-10-11|東京|11','2026-10-11','東京',11,'翌日検証候補','芝',1800,2);INSERT INTO jra_runners VALUES('2026-10-11|東京|11',1,'馬A',3),('2026-10-11|東京|11',2,'馬B',3)");
+ sql.exec("DELETE FROM jra_runners WHERE race_key='2026-10-10|京都|11';DELETE FROM jra_races WHERE race_key='2026-10-10|京都|11';INSERT INTO jra_races VALUES('2026-10-11|京都|11','2026-10-11','京都',11,'翌日検証候補','芝',1600,2);INSERT INTO jra_runners VALUES('2026-10-11|京都|11',1,'馬A',3),('2026-10-11|京都|11',2,'馬B',3)");
  // Candidate must already be fitted entirely from training, never selected on validation outcomes.
  const body=JSON.stringify({weights:BASE_WEIGHTS,fittedAt:'2026-10-10T07:00:00.000Z'});
  await db.prepare('INSERT INTO lab_learning_candidates VALUES(?,?,?,?)')
@@ -20,7 +20,7 @@ test('fitted shadow candidate automatically captures next-day race before result
  const now=Date.parse('2026-10-10T09:00:00.000Z'); // 18:00 JST; 2026-10-11 is tomorrow
  const result=await scheduledExperiment(db,now);
  assert.equal(result.ok,true);
- assert.equal(result.raceKey,'2026-10-11|東京|11');
+ assert.equal(result.raceKey,'2026-10-11|京都|11');
  assert.equal(result.phase,'validation');
  assert.equal(result.status,'awaiting-results');
  assert.equal(result.externalRequests,0);

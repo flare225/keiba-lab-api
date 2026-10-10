@@ -1,6 +1,6 @@
 import app from './index-v3.48.2.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
-export const VERSION='3.49.0';
+export const VERSION='3.49.1';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);

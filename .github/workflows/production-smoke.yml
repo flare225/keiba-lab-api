@@ -321,6 +321,20 @@ jobs:
           test "$frozen" = "true"
           echo "verified=true" >> "$GITHUB_OUTPUT"
 
+      - name: Verify namespaced workout evidence read (no D1 workout_date error)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for date in 2026-10-10 2026-10-11; do
+            url="$PRODUCTION_URL/v1/lab/workouts?date=$date&venue=%E6%9D%B1%E4%BA%AC&race_no=11"
+            body="$(curl -fsS --max-time 20 "$url")"
+            if ! printf '%s' "$body" | jq -e '.ok == true and .version == "3.49.1" and .modelIncorporated == false and (.coverage.official >= 0)' >/dev/null; then
+              printf '%s\\n' "$body" | jq -c '{ok,error,stage,version}' >&2 || true
+              exit 1
+            fi
+            printf '%s' "$body" | jq -c '{stage,version,coverage,tableReady}'
+          done
+
       - name: Write production summary
         shell: bash
         run: |

@@ -6,7 +6,7 @@ const target={date:'2026-10-11',venue:'東京',raceNo:11,raceKey:'2026-10-11:東
 const official=[{horse_no:1,frame_no:1,horse_name:'ワーク馬A'},{horse_no:2,frame_no:2,horse_name:'ワーク馬B'}];
 function db(rows=[]){
  const executed=[],exec={run:false,batches:[]};
- return {executed,exec,prepare(sql){const q={args:[],bind(...args){q.args=args;return q;},async first(){executed.push({sql,args:q.args});return /FROM jra_races/.test(sql)?{race_key:target.raceKey,race_name:'アイルランドトロフィー',runner_count:2}:null;},async all(){executed.push({sql,args:q.args});return {results:/FROM jra_runners/.test(sql)?official:/FROM lab_workout_evidence/.test(sql)?rows:[]};},async run(){exec.run=true;return {success:true};}};return q;},async batch(stmts){exec.batches.push(stmts);return stmts.map(()=>({success:true}));}};
+ return {executed,exec,prepare(sql){const q={args:[],bind(...args){q.args=args;return q;},async first(){executed.push({sql,args:q.args});return /FROM jra_races/.test(sql)?{race_key:target.raceKey,race_name:'アイルランドトロフィー',runner_count:2}:null;},async all(){executed.push({sql,args:q.args});return {results:/FROM jra_runners/.test(sql)?official:/FROM lab_workout_evidence/.test(sql)?rows:[]};},async run(){executed.push({sql,args:q.args});exec.run=true;return {success:true};}};return q;},async batch(stmts){exec.batches.push(stmts);return stmts.map(()=>({success:true}));}};
 }
 const source={rightsGranted:true,sourceName:'Licensed Test Provider',sourceRecordId:'evidence-123',workouts:[{horseNo:1,horseName:'ワーク馬A',workoutDate:'2026-10-08',course:'坂路',fourF:52.1,lastF:12.8}]};
 test('workout ingestion rejects unknown official horses, after-race workouts, non-licensed feeds, invalid times and duplicates',()=>{
@@ -67,5 +67,41 @@ test('API deploy-check reports active workout release, not the inherited older b
  const data=await response.json();
  assert.equal(data.ok,true);
  assert.equal(data.version,VERSION);
- assert.equal(VERSION,'3.49.0');
+ assert.equal(VERSION,'3.49.1');
+});
+
+test('old incompatible workout table is never read, altered or dropped by the namespaced evidence API',async()=>{
+ const calls=[];
+ const raceKey='2026-10-11:東京:11';
+ const db={
+  prepare(sql){
+   calls.push(sql);
+   assert.doesNotMatch(sql,/\\blab_workout_evidence\\b(?!_v349)/,'must not reference the old table');
+   const q={
+    bind(){return q;},
+    async first(){return {race_key:raceKey,race_name:'アイルランドT',runner_count:2};},
+    async all(){
+     if(/FROM jra_runners/.test(sql))return{results:[{horse_no:1,frame_no:1,horse_name:'ワーク馬A'},{horse_no:2,frame_no:2,horse_name:'ワーク馬B'}]};
+     if(/FROM lab_workout_evidence_v349/.test(sql))throw Error('D1_ERROR: no such table: lab_workout_evidence_v349');
+     return{results:[]};
+    }
+   };return q;
+  }
+ };
+ const result=await getWorkoutEvidence(db,target,{});
+ assert.equal(result.ok,true);
+ assert.equal(result.stage,'not-collected');
+ assert.equal(result.tableReady,false);
+ assert.equal(result.coverage.withWorkout,0);
+ assert.ok(calls.some(x=>/lab_workout_evidence_v349/.test(x)));
+});
+test('new workout data is written only to namespaced v349 table, never legacy table',async()=>{
+ const d=db();
+ const config={WORKOUT_LICENSE_CONFIRMED:'yes',WORKOUT_FEED_URL:'https://licensed.example/feed',WORKOUT_FEED_TOKEN:'fake-test'};
+ const result=await syncWorkoutEvidence(d,config,target,async()=>new Response(JSON.stringify(source),{headers:{'content-type':'application/json'}}));
+ assert.equal(result.stored,1);
+ assert.equal(d.exec.batches.length,1);
+ const sql=d.executed.map(x=>x.sql).join(' ');
+ assert.match(sql,/CREATE TABLE IF NOT EXISTS lab_workout_evidence_v349/);
+ assert.doesNotMatch(sql,/DROP TABLE|ALTER TABLE/);
 });

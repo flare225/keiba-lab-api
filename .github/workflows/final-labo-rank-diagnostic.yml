@@ -1,0 +1,42 @@
+name: Diagnose missing final LABO ranking (read-only)
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/final-labo-rank-diagnostic.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      API: https://keiba-lab-api.sekai-no-bancyou.workers.dev
+    steps:
+      - name: Check October 11 and October 10 rank coverage by expected going
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'Read-only audit: POST to user-mark-audit does NOT save or change any user marks.'
+          echo "Checked $(TZ=Asia/Tokyo date +'%F %T JST')"
+          for date in 2026-10-11 2026-10-10; do
+            key="$date:東京:11"
+            race="$(curl -fsS --max-time 25 --get "$API/api/jra/runners" --data-urlencode "race_key=$key")"
+            horse="$(printf '%s' "$race" | jq -er '.data | map(.horse_no // .horseNo) | first | tonumber')"
+            echo "$date 東京11R official_sample_horse_no=$horse"
+            for going in 良 稍重 重 不良; do
+              request="$(jq -nc --arg date "$date" --arg track "$going" --argjson horseNo "$horse" '{date:$date,venue:"東京",raceNo:11,phase:"final",track:$track,marks:[{horseNo:$horseNo,mark:"◎"}]}')"
+              file="$(mktemp)"
+              code="$(curl -sS --retry 2 --retry-delay 2 --max-time 25 -o "$file" -w '%{http_code}' -X POST "$API/v1/lab/user-mark-audit" -H 'content-type: application/json' --data "$request")"
+              if [[ "$code" != '200' ]]; then
+                echo "$date track=$going HTTP $code"
+                jq -c '{ok,error,stage}' "$file"
+                continue
+              fi
+              jq -c '{race:.race.raceKey,phase,track:.audit.trackAssumption,mode:.audit.mode,coverage:.audit.modelCoveragePct,sampleRank:.audit.marked[0].laboRank,sampleScore:.audit.marked[0].laboScore,warningCodes:.audit.marked[0].warnings,missingRankCount:.audit.summary.unscored,unmarkedCandidates:((.audit.unmarkedTopCandidates//[])|length)}' "$file"
+            done
+          done
+          experiment="$(curl -fsS --max-time 25 "$API/v1/lab/learning-experiment")"
+          printf '%s' "$experiment" | jq -c '{experiment:.experiment.id,learningCounts:.counts,validation:.validation}'
+          echo 'No source model scores or DB records were altered.'

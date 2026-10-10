@@ -1,10 +1,50 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
-import {freezeExperiment,scheduledExperiment} from '../src/learning-experiment-v3.40.0.js';
+import {EXPERIMENT,BASE_WEIGHTS,freezeExperiment,scheduledExperiment,hash} from '../src/learning-experiment-v3.40.0.js';
 function dbFixture(){const sql=new DatabaseSync(':memory:');sql.exec("CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,race_name TEXT,surface TEXT,distance INTEGER,runner_count INTEGER);CREATE TABLE jra_runners(race_key TEXT,horse_no INTEGER,horse_name TEXT,age INTEGER);CREATE TABLE jra_past_performances(horse_name TEXT,race_date TEXT,venue TEXT,race_name TEXT,surface TEXT,distance INTEGER,finish_position INTEGER,field_size INTEGER,time_text TEXT,last3f REAL,corner_positions TEXT,track_condition TEXT,source_url TEXT);CREATE TABLE lab_race_outcomes(race_key TEXT,horse_no INTEGER,finish_position INTEGER);CREATE TABLE lab_race_result_details(race_key TEXT,horse_no INTEGER,horse_name TEXT,finish_position INTEGER,finish_status TEXT,time_text TEXT,time_seconds REAL,corner_positions TEXT,last3f REAL,source_url TEXT,source_sha256 TEXT);INSERT INTO jra_races VALUES('2026-10-04|京都|11','2026-10-04','京都',11,'過去対象','芝',1600,2),('2026-10-10|京都|11','2026-10-10','京都',11,'未来対象','芝',1600,2);INSERT INTO jra_runners VALUES('2026-10-04|京都|11',1,'馬A',3),('2026-10-04|京都|11',2,'馬B',3),('2026-10-10|京都|11',1,'馬A',3),('2026-10-10|京都|11',2,'馬B',3);INSERT INTO jra_past_performances VALUES('馬A','2026-09-01','京都','過去','芝',1600,1,12,'1:33.0',33.3,'2-2','良','https://www.jra.go.jp/p'),('馬B','2026-09-01','京都','過去','芝',1600,5,12,'1:34.0',34.3,'3-3','良','https://www.jra.go.jp/p'),('馬A','2026-10-04','京都','漏洩候補','芝',1600,12,12,'1:40.0',40,'12-12','良','https://www.jra.go.jp/p');INSERT INTO lab_race_result_details VALUES('2026-10-04|京都|11',1,'馬A',1,'finished','1:33.0',93,'2-2',33.3,'https://www.jra.go.jp/result','source-sha'),('2026-10-04|京都|11',2,'馬B',2,'finished','1:33.2',93.2,'3-3',34.3,'https://www.jra.go.jp/result','source-sha');");const db={prepare(q){const wrap=(args=[])=>({bind(...a){return wrap(a)},async all(){return{results:sql.prepare(q).all(...args)}},async first(){return sql.prepare(q).get(...args)||null},async run(){const r=sql.prepare(q).run(...args);return{meta:{changes:Number(r.changes)}}}});return wrap()}};return{db,sql}}
 test('scheduler completes ready training race before older untouched missing-history race',async()=>{
  const {db,sql}=dbFixture(),now=Date.parse('2026-10-09T00:00:00Z');await freezeExperiment(db,now);
  sql.exec("INSERT INTO jra_races SELECT 'blocked','2026-10-03',venue,race_no,race_name,surface,distance,runner_count FROM jra_races WHERE race_date='2026-10-04';INSERT INTO jra_runners VALUES('blocked',1,'MissingA',3),('blocked',2,'MissingB',3);INSERT INTO lab_race_result_details SELECT 'blocked',horse_no,CASE horse_no WHEN 1 THEN 'MissingA' ELSE 'MissingB' END,finish_position,finish_status,time_text,time_seconds,corner_positions,last3f,source_url,source_sha256 FROM lab_race_result_details WHERE race_key='2026-10-04|京都|11'");
  const result=await scheduledExperiment(db,now);assert.equal(result.raceKey,'2026-10-04|京都|11');assert.equal(result.status,'labels-saved');assert.equal(result.fit.trainingRaces,1);assert.equal(result.externalRequests,0);sql.close();
+});
+
+test('fitted shadow candidate automatically captures next-day race before results (SQLite regression: ORDER BY 0)',async()=>{
+ const {db,sql}=dbFixture();
+ await freezeExperiment(db,Date.parse('2026-10-06T05:00:00Z'));
+ sql.exec("INSERT INTO jra_races VALUES('2026-10-11|東京|11','2026-10-11','東京',11,'翌日検証候補','芝',1800,2);INSERT INTO jra_runners VALUES('2026-10-11|東京|11',1,'馬A',3),('2026-10-11|東京|11',2,'馬B',3)");
+ // Candidate must already be fitted entirely from training, never selected on validation outcomes.
+ const body=JSON.stringify({weights:BASE_WEIGHTS,fittedAt:'2026-10-10T07:00:00.000Z'});
+ await db.prepare('INSERT INTO lab_learning_candidates VALUES(?,?,?,?)')
+  .bind(EXPERIMENT.id,body,await hash(body),'2026-10-10T07:00:00.000Z').run();
+ const now=Date.parse('2026-10-10T09:00:00.000Z'); // 18:00 JST; 2026-10-11 is tomorrow
+ const result=await scheduledExperiment(db,now);
+ assert.equal(result.ok,true);
+ assert.equal(result.raceKey,'2026-10-11|東京|11');
+ assert.equal(result.phase,'validation');
+ assert.equal(result.status,'awaiting-results');
+ assert.equal(result.externalRequests,0);
+ assert.equal(result.fit.idempotent,true);
+ const snapshot=sql.prepare("SELECT * FROM lab_learning_features WHERE phase='validation'").get();
+ assert.ok(snapshot);
+ assert.equal(snapshot.race_date,'2026-10-11');
+ assert.ok(Date.parse(snapshot.captured_at)<Date.parse('2026-10-11T00:00:00+09:00'));
+ const features=JSON.parse(snapshot.features_json);
+ assert.equal(features.guardrails.targetResultReadForFeatures,false);
+ assert.equal(features.guardrails.humanMarksUsed,false);
+ assert.ok(features.runners.every(x=>Number.isFinite(x.baselineScore)&&Number.isFinite(x.candidateScore)));
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_learning_labels').get().n,0);
+ sql.close();
+});
+test('fitted learner will NOT create a missed validation snapshot on or after target race day',async()=>{
+ const {db,sql}=dbFixture();
+ await freezeExperiment(db,Date.parse('2026-10-06T05:00:00Z'));
+ const body=JSON.stringify({weights:BASE_WEIGHTS,fittedAt:'2026-10-09T10:00:00Z'});
+ await db.prepare('INSERT INTO lab_learning_candidates VALUES(?,?,?,?)')
+  .bind(EXPERIMENT.id,body,await hash(body),'2026-10-09T10:00:00Z').run();
+ const result=await scheduledExperiment(db,Date.parse('2026-10-10T05:00:00Z'));
+ assert.equal(result.ok,true);
+ assert.equal(result.idempotent,true);
+ assert.equal(sql.prepare("SELECT COUNT(*) n FROM lab_learning_features WHERE phase='validation'").get().n,0);
+ sql.close();
 });

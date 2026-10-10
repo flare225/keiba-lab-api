@@ -4,6 +4,8 @@ const reply=(body,status=200)=>new Response(JSON.stringify(body),{status,headers
 const query=async(db,sql,bind=[])=>((await db.prepare(sql).bind(...bind).all()).results||[]);
 const one=async(db,sql,bind=[])=>await db.prepare(sql).bind(...bind).first();
 const missingTable=e=>/no such table/i.test(String(e?.message||e));
+ // The namespaced table avoids interpreting a preexisting, incompatible workout table.
+ // Legacy rows must not be silently altered or cast as new licensed evidence.
 export function workoutTarget(x){
  const date=String(x?.date||''),venue=String(x?.venue||''),raceNo=Number(x?.raceNo??x?.race_no);
  if(!DATE.test(date)||venue.length<1||venue.length>20||!Number.isInteger(raceNo)||raceNo<1||raceNo>12)throw Error('開催日・競馬場・レース番号を確認してください。');
@@ -39,14 +41,14 @@ export function normalizeWorkoutBatch(body,target,official){
  }
  return out;
 }
-const CREATE='CREATE TABLE IF NOT EXISTS lab_workout_evidence (race_key TEXT NOT NULL, horse_no INTEGER NOT NULL, horse_name TEXT NOT NULL, workout_date TEXT NOT NULL, course TEXT NOT NULL, session_id TEXT NOT NULL, four_f REAL, last_f REAL, source_name TEXT NOT NULL, source_record_id TEXT, imported_at TEXT NOT NULL, PRIMARY KEY (race_key,horse_no,workout_date,course,session_id))';
+const CREATE='CREATE TABLE IF NOT EXISTS lab_workout_evidence_v349 (race_key TEXT NOT NULL, horse_no INTEGER NOT NULL, horse_name TEXT NOT NULL, workout_date TEXT NOT NULL, course TEXT NOT NULL, session_id TEXT NOT NULL, four_f REAL, last_f REAL, source_name TEXT NOT NULL, source_record_id TEXT, imported_at TEXT NOT NULL, PRIMARY KEY (race_key,horse_no,workout_date,course,session_id))';
 export async function getWorkoutEvidence(db,target,env={}){
  const race=await one(db,'SELECT race_key,race_name,runner_count FROM jra_races WHERE race_date=? AND venue=? AND race_no=?',[target.date,target.venue,target.raceNo]);
  if(!race)return{ok:true,stage:'no-official-card',race:target,runners:[],coverage:{official:0,withWorkout:0},collectionConfigured:Boolean(env.WORKOUT_FEED_URL&&env.WORKOUT_LICENSE_CONFIRMED==='yes'),modelIncorporated:false};
  const official=await query(db,'SELECT horse_no,frame_no,horse_name FROM jra_runners WHERE race_key=? ORDER BY horse_no',[race.race_key]);
  const complete=official.length===Number(race.runner_count)&&official.length>0;
  let stored=[],tableReady=true;
- try{stored=await query(db,'SELECT horse_no,horse_name,workout_date,course,session_id,four_f,last_f,source_name,source_record_id,imported_at FROM lab_workout_evidence WHERE race_key=? AND workout_date<? ORDER BY workout_date DESC,horse_no',[race.race_key,target.date]);}
+ try{stored=await query(db,'SELECT horse_no,horse_name,workout_date,course,session_id,four_f,last_f,source_name,source_record_id,imported_at FROM lab_workout_evidence_v349 WHERE race_key=? AND workout_date<? ORDER BY workout_date DESC,horse_no',[race.race_key,target.date]);}
  catch(e){if(missingTable(e))tableReady=false;else throw e;}
  const by=new Map();
  for(const s of stored){const no=Number(s.horse_no),officialHorse=official.find(r=>Number(r.horse_no)===no);if(!officialHorse||s.horse_name!==officialHorse.horse_name)continue;const arr=by.get(no)||[];
@@ -72,7 +74,7 @@ export async function syncWorkoutEvidence(db,env,target,fetcher=fetch){
  const entries=normalizeWorkoutBatch(input,target,official);
  if(!entries.length)return{ok:true,stored:0,stage:'feed-empty',sourceName:input.sourceName,modelIncorporated:false};
  await db.prepare(CREATE).run();
- const statements=entries.map(x=>db.prepare('INSERT INTO lab_workout_evidence (race_key,horse_no,horse_name,workout_date,course,session_id,four_f,last_f,source_name,source_record_id,imported_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(race_key,horse_no,workout_date,course,session_id) DO UPDATE SET four_f=excluded.four_f,last_f=excluded.last_f,source_name=excluded.source_name,source_record_id=excluded.source_record_id,imported_at=excluded.imported_at')
+ const statements=entries.map(x=>db.prepare('INSERT INTO lab_workout_evidence_v349 (race_key,horse_no,horse_name,workout_date,course,session_id,four_f,last_f,source_name,source_record_id,imported_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(race_key,horse_no,workout_date,course,session_id) DO UPDATE SET four_f=excluded.four_f,last_f=excluded.last_f,source_name=excluded.source_name,source_record_id=excluded.source_record_id,imported_at=excluded.imported_at')
  .bind(x.raceKey,x.horseNo,x.horseName,x.workoutDate,x.course,x.sessionId,x.fourF,x.lastF,x.sourceName,x.sourceId,x.importedAt));
  if(!db.batch)throw Error('データベースの一括保存が使えません。');
  await db.batch(statements);

@@ -9,7 +9,10 @@ export default {
    const data=await response.json();
    return new Response(JSON.stringify({...data,version:VERSION}),{status:response.status,headers:response.headers});
   }
-  return app.fetch(request,env,ctx);
+  const response=await app.fetch(request,env,ctx);
+  let data;try{data=await response.clone().json();}catch{return response;}
+  if(data&&typeof data==='object')data.version=VERSION;
+  return new Response(JSON.stringify(data),{status:response.status,headers:response.headers});
  },
  async scheduled(event,env,ctx){return app.scheduled(event,env,ctx);}
 };

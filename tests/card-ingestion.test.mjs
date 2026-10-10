@@ -38,3 +38,38 @@ test('JRA literal action uses POST CNAME and preserves source identity',async()=
  try{globalThis.fetch=async(url,options)=>{assert.equal(options.method,'POST');assert.equal(new URLSearchParams(options.body).get('CNAME'),'pw01dli00/F3');return{ok:true,status:200,url:'https://www.jra.go.jp/JRADB/accessD.html',arrayBuffer:async()=>new TextEncoder().encode('<title>error</title>').buffer};};const page=await fetchHtml('https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dli00%2FF3');assert.equal(new URL(page.url).searchParams.get('CNAME'),'pw01dli00/F3');assert.ok(page.ok);}finally{globalThis.fetch=original;}
 });
 test('deployment check reports the active wrapper version',async()=>{const response=await worker.fetch(new Request('https://test/v1/lab/deploy-check'),env,{});assert.equal((await response.json()).version,'3.7.1');});
+
+
+test('eight staged JRA source pages are all explored rather than starving races 7 and 8',async()=>{
+ const {discover}=await import('../src/index-v3.7.1.js');
+ const day='2026-10-11',programs=Array.from({length:8},(_,i)=>({venue:'東京',race_no:i+1,source_url:'https://www.jra.go.jp/fixture/page-'+(i+1)}));
+ const loaded=[];
+ const load=async url=>{
+  loaded.push(url);
+  const n=Number(url.match(/page-(\\d+)$/)?.[1]||0);
+  const cname='pw01dde010520260404'+String(n).padStart(2,'0')+'20261011/AA';
+  return{ok:true,url,body:n?'<a href="/JRADB/accessD.html?CNAME='+encodeURIComponent(cname)+'">正式出馬表</a>':''};
+ };
+ const d=await discover(day,programs,{load});
+ assert.equal(d.found.size,8);
+ assert.equal(d.unresolved.length,0);
+ assert.equal(d.pagesVisited,8);
+ assert.ok(d.pageLimit>=8);
+ assert.equal(loaded.filter(x=>x.includes('/fixture/')).length,8);
+});
+test('a staged, dated official JRA card URL is discovered without inventing its checksum',async()=>{
+ const {discover}=await import('../src/index-v3.7.1.js');
+ let calls=0;
+ const d=await discover('2026-10-11',[{venue:'東京',race_no:11,source_url:'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604041120261011%2FCE'}],{load:async()=>{calls++;throw Error('Should not need discovery fetch');}});
+ assert.equal(d.found.size,1);
+ assert.equal(d.pagesVisited,0);
+ assert.equal(calls,0);
+ assert.deepEqual(d.unresolved,[]);
+});
+test('discovery returns an explicit unresolved race key when no published link can be found',async()=>{
+ const {discover}=await import('../src/index-v3.7.1.js');
+ const day='2026-10-11',source='https://www.jra.go.jp/fixtures/unknown';
+ const d=await discover(day,[{venue:'京都',race_no:8,source_url:source}],{load:async url=>({ok:true,url,body:'<p>リンクは掲載されていない</p>'})});
+ assert.deepEqual(d.unresolved,[day+':京都:8']);
+ assert.equal(d.found.size,0);
+});

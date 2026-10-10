@@ -1,0 +1,36 @@
+name: Verify Irish Trophy and Saudi RC user mark DB status
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/tokyo-user-mark-db-readonly.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      API: https://keiba-lab-api.sekai-no-bancyou.workers.dev
+    steps:
+      - name: Read both races' mark revisions and operational status without exposing horse names
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Audited at $(TZ=Asia/Tokyo date +'%F %T JST')"
+          for date in 2026-10-10 2026-10-11; do
+            if [[ "$date" == "2026-10-10" ]]; then name='サウジアラビアRC'; else name='アイルランドT'; fi
+            tmp="$(mktemp)"
+            http="$(curl -sS --retry 2 --retry-delay 2 --max-time 25 -o "$tmp" -w '%{http_code}' --get "$API/v1/lab/user-marks" --data-urlencode "date=$date" --data-urlencode "venue=東京" --data-urlencode "race_no=11")"
+            echo "$name user_marks_http=$http"
+            jq -c '{ok,version,stage,error,raceKey,storedPhases:[(.latest//[])[]|{phase,revisionNo,revisionId,entryCount:(.entries|length),trackCondition,identityBasis}],phaseCount:((.latest//[])|length)}' "$tmp"
+            test "$http" = "200"
+            jq -e '.ok==true' "$tmp" >/dev/null
+            http="$(curl -sS --retry 2 --retry-delay 2 --max-time 25 -o "$tmp" -w '%{http_code}' --get "$API/v1/lab/race-ops" --data-urlencode "date=$date" --data-urlencode "venue=東京" --data-urlencode "race_no=11")"
+            echo "$name race_ops_http=$http"
+            jq -c '{ok,error,cardComplete:.ops.cardComplete,userMarkReady:.ops.userMarkReady,predictionReady:.ops.predictionReady,decisionReady:.ops.decisionReady,nextAction:.ops.nextAction,prelockGate:.prelock.gate}' "$tmp"
+            test "$http" = "200"
+            jq -e '.ok==true' "$tmp" >/dev/null
+          done
+          echo 'These GET requests did not save or modify any user marks.'

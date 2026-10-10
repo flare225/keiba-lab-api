@@ -1,0 +1,65 @@
+name: Bounded Kyoto 11R history catch-up for pre-race validation
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pre-race-kyoto11-history-20261011.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: jra-history-priority-kyoto11-20261011
+  cancel-in-progress: false
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      API: https://keiba-lab-api.sekai-no-bancyou.workers.dev
+      DATE: '2026-10-11'
+      VENUE: '京都'
+      RACE_NO: '11'
+    steps:
+      - name: Safely supplement JRA prior history without result leakage
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(TZ=Asia/Tokyo date +%F)" == '2026-10-10' ]] || { echo "::error::Past-day features cannot be built retroactively.";exit 1; }
+          ops="$(curl -fsS --max-time 20 -G "$API/v1/lab/race-ops" --data-urlencode "date=$DATE" --data-urlencode "venue=$VENUE" --data-urlencode "race_no=$RACE_NO")"
+          printf '%s' "$ops" | jq -e '.ok and .ops.cardComplete==true' >/dev/null
+          before="$(curl -fsS --max-time 20 -G "$API/v1/lab/history-collection-status" --data-urlencode "date=$DATE" --data-urlencode "venue=$VENUE" --data-urlencode "race_no=$RACE_NO" --data-urlencode "history_limit=10")"
+          echo 'Kyoto 11R prior-history baseline:'
+          printf '%s' "$before" | jq -c '{ok,remainingHorses,totalStoredRows,totalRunners:(.runners|length)}'
+          echo "| Attempt | Collection | Requests | Added rows | Remaining horses |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---:|---:|---:|" >> "$GITHUB_STEP_SUMMARY"
+          # The official JRA collector itself enforces a global lease and 60-second source gap.
+          for attempt in 1 2 3 4 5 6; do
+            [[ "$(TZ=Asia/Tokyo date +%F)" == '2026-10-10' ]] || exit 1
+            status="$(curl -fsS --max-time 20 -G "$API/v1/lab/history-collection-status" --data-urlencode "date=$DATE" --data-urlencode "venue=$VENUE" --data-urlencode "race_no=$RACE_NO" --data-urlencode "history_limit=10")"
+            remaining="$(printf '%s' "$status" | jq -r '.remainingHorses // 0')"
+            if [[ "$remaining" -eq 0 ]]; then echo "History complete";break;fi
+            body="$(jq -cn --arg date "$DATE" --arg venue "$VENUE" --argjson raceNo "$RACE_NO" '{date:$date,venue:$venue,raceNo:$raceNo,historyLimit:10,batchSize:1,confirm:"COLLECT"}')"
+            reply="$(curl -fsS --max-time 35 -X POST "$API/v1/lab/history-collection-batch" -H 'content-type: application/json' --data "$body" || true)"
+            if ! printf '%s' "$reply" | jq -e '.status|type=="string"' >/dev/null 2>&1; then
+              echo "::warning::Collector returned no usable response; stopping rather than increasing request rate."
+              break
+            fi
+            info="$(printf '%s' "$reply" | jq -c '{status,attempted,externalRequests,addedRows,remaining:.after.remainingHorses,errors:[.results[]?|select(.status=="failed")|.error]}')"
+            echo "$info"
+            stage="$(printf '%s' "$reply" | jq -r '.status')"
+            requests="$(printf '%s' "$reply" | jq -r '.externalRequests // 0')"
+            rows="$(printf '%s' "$reply" | jq -r '.addedRows // 0')"
+            left="$(printf '%s' "$reply" | jq -r '.after.remainingHorses // "unknown"')"
+            echo "| $attempt | $stage | $requests | $rows | $left |" >> "$GITHUB_STEP_SUMMARY"
+            [[ "$left" != 0 ]] || break
+            sleep 66
+          done
+          [[ "$(TZ=Asia/Tokyo date +%F)" == '2026-10-10' ]] || exit 1
+          body="$(jq -cn --arg date "$DATE" --arg venue "$VENUE" --argjson raceNo "$RACE_NO" '{date:$date,venue:$venue,raceNo:$raceNo,confirm:"CAPTURE"}')"
+          result="$(curl -fsS --max-time 25 -X POST "$API/v1/lab/learning-experiment-capture" -H 'content-type: application/json' --data "$body" || true)"
+          printf '%s' "$result" | jq -c '{ok,phase,status,featureAlreadySaved,featuresSha256,missingCount:((.missingHistoryHorses//[])|length)}'
+          if printf '%s' "$result" | jq -e '.ok==true and .phase=="validation" and (.status=="awaiting-results" or .featureAlreadySaved==true)' >/dev/null 2>&1; then
+            echo "Kyoto 11R validated pre-race snapshot frozen." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Kyoto 11R remains history-blocked. No pre-race snapshot claim." >> "$GITHUB_STEP_SUMMARY"
+          fi

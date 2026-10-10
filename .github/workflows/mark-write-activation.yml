@@ -1,0 +1,32 @@
+name: Check DB mark write activation (no data saved)
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/mark-write-activation.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Verify owner-only mark saving capability without a valid key
+        shell: bash
+        run: |
+          set -euo pipefail
+          file="$(mktemp)"
+          status="$(curl -sS --max-time 25 -o "$file" -w '%{http_code}' \
+            'https://keiba-lab-api.sekai-no-bancyou.workers.dev/v1/lab/user-marks' \
+            -X POST \
+            -H 'Content-Type: application/json' \
+            -H 'Authorization: Bearer intentionally-invalid-credential-healthcheck' \
+            -d '{}' || true)"
+          case "$status" in
+            401) echo 'write_credential_status=CONFIGURED (the dummy key was rejected; no data saved)' ;;
+            503) echo 'write_credential_status=NOT_CONFIGURED (Worker USER_MARK_WRITE_TOKEN is missing; no data saved)' ;;
+            *) echo "write_credential_status=UNKNOWN (HTTP $status; no valid key used)" ;;
+          esac
+          jq -c '{ok,error,scoreMutation}' "$file" 2>/dev/null || echo 'Non-JSON response'
+          test "$status" = 401 -o "$status" = 503

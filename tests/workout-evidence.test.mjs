@@ -61,3 +61,11 @@ test('production entrypoint surfaces workout status without a configured provide
  assert.equal(data.coverage.withWorkout,0);
  assert.equal(data.modelIncorporated,false);
 });
+
+test('API deploy-check reports active workout release, not the inherited older backend version',async()=>{
+ const response=await app.fetch(new Request('https://lab.test/v1/lab/deploy-check'),{});
+ const data=await response.json();
+ assert.equal(data.ok,true);
+ assert.equal(data.version,VERSION);
+ assert.equal(VERSION,'3.49.0');
+});

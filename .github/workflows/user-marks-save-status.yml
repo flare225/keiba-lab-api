@@ -1,0 +1,43 @@
+name: Verify Saudi RC saved final marks (read-only)
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/user-marks-save-status.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      API: https://keiba-lab-api.sekai-no-bancyou.workers.dev
+    steps:
+      - name: Report saved DB final mark revision (no marks printed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp)"
+          status="$(curl --retry 2 --retry-delay 2 --max-time 25 -sS -o "$tmp" -w '%{http_code}' --get "$API/v1/lab/user-marks" \
+             --data-urlencode "date=2026-10-10" \
+             --data-urlencode "venue=東京" \
+             --data-urlencode "race_no=11" \
+             --data-urlencode "phase=final")"
+          echo "saved_marks_http=$status"
+          jq -c '{ok,version,stage,error,raceKey,revisionCount:((.latest // [])|length),finalRevisions:[(.latest // [])[]|{phase,revisionNo,entryCount:((.entries // [])|length),trackCondition,identityBasis}]}' "$tmp"
+          test "$status" = "200"
+          jq -e '.ok == true' "$tmp" >/dev/null
+      - name: Report race operational readiness (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp)"
+          status="$(curl --retry 2 --retry-delay 2 --max-time 25 -sS -o "$tmp" -w '%{http_code}' --get "$API/v1/lab/race-ops" \
+             --data-urlencode "date=2026-10-10" \
+             --data-urlencode "venue=東京" \
+             --data-urlencode "race_no=11")"
+          echo "race_ops_http=$status"
+          jq -c '{ok,error,cardComplete:.ops.cardComplete,userMarkReady:.ops.userMarkReady,predictionReady:.ops.predictionReady,decisionReady:.ops.decisionReady,nextAction:.ops.nextAction,prelockGate:.prelock.gate}' "$tmp"
+          test "$status" = "200"
+          jq -e '.ok == true' "$tmp" >/dev/null

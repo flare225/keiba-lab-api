@@ -1,0 +1,62 @@
+name: Oct 11 frozen prediction result verification
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/shadow-oct11-postrace-review.yml'
+  schedule:
+    # UTC 02:15 is 11:15 in Japan. Retry if JRA verified result ingestion is delayed.
+    - cron: '15 2 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: shadow-oct11-postrace-verified-labels
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      API: https://keiba-lab-api.sekai-no-bancyou.workers.dev
+    steps:
+      - name: Attach JRA official labels only to genuinely frozen October 11 features
+        shell: bash
+        run: |
+          set -euo pipefail
+          today="$(TZ=Asia/Tokyo date +%F)"
+          if [[ "$today" < '2026-10-12' || "$today" > '2026-10-25' ]]; then
+            echo "No eligible post-race verification window today ($today JST)."
+            exit 0
+          fi
+          echo '## Oct 11 locked-feature outcome verification' >> "$GITHUB_STEP_SUMMARY"
+          echo "Date executed: $today JST" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Target | Official labels | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          for venue in 東京 京都; do
+            # No features can be created retroactively by the API once race_date <= JST today.
+            # An absent snapshot returns an error rather than a false post-race backtest.
+            body="$(jq -cn --arg venue "$venue" '{date:"2026-10-11",venue:$venue,raceNo:11,confirm:"CAPTURE"}')"
+            file="$(mktemp)"
+            http="$(curl -sS --retry 2 --retry-delay 2 --max-time 25 -o "$file" -w '%{http_code}' -X POST "$API/v1/lab/learning-experiment-capture" -H 'content-type: application/json' --data "$body" || true)"
+            if [[ "$http" != '200' ]] || ! jq -e '.ok==true and .phase=="validation" and .featureAlreadySaved==true' "$file" >/dev/null 2>&1; then
+              echo "$venue 11R has no valid immutable October 10 snapshot to label; refusing retrospective feature creation."
+              echo "| $venue 11R | no | No verified pre-race feature or server refused |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            stage="$(jq -r '.status // "unknown"' "$file")"
+            echo "$venue 11R -> $stage"
+            case "$stage" in
+              labels-saved|labels-already-saved)
+                echo "| $venue 11R | yes | $stage |" >> "$GITHUB_STEP_SUMMARY"
+                ;;
+              *)
+                echo "| $venue 11R | pending | $stage |" >> "$GITHUB_STEP_SUMMARY"
+                ;;
+            esac
+          done
+          report="$(curl -fsS --retry 2 --retry-delay 2 --max-time 25 "$API/v1/lab/learning-experiment")"
+          printf '%s' "$report" | jq -e '.ok==true' >/dev/null
+          echo '### Frozen holdout validation versus existing baseline' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s' "$report" | jq -c '{validationFeatures:[.counts[]?|select(.phase=="validation")|.feature_races],labelledValidationRaces:.validation.races,validationDays:.validation.raceDays,baselineConcordance:.validation.baselineConcordance,candidateConcordance:.validation.candidateConcordance,canReviewCandidate:.validation.canReviewCandidate,automaticPromotion,accuracyImprovementValidated}'
+          echo 'Never promote candidate automatically. No accuracy claim before at least 10 prospectively frozen races across two or more dates.' >> "$GITHUB_STEP_SUMMARY"

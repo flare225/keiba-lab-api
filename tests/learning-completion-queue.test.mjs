@@ -12,6 +12,7 @@ test('scheduler completes ready training race before older untouched missing-his
 test('fitted shadow candidate automatically captures next-day race before results (SQLite regression: ORDER BY 0)',async()=>{
  const {db,sql}=dbFixture();
  await freezeExperiment(db,Date.parse('2026-10-06T05:00:00Z'));
+ sql.exec("DELETE FROM jra_past_performances WHERE race_date='2026-10-04'");
  sql.exec("DELETE FROM jra_runners WHERE race_key='2026-10-10|京都|11';DELETE FROM jra_races WHERE race_key='2026-10-10|京都|11';INSERT INTO jra_races VALUES('2026-10-11|京都|11','2026-10-11','京都',11,'翌日検証候補','芝',1600,2);INSERT INTO jra_runners VALUES('2026-10-11|京都|11',1,'馬A',3),('2026-10-11|京都|11',2,'馬B',3)");
  // Candidate must already be fitted entirely from training, never selected on validation outcomes.
  const body=JSON.stringify({weights:BASE_WEIGHTS,fittedAt:'2026-10-10T07:00:00.000Z'});
@@ -22,7 +23,7 @@ test('fitted shadow candidate automatically captures next-day race before result
  assert.equal(result.ok,true);
  assert.equal(result.raceKey,'2026-10-11|京都|11');
  assert.equal(result.phase,'validation');
- assert.equal(result.status,'awaiting-results');
+ assert.equal(result.status,'awaiting-results',JSON.stringify(result));
  assert.equal(result.externalRequests,0);
  assert.equal(result.fit.idempotent,true);
  const snapshot=sql.prepare("SELECT * FROM lab_learning_features WHERE phase='validation'").get();

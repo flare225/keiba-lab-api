@@ -5,6 +5,8 @@ on:
     paths:
       - '.github/workflows/live-validation-readiness.yml'
   workflow_dispatch:
+  schedule:
+    - cron: '20 0 * * *'
 permissions:
   contents: read
 jobs:
@@ -29,4 +31,12 @@ jobs:
           jq -c '{ok,version,initialized,trainingState,counts,trainingReadiness,hasCandidate:(.candidate != null),validation,waitCount:(.collection.waiting|length),waiting:[.collection.waiting[]?|{date,venue,raceNo,phase,status,missingCount:(.missingHistoryHorses|length)}]}' /tmp/learning-experiment.json
           echo '==== History and queue (actual DB) ===='
           jq -c '{ok,version,checkedAt,training:.learning.training,minimumTrainingRaces:.learning.minimumRaces,candidateCreated:.learning.candidateCreated,validation:.learning.validation,minimumValidationRaces:.learning.minimumValidationRaces,historyQueueCandidate:.historyQueue.candidate,archive:.archive,results:.results,waiting:[.learning.waiting[]?|{date,venue,raceNo,status,missingCount:(.horses|length)}]}' /tmp/work-progress.json
+          echo '==== Shadow model quality (training-only; no accuracy claim) ===='
+          jq -c '{trainRaces:(.trainingReadiness.eligibleRaces//0),fitted:(.candidate != null),trainConcordance:.candidate.trainingConcordance,baselineTrainConcordance:.candidate.baselineTrainingConcordance,validationRaces:(.validation.races//0),validationDays:(.validation.raceDays//0),baselineHoldoutConcordance:.validation.baselineConcordance,candidateHoldoutConcordance:.validation.candidateConcordance,automaticPromotion,accuracyImprovementValidated}' /tmp/learning-experiment.json
+          release="$(jq -r '.version' /tmp/learning-experiment.json)"
+          if [ "$release" != '3.49.2' ]; then
+            echo "::warning::Cloudflare Worker still reports $release; learning scheduler fix v3.49.2 is NOT verified deployed."
+          else
+            echo 'Learning scheduler release v3.49.2 reached production'
+          fi
           echo 'Read-only diagnostic: no collection, labels, or weight fitting triggered.'

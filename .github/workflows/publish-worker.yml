@@ -46,7 +46,7 @@ jobs:
           url='https://keiba-lab-api.sekai-no-bancyou.workers.dev/v1/lab/workouts?date=2026-10-11&venue=%E6%9D%B1%E4%BA%AC&race_no=11'
           for attempt in $(seq 1 10); do
             body="$(curl -fsS --max-time 15 "$url" || true)"
-            if printf '%s' "$body" | jq -e '.version == "3.49.1" and .ok == true and .modelIncorporated == false and (.coverage.official >= 0)' >/dev/null 2>&1; then
+            if printf '%s' "$body" | jq -e '.version == "3.49.2" and .ok == true and .modelIncorporated == false and (.coverage.official >= 0)' >/dev/null 2>&1; then
               echo 'Workout evidence API is live (without claiming licensed feed or score incorporation)'
               exit 0
             fi

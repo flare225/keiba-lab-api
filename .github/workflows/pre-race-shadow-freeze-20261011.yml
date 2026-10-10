@@ -1,0 +1,102 @@
+name: Freeze next-day shadow predictions - 2026-10-11
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pre-race-shadow-freeze-20261011.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: jra-pre-race-shadow-freeze-20261011
+  cancel-in-progress: false
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      API: https://keiba-lab-api.sekai-no-bancyou.workers.dev
+      DATE: '2026-10-11'
+    steps:
+      - name: Require October 10 in JST and a previously fitted shadow candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          today="$(TZ=Asia/Tokyo date +%F)"
+          if [[ "$today" != '2026-10-10' ]]; then
+            echo "::error::No post-race backfills. This job only seals October 11 predictions on October 10 JST (currently $today)."
+            exit 1
+          fi
+          model="$(curl -fsS --retry 2 --retry-delay 2 --max-time 20 "$API/v1/lab/learning-experiment")"
+          if ! printf '%s' "$model" | jq -e '.ok==true and .initialized==true and .candidate!=null and .trainingReadiness.eligibleRaces>=30' >/dev/null; then
+            echo "::error::A previously fitted 30+ race shadow candidate was not verified. Refusing to create validation predictions."
+            exit 1
+          fi
+          echo "Preflight passed: current JST date is $today; fitted candidate is present."
+          printf '%s' "$model" | jq -c '{experimentId:.experiment.id,validationStart:.experiment.validationFrom,trainingRaces:.trainingReadiness.eligibleRaces,validationRaces:.validation.races,automaticPromotion}'
+      - name: Freeze verifiable official-card races using immutable pre-result features
+        shell: bash
+        run: |
+          set -euo pipefail
+          sealed=0
+          waiting=0
+          not_ready=0
+          errors=0
+          checked=0
+          echo "## 2026-10-11: pre-result shadow prediction seal" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "This job only ran on October 10 JST. It never imports results, modifies weights or saves a user's final marks." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Race | Result | Details |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          for venue in 東京 京都; do
+            # Prioritize older-horse stakes races before two-year-old and lower-numbered races.
+            for no in 11 10 12 9 8 7 6 5 4 3 2 1; do
+              # Re-check the time before every DB write, including GitHub reruns across midnight.
+              if [[ "$(TZ=Asia/Tokyo date +%F)" != '2026-10-10' ]]; then
+                echo "::error::JST date changed during this workflow. Stopping before any further write."
+                exit 1
+              fi
+              checked=$((checked+1))
+              race="$DATE $venue $no""R"
+              params="date=$DATE&venue=$(printf '%s' "$venue" | jq -sRr @uri)&race_no=$no"
+              ops="$(curl -fsS --max-time 15 "$API/v1/lab/race-ops?$params" || true)"
+              if ! printf '%s' "$ops" | jq -e '.ok==true and .ops.cardComplete==true' >/dev/null 2>&1; then
+                not_ready=$((not_ready+1))
+                echo "| $race | skipped | Official card not fully verified |" >> "$GITHUB_STEP_SUMMARY"
+                continue
+              fi
+              body="$(jq -cn --arg date "$DATE" --arg venue "$venue" --argjson raceNo "$no" '{date:$date,venue:$venue,raceNo:$raceNo,confirm:"CAPTURE"}')"
+              response_file="$(mktemp)"
+              code="$(curl --retry 2 --retry-delay 2 --max-time 25 -sS -o "$response_file" -w '%{http_code}' -X POST "$API/v1/lab/learning-experiment-capture" -H 'content-type: application/json' --data "$body" || true)"
+              if [[ "$code" != '200' ]] || ! jq -e '.ok==true and .phase=="validation"' "$response_file" >/dev/null 2>&1; then
+                errors=$((errors+1))
+                echo "::warning::Capture request failed for $race (HTTP $code)"
+                jq -c '{ok,error,status,phase}' "$response_file" || true
+                echo "| $race | error | Backend rejected capture |" >> "$GITHUB_STEP_SUMMARY"
+                continue
+              fi
+              stage="$(jq -r '.status // "already-frozen"' "$response_file")"
+              if [[ "$stage" == 'awaiting-results' || "$(jq -r '.featureAlreadySaved // false' "$response_file")" == 'true' ]]; then
+                sealed=$((sealed+1))
+                sha="$(jq -r '.featuresSha256 // "preexisting immutable snapshot"' "$response_file")"
+                echo "| $race | **frozen** | $stage; SHA $sha |" >> "$GITHUB_STEP_SUMMARY"
+              elif [[ "$stage" == 'awaiting-prior-history' ]]; then
+                waiting=$((waiting+1))
+                missing="$(jq -r '(.missingHistoryHorses // [])|length' "$response_file")"
+                echo "| $race | awaiting history | $missing horses missing prerequisite features |" >> "$GITHUB_STEP_SUMMARY"
+              else
+                errors=$((errors+1))
+                echo "| $race | not frozen | $stage |" >> "$GITHUB_STEP_SUMMARY"
+              fi
+              echo "$race -> $stage"
+              sleep 1
+            done
+          done
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Checked: $checked; immutable predictions: $sealed; prior-history blocked: $waiting; official-card unavailable: $not_ready; errors: $errors." >> "$GITHUB_STEP_SUMMARY"
+          echo "Note: validation.races remains 0 until verified future results are attached after the races." >> "$GITHUB_STEP_SUMMARY"
+          if [[ $sealed -eq 0 ]]; then
+            echo "::error::No predictions were sealed. Do not claim successful pre-race validation."
+            exit 1
+          fi

@@ -15,18 +15,29 @@ export function validateCard(race){
  return race.runnerCount>0&&race.runnerCount<=18&&numbers.length===race.runnerCount&&new Set(numbers).size===numbers.length&&numbers.every((x,i)=>Number.isInteger(x)&&x===i+1)&&race.runners.every(x=>x.name);
 }
 
-// Follow only links actually published by JRA. No guessed CNAME/checksum URLs.
-async function discover(date,programs){
- const found=new Map(),queue=['https://www.jra.go.jp/keiba/','https://www.jra.go.jp/'],visited=new Set(),errors=[];
- for(const p of programs)if(p.source_url&&!queue.includes(p.source_url))queue.push(p.source_url);
- while(queue.length&&visited.size<6){
+// Follow witnessed JRA links only. A fixed six-page budget can silently starve
+// the last races in an eight-race card-ingest batch; prioritize staged sources.
+export async function discover(date,programs,{load=fetchHtml}={}){
+ const targets=new Set(programs.map(p=>keyOf(date,p.venue,Number(p.race_no))));
+ const found=new Map(),queue=[],visited=new Set(),errors=[];
+ for(const p of programs){
+  if(!p.source_url)continue;
+  // A program may already contain the actual published card URL. Its identity
+  // is checked again against the fetched page in ingestDay before any DB write.
+  const card=metaFromRacecardUrl(p.source_url);
+  if(matches(card,date,p.venue,p.race_no)){found.set(keyOf(date,p.venue,p.race_no),card);continue;}
+  if(!queue.includes(p.source_url))queue.push(p.source_url);
+ }
+ queue.push('https://www.jra.go.jp/keiba/','https://www.jra.go.jp/');
+ const pageLimit=Math.min(16,Math.max(6,programs.length+3));
+ while(queue.length&&visited.size<pageLimit&&found.size<targets.size){
   const url=queue.shift();if(visited.has(url))continue;visited.add(url);
-  let page;try{page=await fetchHtml(url);}catch(error){errors.push({url,error:String(error)});continue;}
+  let page;try{page=await load(url);}catch(error){errors.push({url,error:String(error)});continue;}
   if(!page.ok){errors.push({url,status:page.status});continue;}
   for(const link of extractLinks(page.body,page.url)){
    const meta=metaFromRacecardUrl(link);
-   if(meta?.date===date&&programs.some(p=>matches(meta,date,p.venue,p.race_no))){
-    const key=keyOf(date,meta.venue,meta.raceNo);
+   const key=meta&&keyOf(date,meta.venue,meta.raceNo);
+   if(meta?.date===date&&targets.has(key)){
     if(!found.has(key)||meta.detailed)found.set(key,meta);
     if(![...visited,...queue].some(x=>metaFromRacecardUrl(x)?.venue===meta.venue)&&!visited.has(link))queue.push(link);
    }
@@ -37,7 +48,7 @@ async function discover(date,programs){
    }
   }
  }
- return {found,errors,pagesVisited:visited.size};
+ return {found,errors,pagesVisited:visited.size,pageLimit,unresolved:[...targets].filter(key=>!found.has(key))};
 }
 
 export async function storageAudit(db,from,to){
@@ -113,7 +124,7 @@ export async function ingestDay(request,env,ctx,deps={discover,fetchHtml,parseRa
   }catch(error){runs.push({raceKey,ok:false,status:'failed',error:String(error)});}
  }
  const nextCursor=cursor+limit<programs.length?cursor+limit:null;
- return {ok:runs.length>0&&runs.every(x=>x.ok),stage:'all-race-card-ingest',version:VERSION,date,programRaceCount:programs.length,attempted:runs.length,storedRaceCards:runs.filter(x=>x.status==='saved').length,storedRunners:runs.reduce((s,x)=>s+(x.runnerCount||0),0),confirmedPredrawRosters:runs.filter(x=>x.status==='confirmed-predraw-saved').length,cursor,nextCursor,runs,discoveryErrors:discovery.errors,completion:'This response reports this batch only; storage-audit determines coverage.'};
+ return {ok:runs.length>0&&runs.every(x=>x.ok),stage:'all-race-card-ingest',version:VERSION,date,programRaceCount:programs.length,attempted:runs.length,storedRaceCards:runs.filter(x=>x.status==='saved').length,storedRunners:runs.reduce((s,x)=>s+(x.runnerCount||0),0),confirmedPredrawRosters:runs.filter(x=>x.status==='confirmed-predraw-saved').length,cursor,nextCursor,runs,discovery:{foundRaceKeys:[...discovery.found.keys()],pagesVisited:discovery.pagesVisited??null,pageLimit:discovery.pageLimit??null,unresolvedRaceKeys:discovery.unresolved??runs.filter(r=>r.status==='card-not-discovered').map(r=>r.raceKey)},discoveryErrors:discovery.errors,completion:'This response reports this batch only; storage-audit determines coverage.'};
 }
 
 export default{

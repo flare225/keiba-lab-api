@@ -1,0 +1,26 @@
+name: Oct 11 JRA all-race card audit (read-only)
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/audit-oct11-cards.mjs'
+      - 'tests/oct11-card-audit.test.mjs'
+      - '.github/workflows/oct11-card-audit.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test 24-race completeness guard
+        run: node --test tests/oct11-card-audit.test.mjs
+      - name: Audit 2026-10-11 official race cards in LIVE D1 (strictly GET only)
+        run: node scripts/audit-oct11-cards.mjs

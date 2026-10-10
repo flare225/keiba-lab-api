@@ -26,7 +26,8 @@ jobs:
           case "$status" in
             401) echo 'write_credential_status=CONFIGURED (the dummy key was rejected; no data saved)' ;;
             503) echo 'write_credential_status=NOT_CONFIGURED (Worker USER_MARK_WRITE_TOKEN is missing; no data saved)' ;;
+            409) echo 'write_credential_status=INDETERMINATE (confirm=SAVE validation before authentication; no data saved)' ;;
             *) echo "write_credential_status=UNKNOWN (HTTP $status; no valid key used)" ;;
           esac
           jq -c '{ok,error,scoreMutation}' "$file" 2>/dev/null || echo 'Non-JSON response'
-          test "$status" = 401 -o "$status" = 503
+          test "$status" = 401 -o "$status" = 503 -o "$status" = 409

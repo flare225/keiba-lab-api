@@ -6,7 +6,7 @@ const target={date:'2026-10-11',venue:'東京',raceNo:11,raceKey:'2026-10-11:東
 const official=[{horse_no:1,frame_no:1,horse_name:'ワーク馬A'},{horse_no:2,frame_no:2,horse_name:'ワーク馬B'}];
 function db(rows=[]){
  const executed=[],exec={run:false,batches:[]};
- return {executed,exec,prepare(sql){const q={args:[],bind(...args){q.args=args;return q;},async first(){executed.push({sql,args:q.args});return /FROM jra_races/.test(sql)?{race_key:target.raceKey,race_name:'アイルランドトロフィー',runner_count:2}:null;},async all(){executed.push({sql,args:q.args});return {results:/FROM jra_runners/.test(sql)?official:/FROM lab_workout_evidence/.test(sql)?rows:[]};},async run(){exec.run=true;return {success:true};}};return q;},async batch(stmts){exec.batches.push(stmts);return stmts.map(()=>({success:true}));}};
+ return {executed,exec,prepare(sql){const q={args:[],bind(...args){q.args=args;return q;},async first(){executed.push({sql,args:q.args});return /FROM jra_races/.test(sql)?{race_key:target.raceKey,race_name:'アイルランドトロフィー',runner_count:2}:null;},async all(){executed.push({sql,args:q.args});return {results:/FROM jra_runners/.test(sql)?official:/FROM lab_workout_evidence/.test(sql)?rows:[]};},async run(){executed.push({sql,args:q.args});exec.run=true;return {success:true};}};return q;},async batch(stmts){exec.batches.push(stmts);return stmts.map(()=>({success:true}));}};
 }
 const source={rightsGranted:true,sourceName:'Licensed Test Provider',sourceRecordId:'evidence-123',workouts:[{horseNo:1,horseName:'ワーク馬A',workoutDate:'2026-10-08',course:'坂路',fourF:52.1,lastF:12.8}]};
 test('workout ingestion rejects unknown official horses, after-race workouts, non-licensed feeds, invalid times and duplicates',()=>{

@@ -1,0 +1,56 @@
+name: Publish Cloudflare Worker when authorized
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'wrangler.jsonc'
+      - '.github/workflows/publish-worker.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cloudflare-worker-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check deployment credentials
+        id: credential
+        shell: bash
+        run: |
+          if [[ -n "$CLOUDFLARE_API_TOKEN" && -n "$CLOUDFLARE_ACCOUNT_ID" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Worker source has passed tests, but deployment was skipped. Set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID as GitHub Actions secrets after approving Cloudflare deployment permissions."
+          fi
+      - name: Publish tested Worker (authorized credentials only)
+        if: steps.credential.outputs.ready == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --config wrangler.jsonc
+      - name: Verify published workout evidence API
+        if: steps.credential.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://keiba-lab-api.sekai-no-bancyou.workers.dev/v1/lab/workouts?date=2026-10-11&venue=%E6%9D%B1%E4%BA%AC&race_no=11'
+          for attempt in $(seq 1 10); do
+            body="$(curl -fsS --max-time 15 "$url" || true)"
+            if printf '%s' "$body" | jq -e '.version == "3.49.0" and .ok == true and .modelIncorporated == false and (.coverage.official >= 0)' >/dev/null 2>&1; then
+              echo 'Workout evidence API is live (without claiming licensed feed or score incorporation)'
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "New Worker endpoint did not pass verified API check" >&2
+          exit 1

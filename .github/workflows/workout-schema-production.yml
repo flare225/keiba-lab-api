@@ -35,6 +35,6 @@ jobs:
               printf '%s' "$response" | jq -c '{ok,version,stage,error}' >&2 || true
               exit 1
             fi
-            echo "verified date=$date version=3.49.1 no SQL error"
+            echo "verified date=$date version=3.49.2 no SQL error"
             printf '%s' "$response" | jq -c '{stage,tableReady,coverage,modelIncorporated}'
           done

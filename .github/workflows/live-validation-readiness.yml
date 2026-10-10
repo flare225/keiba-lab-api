@@ -1,0 +1,32 @@
+name: Live candidate validation readiness (read-only)
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/live-validation-readiness.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Check real candidate and training records without fetching or writing data
+        shell: bash
+        env:
+          URL: https://keiba-lab-api.sekai-no-bancyou.workers.dev
+        run: |
+          set -euo pipefail
+          for api in learning-experiment work-progress; do
+            f="/tmp/${api}.json"
+            code="$(curl -sS --max-time 25 -o "$f" -w '%{http_code}' "$URL/v1/lab/$api")"
+            echo "$api HTTP $code"
+            if [ "$code" != 200 ]; then jq -c '{ok,error,version}' "$f" || true;exit 1;fi
+            jq -e '.ok == true' "$f" >/dev/null
+          done
+          echo '==== Learning experiment (actual DB) ===='
+          jq -c '{ok,version,initialized,trainingState,counts,trainingReadiness,hasCandidate:(.candidate != null),validation,waitCount:(.collection.waiting|length),waiting:[.collection.waiting[]?|{date,venue,raceNo,phase,status,missingCount:(.missingHistoryHorses|length)}]}' /tmp/learning-experiment.json
+          echo '==== History and queue (actual DB) ===='
+          jq -c '{ok,version,checkedAt,training:.learning.training,minimumTrainingRaces:.learning.minimumRaces,candidateCreated:.learning.candidateCreated,validation:.learning.validation,minimumValidationRaces:.learning.minimumValidationRaces,historyQueueCandidate:.historyQueue.candidate,archive:.archive,results:.results,waiting:[.learning.waiting[]?|{date,venue,raceNo,status,missingCount:(.horses|length)}]}' /tmp/work-progress.json
+          echo 'Read-only diagnostic: no collection, labels, or weight fitting triggered.'

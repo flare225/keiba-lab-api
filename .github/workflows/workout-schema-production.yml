@@ -27,10 +27,10 @@ jobs:
               --data-urlencode "venue=東京" \
               --data-urlencode "race_no=11")"
             if ! printf '%s' "$response" | jq -e '
-                .ok == true and .version == "3.49.1" and
-                .modelIncorporated == false and
-                (.error == null) and
-                ([ "stored", "not-collected", "official-card-incomplete", "no-official-card" ] | index(input.stage)) != null' >/dev/null 2>&1; then
+                . as $r | $r.ok == true and $r.version == "3.49.1" and
+                $r.modelIncorporated == false and
+                ($r.error == null) and
+                (([ "stored", "not-collected", "official-card-incomplete", "no-official-card" ] | index($r.stage)) != null)' >/dev/null 2>&1; then
               echo "Workout read failed for $date, report follows:" >&2
               printf '%s' "$response" | jq -c '{ok,version,stage,error}' >&2 || true
               exit 1

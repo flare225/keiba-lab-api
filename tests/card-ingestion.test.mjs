@@ -46,7 +46,7 @@ test('eight staged JRA source pages are all explored rather than starving races 
  const loaded=[];
  const load=async url=>{
   loaded.push(url);
-  const n=Number(url.match(/page-(\\d+)$/)?.[1]||0);
+  const n=Number(url.match(/page-(\d+)$/)?.[1]||0);
   const cname='pw01dde010520260404'+String(n).padStart(2,'0')+'20261011/AA';
   return{ok:true,url,body:n?'<a href="/JRADB/accessD.html?CNAME='+encodeURIComponent(cname)+'">正式出馬表</a>':''};
  };

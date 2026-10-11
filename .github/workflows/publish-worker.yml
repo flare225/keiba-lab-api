@@ -31,6 +31,18 @@ jobs:
             echo "ready=false" >> "$GITHUB_OUTPUT"
             echo "::warning::Worker source has passed tests, but deployment was skipped. Set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID as GitHub Actions secrets after approving Cloudflare deployment permissions."
           fi
+      - name: Report blocked release as failure (never as a successful deploy)
+        if: steps.credential.outputs.ready != 'true'
+        shell: bash
+        run: |
+          {
+            echo '## Cloudflare Worker deployment BLOCKED'
+            echo 'The GitHub branch may contain tested source, but the production Worker has **not** been updated.'
+            echo 'GitHub Actions must have both CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID configured as repository secrets.'
+            echo 'Secrets must be entered directly in GitHub settings; do not paste them into chats or workflow logs.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo '::error::Cloudflare Worker was NOT deployed: required repository Actions secrets are missing.'
+          exit 1
       - name: Publish tested Worker (authorized credentials only)
         if: steps.credential.outputs.ready == 'true'
         uses: cloudflare/wrangler-action@v3

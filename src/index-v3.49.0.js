@@ -4,6 +4,14 @@ export const VERSION='3.49.2';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/user-mark-token-check'&&request.method==='GET'){
+   const ready=typeof env.USER_MARK_WRITE_TOKEN==='string'&&env.USER_MARK_WRITE_TOKEN.length>=24;
+   const tokenMatch=ready&&request.headers.get('authorization')===`Bearer ${env.USER_MARK_WRITE_TOKEN}`;
+   return new Response(JSON.stringify({ok:tokenMatch,tokenMatch,writeReady:ready,mode:'no-write',version:VERSION}),{
+    status:!ready?503:tokenMatch?200:401,
+    headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}
+   });
+  }
   if(u.pathname==='/v1/lab/workouts'||u.pathname==='/v1/lab/workouts/sync'){
    const response=await workoutEndpoint(request,env);
    const data=await response.json();

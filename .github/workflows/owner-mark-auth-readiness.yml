@@ -1,0 +1,27 @@
+name: Verify owner mark-save auth readiness (no DB reads)
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/check-owner-mark-auth-readiness.mjs'
+      - 'tests/owner-mark-auth-readiness.test.mjs'
+      - 'docs/owner-mark-auth-setup.md'
+      - '.github/workflows/owner-mark-auth-readiness.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test read-only contract and fail-closed settings checks
+        run: node --test tests/owner-mark-auth-readiness.test.mjs
+      - name: Inspect public configuration booleans without D1 reads or credentials
+        run: node scripts/check-owner-mark-auth-readiness.mjs

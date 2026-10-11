@@ -66,6 +66,7 @@ export function summaryLines(r){
   'No user credentials, passwords, tokens, horse names, DB rows, or mark revisions were requested or printed.',
   'Set secrets only in provider dashboards. [Read operator instructions](https://github.com/flare225/keiba-lab-api/blob/main/docs/owner-mark-auth-setup.md).'
  ];
+}
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
  const r=await checkLive();
  const lines=summaryLines(r);

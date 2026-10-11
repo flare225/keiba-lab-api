@@ -49,3 +49,20 @@ test('CI summary never prints secret values nor claims real DB writes were prove
  assert.match(summary,/NOT RUN/);
  assert.doesNotMatch(summary,/DB write.*verified|password:/i);
 });
+
+
+test('summarizes individual missing Vercel settings without returning lengths or values',()=>{
+ const result=evaluateMarkAuthReadiness({
+  ok:true,configured:false,authenticated:false,
+  configuration:{ownerPassphraseReady:true,sessionSecretReady:false,writeTokenReady:true}
+ },{ok:true,writeReady:true});
+ assert.equal(result.ready,false);
+ assert.deepEqual(result.appConfiguration,{
+  ownerPassphraseReady:true,sessionSecretReady:false,writeTokenReady:true
+ });
+ assert.match(result.errors.join(' '),/session secret missing or below minimum length/i);
+ const summary=summaryLines(result).join('\\n');
+ assert.match(summary,/Vercel session secret.*BLOCKED/);
+ assert.doesNotMatch(summary,/32 characters|password:|secret-value/i);
+ assert.doesNotMatch(summary,/configuration READY/i);
+});

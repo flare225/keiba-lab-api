@@ -1,10 +1,12 @@
+import {userMarkLockEndpoint} from './user-mark-lock.js';
 import app from './index-v3.48.2.js';
 import {markRecordProvenance} from './mark-record-provenance.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
-export const VERSION='3.49.5';
+export const VERSION='3.49.6';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/user-mark-lock'){const r=await userMarkLockEndpoint(request,env);return new Response(JSON.stringify({...await r.json(),version:VERSION}),{status:r.status,headers:r.headers});}
   if(u.pathname==='/v1/lab/user-mark-token-check'&&request.method==='GET'){
    const ready=typeof env.USER_MARK_WRITE_TOKEN==='string'&&env.USER_MARK_WRITE_TOKEN.length>=24;
    const tokenMatch=ready&&request.headers.get('authorization')===`Bearer ${env.USER_MARK_WRITE_TOKEN}`;

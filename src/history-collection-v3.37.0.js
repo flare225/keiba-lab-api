@@ -1,3 +1,4 @@
+import {jraPageRequest,isJraSourceBlocked} from './jra-page-request.js';
 import {missingPriorHistorySql} from './learning-history-priority.js';
 import {parsePastPerformances,extractProfileLinks,ensureHistoryTable} from './collection-profile-parser-v3.32.0.js';
 import {targetInput} from './race-history-assessment-v3.31.0.js';
@@ -46,7 +47,7 @@ export async function collectionStatus(db,input,now=Date.now(),context=null){
   const age=Number(r.age);if(!Number.isInteger(age)||age<2||age>20)throw Error('出走馬の年齢を確認できません。');
   const fromDate=[COLLECTION_POLICY.archiveFromDate,String(Number(race.race_date.slice(0,4))-age+2)+'-01-01'].sort().at(-1);
   const stats=byStats.get(r.horse_name),rec=byReceipt.get(r.horse_name);
-  out.push({horseNo:r.horse_no==null?null:Number(r.horse_no),horseName:r.horse_name,age,fromDate,storedRows:Number(stats?.stored_rows||0),last3fRows:Number(stats?.last3f_rows||0),cornerRows:Number(stats?.corner_rows||0),oldestDate:stats?.oldest_date||null,newestDate:stats?.newest_date||null,lastCheckedAt:rec?.checked_at?new Date(rec.checked_at).toISOString():null,collectionState:rec?.status||'not-checked',due:collectionDue(rec,race.race_date,limit,now),profileUrl:rec?.profile_url||r.profile_url||null});
+  out.push({horseNo:r.horse_no==null?null:Number(r.horse_no),horseName:r.horse_name,age,fromDate,storedRows:Number(stats?.stored_rows||0),last3fRows:Number(stats?.last3f_rows||0),cornerRows:Number(stats?.corner_rows||0),oldestDate:stats?.oldest_date||null,newestDate:stats?.newest_date||null,lastCheckedAt:rec?.checked_at?new Date(rec.checked_at).toISOString():null,collectionState:rec?.status||'not-checked',collectionError:rec?.error||null,nextRetryAt:rec?.status==='failed'&&rec?.checked_at?new Date(Number(rec.checked_at)+3600000).toISOString():null,due:collectionDue(rec,race.race_date,limit,now),profileUrl:rec?.profile_url||r.profile_url||null});
  }
  return{ok:true,race:{raceKey:race.race_key,date:race.race_date,venue:race.venue,raceNo:Number(race.race_no),raceName:race.race_name},historyLimit:limit,runnerCount:out.length,pendingHorses:out.filter(x=>x.due).length,remainingHorses:out.filter(x=>x.due||x.collectionState==='failed').length,totalStoredRows:out.reduce((s,x)=>s+x.storedRows,0),last3fRows:out.reduce((s,x)=>s+x.last3fRows,0),runners:out,policy:COLLECTION_POLICY};
 }
@@ -66,9 +67,9 @@ export async function collectHistoryBatch(db,input,deps={}){
  async function page(url,profile=false){
   officialUrl(url,profile);if(requests)await wait(COLLECTION_POLICY.minRequestGapMs);requests++;
   if(requests>COLLECTION_POLICY.maxExternalRequestsPerBatch)throw Error('取得上限を超えました。');
-  const response=await fetcher(url,{headers:{'user-agent':'KEIBA-LABO/3.32 (bounded official history collector)',accept:'text/html'},signal:AbortSignal.timeout(10000),redirect:'follow'});
-  if(response.url)officialUrl(response.url,profile);
-  if(!response.ok){if(response.status===429||response.status===503)cooldown=3600000;throw Error('JRA取得 HTTP '+response.status)}
+  const pageRequest=jraPageRequest(url),response=await fetcher(pageRequest.url,pageRequest.options);
+  if(response.url){officialUrl(response.url);const original=new URL(url),final=new URL(response.url);if(final.origin!==original.origin||final.pathname!==original.pathname)throw Error('JRAページの転送先を確認できません。');if(final.searchParams.has('CNAME')&&final.searchParams.get('CNAME')!==original.searchParams.get('CNAME'))throw Error('JRAページの転送先が対象と一致しません。');}
+  if(!response.ok){if(isJraSourceBlocked(response.status))cooldown=3600000;throw Error('JRA取得 HTTP '+response.status)}
   const bytes=await response.arrayBuffer();if(bytes.byteLength>1500000)throw Error('取得ページが上限サイズを超えました。');
   return new TextDecoder(/charset\s*=\s*["']?utf-?8/i.test(response.headers.get('content-type')||'')?'utf-8':'shift_jis').decode(bytes);
  }

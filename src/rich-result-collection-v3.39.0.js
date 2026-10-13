@@ -1,3 +1,4 @@
+import {jraPageRequest,isJraSourceBlocked} from './jra-page-request.js';
 import {ensureResultSources,resultSourceMeta,discoverResultSource,resultDiscoveryTarget} from './official-result-sources-v3.39.0.js';
 import {parseOfficialResultDetails,persistVerifiedResultDetails,ensureResultDetailTables} from './result-detail-v3.39.0.js';
 import {ensureCollectionTables,officialUrl,jstDay} from './history-collection-v3.32.0.js';
@@ -35,9 +36,9 @@ export async function collectRichResult(db,input,deps={}){
  if(Number(claim.meta?.changes)!==1)return{ok:true,status:'cooldown',externalRequests:0,policy:RICH_POLICY};
  let cooldown=60000,rows3f=0,rowsCorner=0,result;
  try{
-  const response=await fetcher(url,{headers:{'user-agent':'KEIBA-LABO/3.33 (bounded official result collector)',accept:'text/html'},signal:AbortSignal.timeout(10000),redirect:'follow'});
-  const finalUrl=officialUrl(response.url||url);const redirected=resultSourceMeta(finalUrl);if(!redirected||redirected.raceKey!==sourceMeta.raceKey)throw Error('結果ページの転送先が対象レースと一致しません。');
-  if(!response.ok){if([429,503].includes(response.status))cooldown=3600000;throw Error('JRA取得 HTTP '+response.status)}
+  const pageRequest=jraPageRequest(url),response=await fetcher(pageRequest.url,pageRequest.options);
+  const finalUrl=officialUrl(response.url&&(new URL(response.url).searchParams.has('CNAME'))?response.url:url);const redirected=resultSourceMeta(finalUrl);if(!redirected||redirected.raceKey!==sourceMeta.raceKey)throw Error('結果ページの転送先が対象レースと一致しません。');
+  if(!response.ok){if(isJraSourceBlocked(response.status))cooldown=3600000;throw Error('JRA取得 HTTP '+response.status)}
   const buffer=await response.arrayBuffer();if(buffer.byteLength>1500000)throw Error('取得ページが上限サイズを超えました。');
   const html=new TextDecoder(/charset\s*=\s*["']?utf-?8/i.test(response.headers.get('content-type')||'')?'utf-8':'shift_jis').decode(buffer);
   const parsed=parseOfficialResultDetails(html,runners);

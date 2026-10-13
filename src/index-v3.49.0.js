@@ -1,4 +1,4 @@
-import {userMarkLockEndpoint} from './user-mark-lock.js';
+import {userMarkLockEndpoint,readUserMarkLock} from './user-mark-lock.js';
 import app from './index-v3.48.2.js';
 import {markRecordProvenance} from './mark-record-provenance.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
@@ -27,6 +27,7 @@ export default {
    for(const revision of data.latest){
     try{
      const stored=await env.DB.prepare('SELECT audit_json,audit_sha256,created_at FROM lab_user_mark_revisions WHERE revision_id=? AND race_key=? AND phase=?').bind(revision.revisionId,data.raceKey,revision.phase).first();
+     revision.userLock=['post_draw','final'].includes(revision.phase)?await readUserMarkLock(env.DB,data.raceKey,revision.phase):null;
      revision.provenance=await markRecordProvenance({...revision,createdAt:stored?.created_at,auditJson:stored?.audit_json,auditSha256:stored?.audit_sha256},u.searchParams.get('date'));
     }catch{
      revision.provenance={status:'provenance-unavailable',integrityVerified:false,recordedBeforeRaceDay:false,preRaceLock:false,validationCreditEligible:false};

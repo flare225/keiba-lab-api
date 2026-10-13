@@ -37,3 +37,19 @@ test('anonymous lock never reaches database',async()=>{
  const r=await userMarkLockEndpoint(new Request('https://x/v1/lab/user-mark-lock',{method:'POST',body:'{}'}),{USER_MARK_WRITE_TOKEN:'x'.repeat(32),DB:{prepare(){throw Error('unexpected database')}}});
  assert.equal(r.status,401);
 });
+
+test('a result or roster change after verification cannot slip through atomic insertion',async()=>{
+ for(const kind of ['outcomes','roster','revision']){
+  const f=await fixture(),prepare=f.db.prepare.bind(f.db);
+  f.db.prepare=q=>{
+   if(q.startsWith('INSERT OR IGNORE INTO lab_user_mark_locks')){
+    if(kind==='outcomes')f.sql.prepare('INSERT INTO lab_race_outcomes VALUES(?,1)').run(f.key);
+    if(kind==='roster')f.sql.exec("UPDATE jra_runners SET horse_name='別馬'");
+    if(kind==='revision')f.sql.exec("INSERT INTO lab_user_mark_revisions SELECT race_key,phase,'r2',2,audit_json,audit_sha256,created_at FROM lab_user_mark_revisions");
+   }
+   return prepare(q);
+  };
+  await assert.rejects(()=>lockUserMark(f.db,f.input,f.now),/固定を確認できません/);
+  assert.equal(f.sql.prepare('SELECT COUNT(*) n FROM lab_user_mark_locks').get().n,0);f.sql.close();
+ }
+});

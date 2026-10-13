@@ -37,6 +37,7 @@ export async function collectRichResult(db,input,deps={}){
  let cooldown=60000,rows3f=0,rowsCorner=0,result;
  try{
   const pageRequest=jraPageRequest(url),response=await fetcher(pageRequest.url,pageRequest.options);
+  if(response.url){officialUrl(response.url);const original=new URL(url),final=new URL(response.url);if(final.origin!==original.origin||final.pathname!==original.pathname)throw Error('結果ページの転送先が対象レースと一致しません。');}
   const finalUrl=officialUrl(response.url&&(new URL(response.url).searchParams.has('CNAME'))?response.url:url);const redirected=resultSourceMeta(finalUrl);if(!redirected||redirected.raceKey!==sourceMeta.raceKey)throw Error('結果ページの転送先が対象レースと一致しません。');
   if(!response.ok){if(isJraSourceBlocked(response.status))cooldown=3600000;throw Error('JRA取得 HTTP '+response.status)}
   const buffer=await response.arrayBuffer();if(buffer.byteLength>1500000)throw Error('取得ページが上限サイズを超えました。');

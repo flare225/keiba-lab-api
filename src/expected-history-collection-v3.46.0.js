@@ -19,7 +19,9 @@ export async function expectedHistoryContext(db,source){
  return {race:{race_key:'expected:'+source.snapshotId,race_date:source.date,venue:source.venue,race_no:source.raceNo,race_name:source.raceName,source_url:null,runner_count:source.names.length},runners:runners.map(r=>({...r,profile_url:byName.get(r.horse_name)?.size===1?[...byName.get(r.horse_name)][0]:null}))};
 }
 export async function expectedHistoryStatus(db,now=Date.now(),sources=EXPECTED_SOURCES){
- const races=[];for(const source of upcomingExpectedSources(now,sources)){
+ const today=jstDay(now),since=new Date(Date.parse(today+'T00:00:00Z')-7*86400000).toISOString().slice(0,10);
+ const visibleSources=[...sources.filter(s=>s.date>=since&&s.date<today),...upcomingExpectedSources(now,sources)];
+ const races=[];for(const source of visibleSources){
   const formalRace=(await rows(db,'SELECT r.* FROM jra_races r WHERE r.race_date=? AND r.venue=? AND r.race_no=? AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key)',[source.date,source.venue,source.raceNo]))[0];
   const formal=!!formalRace;
   const context=formal?{race:formalRace,runners:await rows(db,'SELECT horse_no,horse_name,age FROM jra_runners WHERE race_key=? ORDER BY horse_no',[formalRace.race_key])}:await expectedHistoryContext(db,source);

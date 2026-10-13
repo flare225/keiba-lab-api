@@ -24,7 +24,7 @@ export async function collectArchiveBatch(db,deps={}){
   try{
    const url=archivePageUrl(page.url,target.date),u=new URL(url),action=u.pathname==='/JRADB/accessD.html';if(requests)await wait(5000);requests++;
    const response=await fetcher(action?u.origin+u.pathname:url,{method:action?'POST':'GET',body:action?new URLSearchParams({CNAME:u.searchParams.get('CNAME')}).toString():undefined,headers:{'user-agent':'KEIBA-LABO/3.38 bounded archive',accept:'text/html',...(action?{'content-type':'application/x-www-form-urlencoded'}:{})},redirect:'follow',signal:AbortSignal.timeout(10000)});
-   if(!response.ok){if(response.status===429||response.status===503)cooldown=3600000;throw Error('JRA取得 HTTP '+response.status)}
+   if(!response.ok){if([403,429,503].includes(response.status))cooldown=3600000;throw Error('JRA取得 HTTP '+response.status)}
    if(response.url){const resolved=new URL(response.url);officialUrl(resolved.href);if(action?(resolved.origin!==u.origin||resolved.pathname!==u.pathname):resolved.href!==url)throw Error('JRA取得先の対象ページが変わりました。')}
    const bytes=await response.arrayBuffer();if(bytes.byteLength>1500000)throw Error('ページサイズ上限を超えました。');const body=new TextDecoder(/charset\s*=\s*["']?utf-?8/i.test(response.headers.get('content-type')||'')?'utf-8':'shift_jis').decode(bytes),sha=await sha256(body);
    await savePublishedResultSources(db,body,url,target.date,new Date(now()).toISOString());

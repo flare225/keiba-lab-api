@@ -36,7 +36,7 @@ test('expired cards collect both horses via stored matching result source within
   assert.equal(r.addedRows,mode==='valid'?4:0,mode);
   assert.equal(urls.filter(u=>u.includes('accessU')).length,mode==='valid'?2:0,mode);
   assert.equal(sql.prepare("SELECT COUNT(*) n FROM jra_past_performances WHERE race_date>='2026-10-04'").get().n,0);
-  if(mode==='valid')assert.deepEqual(urls,[resultUrl,profile,profile]);sql.close();
+  if(mode==='valid')assert.deepEqual(urls,['https://www.jra.go.jp/JRADB/accessS.html','https://www.jra.go.jp/JRADB/accessU.html','https://www.jra.go.jp/JRADB/accessU.html']);sql.close();
  }
 });
 test('cross-race fallback verifies provenance, cohort and unique profile before fetching',async()=>{

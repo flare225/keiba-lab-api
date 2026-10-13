@@ -67,7 +67,7 @@ test('API deploy-check reports active workout release, not the inherited older b
  const data=await response.json();
  assert.equal(data.ok,true);
  assert.equal(data.version,VERSION);
- assert.equal(VERSION,'3.49.5');
+ assert.equal(VERSION,'3.49.6');
 });
 
 test('old incompatible workout table is never read, altered or dropped by the namespaced evidence API',async()=>{

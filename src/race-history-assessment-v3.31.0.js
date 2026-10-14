@@ -1,3 +1,4 @@
+import {buildRaceShapeEvidence} from './running-style-evidence.js';
 import {EXPECTED_SOURCES,historyForExpected} from './expected-runner-preview-v3.30.0.js';
 import {assessExpectedHistory,rankAssessment,expectedAssessment} from './expected-assessment-v3.31.0.js';
 export function targetInput(input){
@@ -32,5 +33,5 @@ export async function raceHistoryAssessment(db,input){
  const byName=new Map(all.map(x=>[x.horseName,x]));
  return{ok:true,stage:'all-race-history-assessment',phase:'initial',race:{raceKey:context.raceKey,date:context.date,venue:context.venue,raceNo:context.raceNo,raceName:context.raceName,raceNameBasis:context.raceNameBasis,runnerCount:context.runners.length,surface:context.surface,distance:context.distance},source:{provider:context.provider,authoritativeForCard:true},
   audit:{mode:'official-card-history-assessment',marked:marks,historySidecar:marks.map(m=>byHistory.get(m.horseName))},scoreMutation:false,
-  assessment:{modelVersion:'existing-safe-core-1.5-history-adapter-v1',trackAssumption:input.track||null,trackBasis:input.track?'user-scenario-not-confirmed-race-day-track':'unknown',runnerPool:all.length,scoredRunners:all.filter(r=>r.assessment.available).length,marked:marks.map(m=>({...byName.get(m.horseName),humanMark:m.mark})),allRunners:all,guardrails:{fullOfficialRunnerPool:true,humanMarksUsedInScore:false,noExternalFetch:true,lockedPredictionsModified:false,noForcedTieBreak:true,accuracyImprovementValidated:false,automaticMarksAssigned:false,targetResultUsed:false}}};
+  assessment:{modelVersion:'existing-safe-core-1.5-history-adapter-v1',trackAssumption:input.track||null,trackBasis:input.track?'user-scenario-not-confirmed-race-day-track':'unknown',runnerPool:all.length,scoredRunners:all.filter(r=>r.assessment.available).length,marked:marks.map(m=>({...byName.get(m.horseName),humanMark:m.mark})),allRunners:all,raceShape:buildRaceShapeEvidence(all),guardrails:{fullOfficialRunnerPool:true,humanMarksUsedInScore:false,noExternalFetch:true,lockedPredictionsModified:false,noForcedTieBreak:true,accuracyImprovementValidated:false,automaticMarksAssigned:false,targetResultUsed:false}}};
 }

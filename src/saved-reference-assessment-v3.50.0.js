@@ -47,6 +47,7 @@ export function attachSavedReferenceAssessment(data, reference, markAlignment) {
     trackBasis: assessment.trackBasis,
     runnerPool: assessment.runnerPool,
     scoredRunners: assessment.scoredRunners,
+    raceShape: assessment.raceShape || null,
     scoreMeaning: '過去走の参考指数。的中確率・検証済み予測ではありません。',
     allRunners: assessment.allRunners.map(row => ({
       horseNo: row.horseNo,
@@ -59,6 +60,7 @@ export function attachSavedReferenceAssessment(data, reference, markAlignment) {
       validFinishRows: row.assessment?.validFinishRows ?? 0,
       modelCoveragePct: row.assessment?.modelCoveragePct ?? null,
       components: row.assessment?.components ?? null,
+      runningStyle: row.assessment?.runningStyle ?? null,
     })),
     guardrails: {
       allOfficialRunnersIncluded: assessment.allRunners.length === assessment.runnerPool,

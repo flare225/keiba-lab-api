@@ -1,5 +1,5 @@
 import {sha256,runnerFingerprint} from './card-evidence.js';
-const POLICY='locked-reference-result-v1';
+const POLICY='locked-reference-result-v2-position-evidence';
 const terminals=new Set(['scratched','excluded','did-not-finish','disqualified']);
 export async function collectLockedMarkResults(db,limit=10){
  await db.prepare('CREATE TABLE IF NOT EXISTS lab_locked_mark_results(evidence_id TEXT PRIMARY KEY,race_key TEXT NOT NULL,phase TEXT NOT NULL,revision_id TEXT NOT NULL,lock_sha256 TEXT NOT NULL,result_sha256 TEXT NOT NULL,evidence_json TEXT NOT NULL,evidence_sha256 TEXT NOT NULL,created_at TEXT NOT NULL)').run();
@@ -20,10 +20,10 @@ export async function collectLockedMarkResults(db,limit=10){
   const rows=snapshot.runners.map(r=>{
    const result=results.find(x=>x.horse_no===r.horse_no&&x.horse_name===r.horse_name),reference=assessment.allRunners.find(x=>x.horseNo===r.horse_no&&x.horseName===r.horse_name);
    if(!result||!reference||!/^https:\/\/www\.jra\.go\.jp\//.test(result.source_url||'')||!/^[a-f0-9]{64}$/.test(result.source_sha256||'')||!(result.finish_status==='finished'&&Number.isInteger(result.finish_position)&&result.finish_position>0&&result.finish_position<=results.length||terminals.has(result.finish_status)&&result.finish_position===null))throw Error('result-identity-or-source-unverified');
-   return {horseNo:r.horse_no,horseName:r.horse_name,userMark:entries.find(e=>e.horse_no===r.horse_no&&e.horse_name===r.horse_name)?.mark||null,referenceMark:reference.mark,referenceRank:reference.referenceRank,referenceScore:reference.evidenceScore,finishPosition:result.finish_position,finishStatus:result.finish_status,rankGap:result.finish_status==='finished'&&Number.isInteger(reference.referenceRank)?result.finish_position-reference.referenceRank:null};
+   return {horseNo:r.horse_no,horseName:r.horse_name,userMark:entries.find(e=>e.horse_no===r.horse_no&&e.horse_name===r.horse_name)?.mark||null,referenceMark:reference.mark,referenceRank:reference.referenceRank,referenceScore:reference.evidenceScore,runningStyle:reference.runningStyle||null,finishPosition:result.finish_position,finishStatus:result.finish_status,rankGap:result.finish_status==='finished'&&Number.isInteger(reference.referenceRank)?result.finish_position-reference.referenceRank:null};
   });
   const resultHash=await sha256(JSON.stringify(results)),id=await sha256(POLICY+lock.snapshot_sha256+resultHash);
-  const evidence=JSON.stringify({policy:POLICY,raceKey:lock.race_key,phase:lock.phase,revisionId:lock.revision_id,lockSha256:lock.snapshot_sha256,auditSha256:revision.audit_sha256,resultSha256:resultHash,modelVersion:assessment.modelVersion,rows,guardrails:{savedScoresOnly:true,retrospectivePredictionCreated:false,automaticPromotion:false,validatedAccuracyClaimed:false}});
+  const evidence=JSON.stringify({policy:POLICY,raceKey:lock.race_key,phase:lock.phase,revisionId:lock.revision_id,lockSha256:lock.snapshot_sha256,auditSha256:revision.audit_sha256,resultSha256:resultHash,modelVersion:assessment.modelVersion,raceShape:assessment.raceShape||null,rows,guardrails:{savedScoresOnly:true,retrospectivePredictionCreated:false,automaticPromotion:false,validatedAccuracyClaimed:false}});
   const inserted=await db.prepare('INSERT OR IGNORE INTO lab_locked_mark_results VALUES(?,?,?,?,?,?,?,?,?)').bind(id,lock.race_key,lock.phase,lock.revision_id,lock.snapshot_sha256,resultHash,evidence,await sha256(evidence),new Date().toISOString()).run();
   report.saved+=Number(inserted.meta?.changes)||0;
  }catch(e){report.waiting.push({raceKey:lock.race_key,phase:lock.phase,reason:/no such table/.test(String(e))?'results-storage-unavailable':String(e.message||e)});}finally{await db.prepare('INSERT INTO lab_locked_mark_result_checks VALUES(?,?) ON CONFLICT(lock_sha256) DO UPDATE SET checked_at=excluded.checked_at').bind(lock.snapshot_sha256,new Date().toISOString()).run();}}

@@ -17,13 +17,16 @@ test('formal save, hash readback and immutable LOCK retain all-runner reference 
  for(const r of runners)sql.prepare('INSERT INTO jra_runners VALUES(?,?,?,?,?,?,?,?,?)').run(key,r.horse_no,r.frame_no,r.horse_name,'牡',4,57,'騎手','調教師');
  await ensureHistoryTable(db);await ensureEvidenceTable(db);
  sql.prepare('INSERT INTO lab_card_source_evidence VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(key,'https://www.jra.go.jp/card','a'.repeat(64),await sha256(runnerFingerprint(runners)),2,2,2,1,1,at,at,'explicit-label');
- for(const r of runners)for(let i=1;i<=3;i++)sql.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,surface,distance,finish_position,field_size,track_condition,source_url,fetched_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(r.horse_name,'2030-0'+i+'-01','東京','前走','芝',1600,r.horse_no,10,'良','https://www.jra.go.jp/result',at);
+ for(const r of runners)for(let i=1;i<=3;i++)sql.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,surface,distance,finish_position,field_size,track_condition,source_url,fetched_at,corner_positions) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(r.horse_name,'2030-0'+i+'-01','東京','前走','芝',1600,r.horse_no,10,'良','https://www.jra.go.jp/result',at,'1-2-2');
  const response=await app.fetch(new Request('https://test/v1/lab/user-marks',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer test-token'},body:JSON.stringify({date:'2030-10-18',venue:'東京',raceNo:11,phase:'final',track:'良',confirm:'SAVE',marks:[{horseNo:1,mark:'◎'}]})}),{DB:db,USER_MARK_WRITE_TOKEN:'test-token'},{});
  const saved=await response.json();assert.equal(response.status,200,JSON.stringify(saved));
  const stored=sql.prepare('SELECT * FROM lab_user_mark_revisions WHERE revision_id=?').get(saved.revisionId);
  assert.equal(await sha256(stored.audit_json),stored.audit_sha256);
  const audit=JSON.parse(stored.audit_json).audit;
  assert.equal(audit.referenceAssessment.allRunners.length,2);
+ assert.equal(audit.referenceAssessment.allRunners[0].runningStyle.style,'lead');
+ assert.equal(audit.referenceAssessment.raceShape.coveredRunners,2);
+ assert.equal(audit.referenceAssessment.raceShape.paceForecast,null);
  assert.equal(audit.referenceAssessment.allRunners[0].mark,'◎');
  assert.equal(audit.marked[0].laboReferenceMark,'◎');assert.equal(audit.summary.unscored,0);
  const lock=await lockUserMark(db,{date:'2030-10-18',venue:'東京',raceNo:11,phase:'final',revisionId:saved.revisionId});
@@ -35,7 +38,7 @@ test('formal save, hash readback and immutable LOCK retain all-runner reference 
  assert.equal((await collectLockedMarkResults(db)).waiting[0].reason,'awaiting-complete-results');
  for(const r of runners)sql.prepare('INSERT INTO lab_race_result_details VALUES(?,?,?,?,?,?,?)').run(key,r.horse_no,r.horse_name,3-r.horse_no,'finished','https://www.jra.go.jp/result','b'.repeat(64));
  const collected=await collectLockedMarkResults(db);assert.equal(collected.saved,1,JSON.stringify(collected));
- let evidence=await readLockedMarkResults(db,key,'final');assert.equal(evidence[0].rows[0].rankGap,1);assert.equal(evidence[0].rows[0].userMark,'◎');
+ let evidence=await readLockedMarkResults(db,key,'final');assert.equal(evidence[0].rows[0].rankGap,1);assert.equal(evidence[0].rows[0].userMark,'◎');assert.equal(evidence[0].rows[0].runningStyle.style,'lead');assert.equal(evidence[0].raceShape.coveredRunners,2);
  assert.equal((await collectLockedMarkResults(db)).saved,0);
  assert.throws(()=>sql.exec("DELETE FROM lab_locked_mark_results"),/immutable/);
  sql.exec("UPDATE lab_race_result_details SET horse_name='別馬' WHERE horse_no=1");

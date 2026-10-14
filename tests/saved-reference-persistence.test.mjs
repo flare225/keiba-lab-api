@@ -4,6 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import app from '../src/index-v3.8.9.js';
 import {ensureHistoryTable} from '../src/collection-profile-parser-v3.32.0.js';
 import {ensureEvidenceTable,sha256,runnerFingerprint} from '../src/card-evidence.js';
+import {collectLockedMarkResults,readLockedMarkResults} from '../src/locked-mark-result-evidence.js';
 import {lockUserMark,readUserMarkLock} from '../src/user-mark-lock.js';
 
 test('formal save, hash readback and immutable LOCK retain all-runner reference scores and symbols',async()=>{
@@ -30,5 +31,20 @@ test('formal save, hash readback and immutable LOCK retain all-runner reference 
  const snapshot=JSON.parse(sql.prepare('SELECT snapshot_json FROM lab_user_mark_locks').get().snapshot_json);
  assert.equal(snapshot.auditSha256,stored.audit_sha256);
  assert.throws(()=>sql.exec("UPDATE lab_user_mark_revisions SET audit_json='{}'"),/immutable/);
+ sql.exec('CREATE TABLE lab_race_result_details(race_key TEXT,horse_no INTEGER,horse_name TEXT,finish_position INTEGER,finish_status TEXT,source_url TEXT,source_sha256 TEXT)');
+ assert.equal((await collectLockedMarkResults(db)).waiting[0].reason,'awaiting-complete-results');
+ for(const r of runners)sql.prepare('INSERT INTO lab_race_result_details VALUES(?,?,?,?,?,?,?)').run(key,r.horse_no,r.horse_name,3-r.horse_no,'finished','https://www.jra.go.jp/result','b'.repeat(64));
+ const collected=await collectLockedMarkResults(db);assert.equal(collected.saved,1,JSON.stringify(collected));
+ let evidence=await readLockedMarkResults(db,key,'final');assert.equal(evidence[0].rows[0].rankGap,1);assert.equal(evidence[0].rows[0].userMark,'◎');
+ assert.equal((await collectLockedMarkResults(db)).saved,0);
+ assert.throws(()=>sql.exec("DELETE FROM lab_locked_mark_results"),/immutable/);
+ sql.exec("UPDATE lab_race_result_details SET horse_name='別馬' WHERE horse_no=1");
+ assert.equal((await collectLockedMarkResults(db)).waiting[0].reason,'result-identity-or-source-unverified');
+ sql.exec("UPDATE lab_race_result_details SET horse_name='馬A',finish_position=NULL,finish_status='scratched',source_sha256='"+'c'.repeat(64)+"' WHERE horse_no=1");
+ assert.equal((await collectLockedMarkResults(db)).saved,0); // Mixed source revisions cannot be combined.
+ sql.exec("UPDATE lab_race_result_details SET source_sha256='"+'c'.repeat(64)+"'");
+ assert.equal((await collectLockedMarkResults(db)).saved,1);
+ evidence=await readLockedMarkResults(db,key,'final');assert.equal(evidence.length,2);assert.equal(evidence[0].rows[0].rankGap,null);
+
  } finally {sql.close()}
 });

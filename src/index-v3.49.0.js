@@ -1,11 +1,17 @@
+import {collectLockedMarkResults,readLockedMarkResults} from './locked-mark-result-evidence.js';
 import {userMarkLockEndpoint,readUserMarkLock} from './user-mark-lock.js';
 import app from './index-v3.48.2.js';
 import {markRecordProvenance} from './mark-record-provenance.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
-export const VERSION='3.49.10';
+export const VERSION='3.49.11';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/locked-mark-results'&&request.method==='GET'){
+   const date=u.searchParams.get('date'),venue=u.searchParams.get('venue'),no=Number(u.searchParams.get('race_no')),phase=u.searchParams.get('phase');
+   const valid=/^\d{4}-\d{2}-\d{2}$/.test(date||'')&&venue&&venue.length<=30&&Number.isInteger(no)&&no>=1&&no<=12&&['final','post_draw'].includes(phase);
+   try{return Response.json(valid?{ok:true,version:VERSION,evidence:await readLockedMarkResults(env.DB,date+':'+venue+':'+no,phase)}:{ok:false,error:'invalid race',version:VERSION},{status:valid?200:400,headers:{'cache-control':'no-store'}})}catch{return Response.json({ok:false,error:'evidence integrity unverified',version:VERSION},{status:409})}
+  }
   if(u.pathname==='/v1/lab/user-mark-lock'){const r=await userMarkLockEndpoint(request,env);return new Response(JSON.stringify({...await r.json(),version:VERSION}),{status:r.status,headers:r.headers});}
   if(u.pathname==='/v1/lab/user-mark-token-check'&&request.method==='GET'){
    const ready=typeof env.USER_MARK_WRITE_TOKEN==='string'&&env.USER_MARK_WRITE_TOKEN.length>=24;
@@ -36,5 +42,5 @@ export default {
   }
   return new Response(JSON.stringify(data),{status:response.status,headers:response.headers});
  },
- async scheduled(event,env,ctx){return app.scheduled(event,env,ctx);}
+ async scheduled(event,env,ctx){await app.scheduled(event,env,ctx);await collectLockedMarkResults(env.DB);}
 };

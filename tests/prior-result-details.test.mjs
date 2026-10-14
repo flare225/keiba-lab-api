@@ -9,3 +9,27 @@ async function database(){const sql=new DatabaseSync(':memory:');sql.exec("CREAT
 test('links bind real profile date and venue; result verifies identity, cutoff and whitespace corners',()=>{const links=priorResultLinks(profileHtml,'HorseA',profileUrl,target.date);assert.equal(links.length,1);const p={...links[0],profileHtml};assert.deepEqual(verifiedPriorDetail(html,p,profileUrl,target.date),{horseNo:2,last3f:33.6,cornerPositions:'2-2-2'});assert.throws(()=>verifiedPriorDetail(html.replace('2026年3月15日','2026年3月16日'),p,profileUrl,target.date));assert.throws(()=>verifiedPriorDetail(html.replace('<td>2</td><td>2</td>','<td>1</td><td>2</td>'),p,profileUrl,target.date));assert.throws(()=>verifiedPriorDetail(html,{...p,raceDate:target.date},profileUrl,target.date));assert.equal(priorResultLinks(profileHtml.replaceAll(resultUrl,resultUrl.replace('1006','1008')),'HorseA',profileUrl,target.date).length,0)});
 test('formal SQLite save is atomic, preserves rich fields and immutable source evidence; GET has no DDL/fetch',async()=>{const {sql,db}=await database();let stamp=Date.parse('2026-10-14T07:00:00Z');assert.equal((await priorDetailStatus(db,target,stamp)).remainingRows,1);assert.equal(sql.prepare("SELECT name FROM sqlite_master WHERE name='lab_prior_detail_attempts'").get(),undefined);sql.exec('UPDATE jra_past_performances SET last3f=32.9');const requests=[],gaps=[];const r=await collectPriorDetails(db,target,{now:()=>stamp,wait:async ms=>{gaps.push(ms);stamp+=ms},fetcher:async (url,opts)=>{requests.push([url,opts]);return new Response(url.includes('accessU')?profileHtml:html,{headers:{'content-type':'text/html;charset=utf-8'}})}});assert.equal(r.savedRows,1);assert.equal(requests.length,2);assert.equal(requests[0][1].method,'POST');assert.deepEqual(gaps,[5000]);const saved=sql.prepare('SELECT * FROM jra_past_performances').get();assert.equal(saved.last3f,32.9);assert.equal(saved.corner_positions,'2-2-2');assert.equal(saved.source_url,profileUrl);assert.equal((await priorDetailStatus(db,target,stamp)).remainingRows,0);assert.throws(()=>sql.exec('DELETE FROM lab_prior_detail_evidence'),/immutable/);assert.equal((await collectPriorDetails(db,target,{now:()=>stamp,fetcher:()=>{throw Error('unexpected')}})).status,'complete');sql.close()});
 test('403 pauses shared source for one hour and avoids consecutive retries',async()=>{const {sql,db}=await database();let stamp=Date.parse('2026-10-14T07:00:00Z'),calls=0;const deps={now:()=>stamp,fetcher:async()=>{calls++;return new Response('',{status:403})}};const r=await collectPriorDetails(db,target,deps);assert.equal(r.status,'failed');assert.equal(r.savedRows,0);assert.equal(sql.prepare('SELECT next_batch_at FROM lab_history_collection_budget').get().next_batch_at,stamp+3600000);stamp+=61000;assert.equal((await collectPriorDetails(db,target,deps)).status,'waiting');assert.equal(calls,1);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_prior_detail_evidence').get().n,0);sql.close()});
+
+import {profilePositionCoverage,selectPriorCandidate,scheduledPriorDetails} from '../src/prior-result-details.js';
+import {runPipelineJob} from '../src/pipeline-runs-v3.40.0.js';
+test('coverage priority serves a horse missing evidence before a newer run of an already covered horse',()=>{
+ const rows=[{id:1,horse_name:'A',race_date:'2026-09-01'},{id:2,horse_name:'B',race_date:'2026-08-01'}];
+ assert.equal(selectPriorCandidate(rows,[],[{horseName:'A',validPositionRows:3},{horseName:'B',validPositionRows:0}],100).horse_name,'B');
+ assert.equal(selectPriorCandidate(rows,[{past_id:2,retry_at:200}],[],100).horse_name,'A');
+ assert.equal(selectPriorCandidate(rows,[],[{horseName:'A',validPositionRows:1},{horseName:'B',validPositionRows:0}],100).horse_name,'B');
+ const c={date:'2026-10-12',surface:'芝',distance:1400,runners:[{horse_name:'A',horse_no:1}]};
+ const p={horse_name:'A',venue:'東京',surface:'芝',distance:1400,finish_position:1,field_size:10,corner_positions:'1-2'};
+ const raw=['2026-09-01','2026-08-01','2026-07-01',c.date].map((race_date,id)=>({...p,id,race_date}));
+ assert.equal(profilePositionCoverage(raw,c)[0].validPositionRows,3);
+ raw[0].corner_positions='11-12';assert.equal(profilePositionCoverage(raw,c)[0].neededRows,1);
+});
+test('scheduled evidence is distinct from manual collection and duplicate scheduled delivery is idempotent',async()=>{
+ const {sql,db}=await database();const stamp=Date.parse('2026-10-14T08:00:00Z');
+ await collectPriorDetails(db,target,{now:()=>stamp,fetcher:async()=>new Response('',{status:403})});
+ assert.equal((await priorDetailStatus(db,target,stamp)).scheduler.lastRun,null);
+ const deps={now:()=>stamp+3600001,wait:async()=>{},fetcher:async url=>new Response(url.includes('accessU')?profileHtml:html,{headers:{'content-type':'text/html;charset=utf-8'}})};
+ const work=()=>scheduledPriorDetails(db,deps),options={now:deps.now,scheduledTime:stamp+3600001};
+ const r=await runPipelineJob(db,'prior-details','scheduled',work,options);assert.equal(r.savedRows,1);
+ const s=await priorDetailStatus(db,target,deps.now());assert.equal(s.scheduler.lastRun.status,'collected');assert.equal(s.scheduler.lastRun.raceMatches,true);assert.equal(s.scheduler.manualRunsProveCron,false);assert.equal(s.scheduler.targetLastCheckedAt,new Date(deps.now()).toISOString());
+ assert.equal((await runPipelineJob(db,'prior-details','scheduled',work,options)).status,'already-recorded');sql.close();
+});

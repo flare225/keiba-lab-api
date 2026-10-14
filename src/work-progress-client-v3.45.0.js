@@ -2,8 +2,8 @@ export function initWorkProgress({document,fetcher=globalThis.fetch}){
  const message=document.getElementById('progressMessage'),button=document.getElementById('refreshProgress');
  const esc=v=>String(v??'未確認').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const time=v=>v?new Date(v).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'}):'未確認';
- const jobNames={archive:'過去の出馬表',history:'馬の過去走',results:'レース結果の補完',learning:'学習データの照合'};
- const status=v=>({idle:'処理待ち',running:'処理中',collected:'保存・補完済み',discovered:'取得元を確認',partial:'一部を補完',failed:'取得・照合失敗',cooldown:'取得間隔の待機',complete:'保存完了','receipt-cooldown':'再確認時刻まで待機','awaiting-prior-history':'過去履歴不足','awaiting-training-data':'学習用データを補完中','awaiting-complete-results':'全馬の結果待ち','awaiting-verified-results':'結果の照合待ち','labels-saved':'結果を照合・保存','labels-already-saved':'保存済みの照合結果を確認','awaiting-candidate':'学習候補待ち','fitted-shadow-only':'学習候補を作成済み'}[v]||'詳細画面で確認');
+ const jobNames={archive:'過去の出馬表',history:'馬の過去走',results:'レース結果の補完',learning:'学習データの照合','prior-details':'過去走の通過順・上がり補完'};
+ const status=v=>({idle:'処理待ち',waiting:'再確認時刻まで待機',running:'処理中',collected:'保存・補完済み',discovered:'取得元を確認',partial:'一部を補完',failed:'取得・照合失敗',cooldown:'取得間隔の待機',complete:'保存完了','receipt-cooldown':'再確認時刻まで待機','awaiting-prior-history':'過去履歴不足','awaiting-training-data':'学習用データを補完中','awaiting-complete-results':'全馬の結果待ち','awaiting-verified-results':'結果の照合待ち','labels-saved':'結果を照合・保存','labels-already-saved':'保存済みの照合結果を確認','awaiting-candidate':'学習候補待ち','fitted-shadow-only':'学習候補を作成済み'}[v]||'詳細画面で確認');
  const clear=()=>{for(const id of ['progressExpected','progressSummary','progressJobs','progressWaiting','progressCoverage','progressRemaining'])document.getElementById(id).innerHTML='';};
  async function refresh(){button.disabled=true;clear();message.textContent='保存済みDBから進捗を確認しています…';try{
   const r=await fetcher('/v1/lab/work-progress'),d=await r.json();if(!r.ok||!d.ok)throw Error(d.error||'進捗を確認できません。');

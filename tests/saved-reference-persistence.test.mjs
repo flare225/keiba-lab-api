@@ -2,14 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import app from '../src/index-v3.8.9.js';
+import readApp from '../src/index-v3.31.0.js';
 import {ensureHistoryTable} from '../src/collection-profile-parser-v3.32.0.js';
 import {ensureEvidenceTable,sha256,runnerFingerprint} from '../src/card-evidence.js';
 import {collectLockedMarkResults,readLockedMarkResults} from '../src/locked-mark-result-evidence.js';
 import {lockUserMark,readUserMarkLock} from '../src/user-mark-lock.js';
 
 test('formal save, hash readback and immutable LOCK retain all-runner reference scores and symbols',async()=>{
+ let profileReads=0;
  const sql=new DatabaseSync(':memory:'),key='2030-10-18:東京:11',at=new Date().toISOString();
- const db={prepare(q){const wrap=(a=[])=>({bind(...x){return wrap(x)},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}},async run(){return{meta:{changes:Number(sql.prepare(q).run(...a).changes)}}}});return wrap()},async batch(ss){sql.exec('BEGIN');try{const out=[];for(const s of ss)out.push(await s.run());sql.exec('COMMIT');return out}catch(e){sql.exec('ROLLBACK');throw e}}};
+ const db={prepare(q){if(q.startsWith('SELECT race_date,venue,race_name')&&q.includes('FROM jra_past_performances'))profileReads++;const wrap=(a=[])=>({bind(...x){return wrap(x)},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}},async run(){return{meta:{changes:Number(sql.prepare(q).run(...a).changes)}}}});return wrap()},async batch(ss){sql.exec('BEGIN');try{const out=[];for(const s of ss)out.push(await s.run());sql.exec('COMMIT');return out}catch(e){sql.exec('ROLLBACK');throw e}}};
  try {
  sql.exec('CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,race_name TEXT,surface TEXT,distance INTEGER,runner_count INTEGER,fetched_at TEXT);CREATE TABLE jra_runners(race_key TEXT,horse_no INTEGER,frame_no INTEGER,horse_name TEXT,sex TEXT,age INTEGER,assigned_weight REAL,jockey TEXT,trainer TEXT);CREATE TABLE lab_race_outcomes(race_key TEXT,horse_no INTEGER,finish_position INTEGER);CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,start_time TEXT);');
  sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?,?,?,?,?)').run(key,'2030-10-18','東京',11,'試験','芝',1600,2,at);
@@ -18,10 +20,13 @@ test('formal save, hash readback and immutable LOCK retain all-runner reference 
  await ensureHistoryTable(db);await ensureEvidenceTable(db);
  sql.prepare('INSERT INTO lab_card_source_evidence VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(key,'https://www.jra.go.jp/card','a'.repeat(64),await sha256(runnerFingerprint(runners)),2,2,2,1,1,at,at,'explicit-label');
  for(const r of runners)for(let i=1;i<=3;i++)sql.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,surface,distance,finish_position,field_size,track_condition,source_url,fetched_at,corner_positions) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(r.horse_name,'2030-0'+i+'-01','東京','前走','芝',1600,r.horse_no,10,'良','https://www.jra.go.jp/result',at,'1-2-2');
+ const readonlyResponse=await readApp.fetch(new Request('https://test/v1/lab/user-mark-audit',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({date:'2030-10-18',venue:'東京',raceNo:11,phase:'post_draw',marks:[{horseNo:1,mark:'注'}]})}),{DB:db},{});
+ const readonly=await readonlyResponse.json();assert.equal(readonly.ok,true,JSON.stringify(readonly));assert.equal(readonly.historyAssessment.runnerPool,2);assert.equal(readonly.historyAssessment.allRunners.length,2);assert.equal(profileReads,2,'all-runner history must be read once, not twice');
  const response=await app.fetch(new Request('https://test/v1/lab/user-marks',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer test-token'},body:JSON.stringify({date:'2030-10-18',venue:'東京',raceNo:11,phase:'final',track:'良',confirm:'SAVE',marks:[{horseNo:1,mark:'◎'}]})}),{DB:db,USER_MARK_WRITE_TOKEN:'test-token'},{});
  const saved=await response.json();assert.equal(response.status,200,JSON.stringify(saved));
  const stored=sql.prepare('SELECT * FROM lab_user_mark_revisions WHERE revision_id=?').get(saved.revisionId);
  assert.equal(await sha256(stored.audit_json),stored.audit_sha256);
+ assert.equal(JSON.parse(stored.audit_json).historyAssessment,undefined,'readonly response optimization must not change saved audit schema');
  const audit=JSON.parse(stored.audit_json).audit;
  assert.equal(audit.referenceAssessment.allRunners.length,2);
  assert.equal(audit.referenceAssessment.allRunners[0].runningStyle.style,'lead');

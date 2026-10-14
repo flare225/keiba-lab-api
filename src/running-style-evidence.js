@@ -9,7 +9,7 @@ export function assessPositionHistory(history,race){
   const positions=text.match(/\d+/g).map(Number);if(positions.some(n=>n<1||n>r.fieldSize))continue;
   const key=r.date+'|'+r.venue;if(seen.has(key))continue;seen.add(key);
   const first=positions[0],fraction=(first-1)/(r.fieldSize-1),category=fraction<=1/3?'front':fraction<2/3?'middle':'back';
-  records.push({date:r.date,venue:r.venue,raceName:r.raceName,surface:r.surface,distance:r.distance,fieldSize:r.fieldSize,positions,firstRecordedPosition:first,lastRecordedPosition:positions.at(-1),category,finish:r.finish??null,last3f:r.last3f??null,sourceUrl:r.sourceUrl||null,sourceKind:r.dbSource||'unknown'});
+  records.push({date:r.date,venue:r.venue,raceName:r.raceName,surface:r.surface,distance:r.distance,fieldSize:r.fieldSize,positions,firstRecordedPosition:first,lastRecordedPosition:positions.at(-1),category,finish:r.finish??null,last3f:r.last3f??null,sourceUrl:r.detailSourceUrl||r.sourceUrl||null,sourceKind:r.dbSource||'unknown'});
  }
  const counts=Object.fromEntries(['front','middle','back'].map(k=>[k,records.filter(r=>r.category===k).length]));
  const lead=records.filter(r=>r.firstRecordedPosition===1).length,available=records.length>=3;

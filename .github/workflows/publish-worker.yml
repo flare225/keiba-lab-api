@@ -55,10 +55,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          expected="$(node - <<'NODE'
+          const fs = require('fs');
+          const config = fs.readFileSync('wrangler.jsonc','utf8');
+          const entry = config.match(/"main"\s*:\s*"([^"]+)"/);
+          if(!entry) process.exit(2);
+          const version = fs.readFileSync(entry[1],'utf8').match(/export const VERSION\s*=\s*['"]([^'"]+)['"]/);
+          if(!version) process.exit(3);
+          process.stdout.write(version[1]);
+          NODE
+          )"
+          test -n "$expected"
           url='https://keiba-lab-api.sekai-no-bancyou.workers.dev/v1/lab/workouts?date=2026-10-11&venue=%E6%9D%B1%E4%BA%AC&race_no=11'
           for attempt in $(seq 1 10); do
             body="$(curl -fsS --max-time 15 "$url" || true)"
-            if printf '%s' "$body" | jq -e '.version == "3.49.10" and .ok == true and .modelIncorporated == false and (.coverage.official >= 0)' >/dev/null 2>&1; then
+            if printf '%s' "$body" | jq -e --arg expected "$expected" '.version == $expected and .ok == true and .modelIncorporated == false and (.coverage.official >= 0)' >/dev/null 2>&1; then
               echo 'Workout evidence API is live (without claiming licensed feed or score incorporation)'
               exit 0
             fi

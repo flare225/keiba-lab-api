@@ -25,6 +25,15 @@ export const SHUKA_EXPECTED_SOURCE={
  names:['エンネ','カナルサンマルタン','ガーネットフレア','ギャラボーグ','サムシングスイート','スウィートハピネス','スマートプリエール','タイセイボーグ','テイエムアイラン','ドリームコア','ナイスプレーアスク','ハヤブササキチャン','バースデイフライト','フェスティバルヒル','マスターソアラ','モンローウォーク','ラベルセーヌ','ロザーンジュ']
 };
 EXPECTED_SOURCES.push(SHUKA_EXPECTED_SOURCE);
+export const FUJI_EXPECTED_SOURCE={
+ raceKey:'2026-10-17:東京:11',date:'2026-10-17',venue:'東京',raceNo:11,raceName:'富士ステークス',surface:'芝',distance:1600,priority:0,
+ snapshotId:'netkeiba-fuji-20261015-v1',provider:'netkeiba',sourcePublishedAt:null,observedAt:'2026-10-14T23:26:17.905755Z',
+ sourceUrl:'https://race.netkeiba.com/race/shutuba.html?race_id=202605040611',corroboratingUrl:'https://www.jra.go.jp/keiba/race/095.html',officialHorsePage:'https://www.jra.go.jp/keiba/race/095/horse.html',
+ sourceNotice:'10月15日に確認した補助一覧14頭。JRA紹介馬8頭の馬名・年齢も照合済み。全14頭の正式出走確定・枠番・馬番は未確認です。',
+ ages:{'アドマイヤズーム':4,'アンパドゥ':5,'ウォーターリヒト':5,'エコロアルバ':3,'エンペラーズソード':4,'キープカルム':5,'シュガークン':5,'シンフォーエバー':4,'デビットバローズ':7,'トロヴァトーレ':5,'ファンダム':4,'ファーヴェント':5,'マジックサンズ':4,'ミトノオルフェ':4}
+};
+FUJI_EXPECTED_SOURCE.names=Object.keys(FUJI_EXPECTED_SOURCE.ages);
+EXPECTED_SOURCES.push(FUJI_EXPECTED_SOURCE);
 export function expectedAge(source,name){const age=Number(source.ages?.[name]??source.age);if(!Number.isInteger(age)||age<2||age>20)throw Error('想定馬の年齢を確認できません。');return age;}
 const MARKS = ['◎','○','▲','△','☆','注','消'];
 export const PREVIEW_GUARDS={readOnly:true,scoreMutation:false,markMutation:false,authoritativeForCard:false,eligibleForProspectiveSeal:false,horseNumbersNeverInferred:true,targetResultsExcluded:true,oddsAndPopularityExcluded:true,sourceIsDatedSnapshot:true};

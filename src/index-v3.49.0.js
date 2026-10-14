@@ -1,12 +1,26 @@
+import {priorDetailStatus,collectPriorDetails,scheduledPriorDetails} from './prior-result-details.js';
 import {collectLockedMarkResults,readLockedMarkResults} from './locked-mark-result-evidence.js';
 import {userMarkLockEndpoint,readUserMarkLock} from './user-mark-lock.js';
 import app from './index-v3.48.2.js';
 import {markRecordProvenance} from './mark-record-provenance.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
-export const VERSION='3.49.12';
+export const VERSION='3.49.13';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/prior-result-details'){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*','access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'content-type'};
+   if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
+   try{
+    let data;
+    if(request.method==='GET')data=await priorDetailStatus(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')});
+    else if(request.method==='POST'){
+     const input=await request.json();if(input.confirm!=='COLLECT')throw Error('confirm COLLECT が必要です。');
+     data=await collectPriorDetails(env.DB,input);
+    }else return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
+    return Response.json({...data,version:VERSION},{headers});
+   }catch(e){return Response.json({ok:false,error:String(e.message||e),version:VERSION},{status:400,headers})}
+  }
   if(u.pathname==='/v1/lab/locked-mark-results'&&request.method==='GET'){
    const date=u.searchParams.get('date'),venue=u.searchParams.get('venue'),no=Number(u.searchParams.get('race_no')),phase=u.searchParams.get('phase');
    const valid=/^\d{4}-\d{2}-\d{2}$/.test(date||'')&&venue&&venue.length<=30&&Number.isInteger(no)&&no>=1&&no<=12&&['final','post_draw'].includes(phase);
@@ -42,5 +56,5 @@ export default {
   }
   return new Response(JSON.stringify(data),{status:response.status,headers:response.headers});
  },
- async scheduled(event,env,ctx){await app.scheduled(event,env,ctx);await collectLockedMarkResults(env.DB);}
+ async scheduled(event,env,ctx){if(event.cron==='*/3 * * * *'&&Math.floor(Number(event.scheduledTime)/60000)%12===0)await scheduledPriorDetails(env.DB);await app.scheduled(event,env,ctx);await collectLockedMarkResults(env.DB);}
 };

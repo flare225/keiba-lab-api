@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {attachSavedReferenceAssessment} from '../src/saved-reference-assessment-v3.50.0.js';
+import {attachSavedReferenceAssessment,referenceMark} from '../src/saved-reference-assessment-v3.50.0.js';
 
 const alignment=(mark,rank)=>({mark,rank});
 const audit=(laboRank=null,laboScore=null)=>({ok:true,identityBasis:'official-numbered-card',audit:{marked:[{horseNo:2,horseName:'馬A',mark:'◎',laboRank,laboScore,alignment:{old:true}}],guardrails:{userMarksNeverChangeLABORank:true}}});
@@ -38,4 +38,20 @@ test('keeps ties and partial-pool rank basis explicit',()=>{
 test('does not attach reference scores to pre-card or nonofficial audits',()=>{
  const data={...audit(),identityBasis:'precard-non-authoritative'};
  assert.equal(attachSavedReferenceAssessment(data,reference([row(2,'馬A',1,70)]),alignment),data);
+});
+
+test('independent reference symbols preserve ties and hold incomplete or thin evidence',()=>{
+ const a=reference([row(2,'馬A',1,80),row(4,'馬B',2,70)]).assessment;
+ assert.equal(referenceMark(a.allRunners[0],a),'◎');
+ assert.equal(referenceMark({...a.allRunners[0],tiedCount:2},a),null);
+ assert.equal(referenceMark({...a.allRunners[0],referenceRank:4,tiedCount:2},a),'△');
+ assert.equal(referenceMark(a.allRunners[0],{...a,scoredRunners:1}),null);
+ assert.equal(referenceMark({...a.allRunners[0],assessment:{available:true,validFinishRows:1}},a),null);
+});
+
+test('alignment totals are recomputed after missing model ranks are filled',()=>{
+ const data=audit();data.audit.summary={unscored:1};data.audit.highReviewCount=0;
+ const result=attachSavedReferenceAssessment(data,reference([row(2,'馬A',4,73.4)]),()=>({level:'watch',reviewPriority:'high'}));
+ assert.equal(result.audit.summary.unscored,0);assert.equal(result.audit.summary.watch,1);
+ assert.equal(result.audit.highReviewCount,1);
 });

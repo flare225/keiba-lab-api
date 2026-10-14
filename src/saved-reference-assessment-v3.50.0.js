@@ -1,6 +1,15 @@
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const validRank = value => Number.isInteger(value) && value > 0;
 
+export function referenceMark(row, assessment) {
+  if (assessment.scoredRunners !== assessment.runnerPool || !row?.assessment?.available ||
+      row.assessment.validFinishRows < 3 || !validRank(row.referenceRank)) return null;
+  const labels = ['◎', '○', '▲', '△', '△', '☆'];
+  const first = row.referenceRank - 1, last = first + Math.max(1, row.tiedCount || 1) - 1;
+  // A tied group only receives a symbol when every covered position has the same symbol.
+  return labels[first] && labels[first] === labels[last] ? labels[first] : null;
+}
+
 /** Attach the result-blind, all-runner history assessment to a new official-card mark audit. */
 export function attachSavedReferenceAssessment(data, reference, markAlignment) {
   const assessment = reference?.assessment;
@@ -27,6 +36,7 @@ export function attachSavedReferenceAssessment(data, reference, markAlignment) {
         hasReferenceRank ? (assessment.scoredRunners === assessment.runnerPool ? 'all-official-runners' : 'scored-runners-only') : 'unavailable',
       referenceRank: hasReferenceRank ? referenceRank : null,
       referenceScore: finite(referenceScore) ? referenceScore : null,
+      laboReferenceMark: referenceMark(referenceRow, assessment),
       alignment: hasIntegratedRank || !hasReferenceRank ? row.alignment : markAlignment(row.mark, referenceRank),
     };
   });
@@ -43,6 +53,7 @@ export function attachSavedReferenceAssessment(data, reference, markAlignment) {
       horseName: row.horseName,
       referenceRank: row.referenceRank,
       tiedCount: row.tiedCount,
+      mark: referenceMark(row, assessment),
       available: Boolean(row.assessment?.available),
       evidenceScore: finite(row.assessment?.evidenceScore) ? row.assessment.evidenceScore : null,
       validFinishRows: row.assessment?.validFinishRows ?? 0,
@@ -55,7 +66,8 @@ export function attachSavedReferenceAssessment(data, reference, markAlignment) {
       targetResultUsed: false,
       noForcedTieBreak: assessment.guardrails?.noForcedTieBreak === true,
       lockedPredictionsModified: false,
-      automaticMarksAssigned: false,
+      automaticMarksAssigned: true,
+      validatedFinalPrediction: false,
       retrospectiveAccuracyCreditGranted: false,
     },
   };
@@ -64,6 +76,8 @@ export function attachSavedReferenceAssessment(data, reference, markAlignment) {
     audit: {
       ...data.audit,
       marked,
+      summary: Object.fromEntries(['aligned', 'watch', 'conflict', 'unscored'].map(level => [level, marked.filter(row => row.alignment?.level === level).length])),
+      highReviewCount: marked.filter(row => ['high', 'critical'].includes(row.alignment?.reviewPriority)).length,
       referenceAssessment: storedAssessment,
       guardrails: {
         ...data.audit?.guardrails,

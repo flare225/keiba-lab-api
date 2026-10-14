@@ -28,6 +28,8 @@ async function auditFirst(request,env,ctx,body){
  const r=new Request(u.toString(),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
  const response=await app.fetch(r,env,ctx);
  let data;try{data=await response.json()}catch{return{response,data:null}}
+ // The live read-only sidecar is reused by the audit endpoint, not frozen twice in a saved revision.
+ if(data)delete data.historyAssessment;
  return{response,data};
 }
 async function saveImmutable(request,env,ctx){

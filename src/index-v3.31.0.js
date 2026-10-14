@@ -45,7 +45,7 @@ export default{
   const auditInput=url.pathname==='/v1/lab/user-mark-audit'&&request.method==='POST'?await request.clone().json().catch(()=>null):null;
   const response=await app.fetch(request,env,ctx);let data;
   try{data=await response.clone().json()}catch{return response}
-  if(auditInput&&data?.ok&&data?.audit?.mode==='official-card-model-crosscheck'){
+  if(auditInput&&data?.ok&&data?.audit?.mode==='official-card-model-crosscheck'&&!data.historyAssessment){
    try{data.historyAssessment=(await raceHistoryAssessment(env.DB,auditInput)).assessment}catch(error){data.historyAssessment={available:false,error:String(error.message||error)}}
   }
   if(data&&typeof data==='object')data.version=VERSION;

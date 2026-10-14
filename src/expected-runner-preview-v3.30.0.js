@@ -17,6 +17,14 @@ export const MAIN_EXPECTED_SOURCE={
 };
 MAIN_EXPECTED_SOURCE.names=Object.keys(MAIN_EXPECTED_SOURCE.ages);
 EXPECTED_SOURCES.push(MAIN_EXPECTED_SOURCE);
+export const SHUKA_EXPECTED_SOURCE={
+ raceKey:'2026-10-18:京都:11',date:'2026-10-18',venue:'京都',raceNo:11,raceName:'秋華賞',surface:'芝',distance:2000,age:3,priority:0,
+ snapshotId:'jra-shuka-registration-20261012-v1',provider:'JRA',sourcePublishedAt:'2026-10-12',observedAt:'2026-10-14T23:03:28.816618Z',
+ sourceUrl:'https://www.jra.go.jp/datafile/ranking/g1/2026/shuka.html',corroboratingUrl:'https://www.jra.go.jp/keiba/g1/shuka.html',officialHorsePage:'https://www.jra.go.jp/keiba/g1/shuka/horse.html',
+ sourceNotice:'JRAの10月12日公表の特別登録18頭。出走確定・枠番・馬番は未確認です。出走馬情報ページの紹介馬は登録馬全員とは限りません。',
+ names:['エンネ','カナルサンマルタン','ガーネットフレア','ギャラボーグ','サムシングスイート','スウィートハピネス','スマートプリエール','タイセイボーグ','テイエムアイラン','ドリームコア','ナイスプレーアスク','ハヤブササキチャン','バースデイフライト','フェスティバルヒル','マスターソアラ','モンローウォーク','ラベルセーヌ','ロザーンジュ']
+};
+EXPECTED_SOURCES.push(SHUKA_EXPECTED_SOURCE);
 export function expectedAge(source,name){const age=Number(source.ages?.[name]??source.age);if(!Number.isInteger(age)||age<2||age>20)throw Error('想定馬の年齢を確認できません。');return age;}
 const MARKS = ['◎','○','▲','△','☆','注','消'];
 export const PREVIEW_GUARDS={readOnly:true,scoreMutation:false,markMutation:false,authoritativeForCard:false,eligibleForProspectiveSeal:false,horseNumbersNeverInferred:true,targetResultsExcluded:true,oddsAndPopularityExcluded:true,sourceIsDatedSnapshot:true};

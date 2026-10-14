@@ -13,6 +13,7 @@ function sexAge(v){const m=String(v||'').replace(/\s/g,'').match(/(牡|牝|せ�
 function finish(v){const s=norm(v);const m=s.match(/^(\d{1,2})(?:着)?$/);if(m)return{position:Number(m[1]),status:'finished'};if(/中止/.test(s))return{position:null,status:'did-not-finish'};if(/取消/.test(s))return{position:null,status:'scratched'};if(/除外/.test(s))return{position:null,status:'excluded'};if(/失格/.test(s))return{position:null,status:'disqualified'};return{position:null,status:s||'unknown'};}
 
 const ALIASES={
+ average1f:['平均1F'],
  finish:['着順'],frame:['枠','枠番'],horseNo:['馬番'],horseName:['馬名'],sexAge:['性齢','性年齢'],assignedWeight:['斤量'],jockey:['騎手'],time:['タイム','走破タイム'],margin:['着差'],passing:['通過','通過順位','コーナー通過順位'],last3f:['推定上り','推定上がり','上り','上がり','上り3F','上がり3F'],popularity:['人気','単勝人気'],odds:['単勝','単勝オッズ'],bodyWeight:['馬体重']
 };
 function headerMap(headers){
@@ -55,7 +56,7 @@ export function parseOfficialResultDetails(html,expectedRunners=[]){
    horseName:String(expected?.horse_name??expected?.horseName??name),
    finishPosition:f.position,finishStatus:f.status,
    sex:sa.sex,age:sa.age,assignedWeight:number(get('assignedWeight')),jockey:get('jockey'),
-   timeText:get('time'),timeSeconds:timeSeconds(get('time')),margin:get('margin'),cornerPositions:get('passing'),last3f:number(get('last3f')),
+   timeText:get('time'),timeSeconds:timeSeconds(get('time')),margin:get('margin'),cornerPositions:get('passing'),last3f:number(get('last3f')),average1f:number(get('average1f')),
    popularity:integer(get('popularity')),odds:number(get('odds')),bodyWeight:bw.bodyWeight,bodyWeightChange:bw.bodyWeightChange
   });
  }
@@ -68,6 +69,7 @@ export function parseOfficialResultDetails(html,expectedRunners=[]){
 }
 
 export async function ensureResultDetailTables(db){
+ await db.prepare(`CREATE TABLE IF NOT EXISTS lab_obstacle_average1f(race_key TEXT NOT NULL,horse_no INTEGER NOT NULL,horse_name TEXT NOT NULL,average_1f REAL NOT NULL,source_url TEXT NOT NULL,source_sha256 TEXT NOT NULL,fetched_at TEXT NOT NULL,PRIMARY KEY(race_key,horse_no))`).run();
  await db.prepare(`CREATE TABLE IF NOT EXISTS lab_race_result_details(id INTEGER PRIMARY KEY AUTOINCREMENT,race_key TEXT NOT NULL,horse_no INTEGER NOT NULL,horse_name TEXT NOT NULL,finish_position INTEGER,finish_status TEXT NOT NULL,time_text TEXT,time_seconds REAL,margin TEXT,corner_positions TEXT,last3f REAL,popularity INTEGER,odds REAL,body_weight INTEGER,body_weight_change INTEGER,jockey TEXT,assigned_weight REAL,source_url TEXT NOT NULL,source_sha256 TEXT NOT NULL,fetched_at TEXT NOT NULL,UNIQUE(race_key,horse_no))`).run();
  await db.prepare(`CREATE TABLE IF NOT EXISTS lab_result_ingest_revisions(revision_id TEXT PRIMARY KEY,race_key TEXT NOT NULL,source_url TEXT NOT NULL,source_sha256 TEXT NOT NULL,runner_count INTEGER NOT NULL,parsed_count INTEGER NOT NULL,result_json TEXT NOT NULL,fetched_at TEXT NOT NULL,UNIQUE(race_key,source_sha256))`).run();
  await db.prepare(`CREATE TRIGGER IF NOT EXISTS trg_result_revision_no_update BEFORE UPDATE ON lab_result_ingest_revisions BEGIN SELECT RAISE(ABORT,'result ingest revisions are immutable'); END`).run();
@@ -87,6 +89,10 @@ export async function persistVerifiedResultDetails(db,{raceKey,runners,sourceUrl
  for(const x of parsed.rows){
 
   statements.push(db.prepare(`INSERT INTO lab_race_result_details(race_key,horse_no,horse_name,finish_position,finish_status,time_text,time_seconds,margin,corner_positions,last3f,popularity,odds,body_weight,body_weight_change,jockey,assigned_weight,source_url,source_sha256,fetched_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(race_key,horse_no) DO UPDATE SET horse_name=excluded.horse_name,finish_position=excluded.finish_position,finish_status=excluded.finish_status,time_text=excluded.time_text,time_seconds=excluded.time_seconds,margin=excluded.margin,corner_positions=excluded.corner_positions,last3f=excluded.last3f,popularity=excluded.popularity,odds=excluded.odds,body_weight=excluded.body_weight,body_weight_change=excluded.body_weight_change,jockey=excluded.jockey,assigned_weight=excluded.assigned_weight,source_url=excluded.source_url,source_sha256=excluded.source_sha256,fetched_at=excluded.fetched_at`).bind(raceKey,x.horseNo,x.horseName,x.finishPosition,x.finishStatus,x.timeText,x.timeSeconds,x.margin,x.cornerPositions,x.last3f,x.popularity,x.odds,x.bodyWeight,x.bodyWeightChange,x.jockey,x.assignedWeight,sourceUrl,sourceSha256,stamp));
+ }
+ if(parsed.rows.some(x=>x.average1f!=null)){
+  if(parsed.rows.some(x=>x.average1f!=null&&(!Number.isFinite(x.average1f)||x.average1f<5||x.average1f>60)))throw Error('平均1Fの値を確認できません。');
+  statements.push(db.prepare(`INSERT INTO lab_obstacle_average1f SELECT ?,json_extract(value,'$.horseNo'),json_extract(value,'$.horseName'),json_extract(value,'$.average1f'),?,?,? FROM json_each(?) WHERE json_extract(value,'$.average1f') IS NOT NULL ON CONFLICT(race_key,horse_no) DO UPDATE SET horse_name=excluded.horse_name,average_1f=excluded.average_1f,source_url=excluded.source_url,source_sha256=excluded.source_sha256,fetched_at=excluded.fetched_at`).bind(raceKey,sourceUrl,sourceSha256,stamp,JSON.stringify(parsed.rows)));
  }
  await db.batch(statements);
  return{revisionId,sourceSha256,storedRows:parsed.rows.length,snapshot};

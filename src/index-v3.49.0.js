@@ -1,10 +1,11 @@
+import {runPipelineJob} from './pipeline-runs-v3.40.0.js';
 import {priorDetailStatus,collectPriorDetails,scheduledPriorDetails} from './prior-result-details.js';
 import {collectLockedMarkResults,readLockedMarkResults} from './locked-mark-result-evidence.js';
 import {userMarkLockEndpoint,readUserMarkLock} from './user-mark-lock.js';
 import app from './index-v3.48.2.js';
 import {markRecordProvenance} from './mark-record-provenance.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
-export const VERSION='3.49.14';
+export const VERSION='3.49.15';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
@@ -16,7 +17,7 @@ export default {
     if(request.method==='GET')data=await priorDetailStatus(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')});
     else if(request.method==='POST'){
      const input=await request.json();if(input.confirm!=='COLLECT')throw Error('confirm COLLECT が必要です。');
-     data=await collectPriorDetails(env.DB,input);
+     data=await runPipelineJob(env.DB,'prior-details','manual',()=>collectPriorDetails(env.DB,input));
     }else return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
     return Response.json({...data,version:VERSION},{headers});
    }catch(e){return Response.json({ok:false,error:String(e.message||e),version:VERSION},{status:400,headers})}
@@ -56,5 +57,10 @@ export default {
   }
   return new Response(JSON.stringify(data),{status:response.status,headers:response.headers});
  },
- async scheduled(event,env,ctx){if(event.cron==='*/3 * * * *'&&Math.floor(Number(event.scheduledTime)/60000)%12===0)await scheduledPriorDetails(env.DB);await app.scheduled(event,env,ctx);await collectLockedMarkResults(env.DB);}
+ async scheduled(event,env,ctx){
+  if(event.cron==='*/3 * * * *'&&Math.floor(Number(event.scheduledTime)/60000)%12===0){
+   try{await runPipelineJob(env.DB,'prior-details','scheduled',()=>scheduledPriorDetails(env.DB),{scheduledTime:event.scheduledTime});}catch{ /* Failure is recorded; existing collection jobs must still run. */ }
+  }
+  await app.scheduled(event,env,ctx);await collectLockedMarkResults(env.DB);
+ }
 };

@@ -16,7 +16,7 @@ export async function discoverExpectedProfiles(db,source,deps={}){
  try{
   const response=await (deps.fetcher||fetch)(url,{headers:{'user-agent':'KEIBA-LABO bounded official expected-profile discovery',accept:'text/html'},signal:AbortSignal.timeout(10000),redirect:'follow'});
   if(response.url&&response.url!==url)throw Error('JRA出走馬情報の取得元が変更されています。');
-  if(!response.ok){if([429,503].includes(response.status))pause=3600000;throw Error('JRA取得 HTTP '+response.status);}
+  if(!response.ok){if([403,429,503].includes(response.status))pause=3600000;throw Error('JRA取得 HTTP '+response.status);}
   const bytes=await response.arrayBuffer();if(bytes.byteLength>1500000)throw Error('ページサイズが上限を超えました。');
   const html=new TextDecoder(/charset\s*=\s*["']?utf-?8/i.test(response.headers.get('content-type')||'')?'utf-8':'shift_jis').decode(bytes);
   const parsed=parsePrecardHorsePage(html,{expectedDate:source.date,expectedRaceName:source.raceName});

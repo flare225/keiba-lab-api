@@ -39,3 +39,10 @@ test('recent saved coverage stays visible after racing without extending automat
  const r=await expectedHistoryStatus(db,after,[source]);assert.equal(r.races.length,1);assert.equal(r.races[0].date,'2026-10-10');
  assert.equal(upcomingExpectedSources(after,[source]).length,0);sql.close();
 });
+
+test('upcoming profile is fetched first even in the former training slot; shared cooldown never falls through to training',async()=>{
+ const {db,sql}=await fixture();let trainingCalls=0,requests=0;const deps={sources:[source],now:()=>stamp+540000,wait:async()=>{},trainingCollector:async()=>{trainingCalls++;throw Error('training must not preempt upcoming');},fetcher:async()=>{requests++;return new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}});}};
+ const first=await scheduledWeekendHistory(db,deps);assert.equal(first.attempted,1);assert.equal(trainingCalls,0);assert.equal(requests,1);
+ sql.exec("DELETE FROM lab_history_collection_receipts");
+ const second=await scheduledWeekendHistory(db,deps);assert.equal(second.status,'cooldown');assert.equal(trainingCalls,0);assert.equal(requests,1);sql.close();
+});

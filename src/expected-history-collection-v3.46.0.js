@@ -47,14 +47,10 @@ export async function collectUpcomingExpectedHistory(db,deps={}){
  return {ok:true,status:'idle',externalRequests:0};
 }
 export async function scheduledWeekendHistory(db,deps={}){
- // Reserve alternating nine-minute source slots for past training races.
- // A successful or throttled request ends this invocation; idle lanes fall back.
+ // Upcoming target races take precedence; the ordinary queue uses idle slots.
  const now=deps.now||Date.now;
- if(Math.floor(now()/540000)%2===1){
-  const training=await (deps.trainingCollector||scheduledCollection)(db,{...deps,trainingOnly:true});
-  if(training.attempted||training.externalRequests||training.status==='cooldown')return completeCollectedTraining(db,{...training,historyLane:'training'},now());
- }
  const expected=await collectUpcomingExpectedHistory(db,deps);
  if(expected.attempted||expected.externalRequests||expected.status==='cooldown')return expected;
- return completeCollectedTraining(db,await scheduledCollection(db,deps),now());
+ const training=await (deps.trainingCollector||scheduledCollection)(db,deps);
+ return completeCollectedTraining(db,{...training,historyLane:'ordinary'},now());
 }

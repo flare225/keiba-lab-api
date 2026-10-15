@@ -1,6 +1,6 @@
 export const COLLECTION_READ_POLICY={version:'conservative-read-cadence-v1',sourceRunsPerHour:10,learningRunsPerHour:1,priorDetailRunsPerHour:5,additionalHourlyJobsPreserved:true,sharedJraCooldownUnchanged:true,userMarkWritesThrottled:false,dailyRowsReadMeasured:false,
  scheduledRowsReadMeasured:true,
- scheduledDailyRowsReadLimit:1000000,dailyQuotaStopGuaranteed:false};
+ scheduledDailyRowsReadLimit:2000000,learningDailyRowsReadLimit:250000,dailyQuotaStopGuaranteed:false};
 export function shouldRunScheduled(event){
  const stamp=Number(event.scheduledTime);if(!Number.isFinite(stamp))return false;
  const minute=new Date(stamp).getUTCMinutes();

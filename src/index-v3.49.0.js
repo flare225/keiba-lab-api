@@ -1,3 +1,4 @@
+import {seedEditorialReferences,readEditorialReferences,editorialReferencePage} from './editorial-reference-notes.js';
 import {scheduledReadStatus,runWithScheduledReadBudget,scheduledBudgetLane} from './scheduled-read-budget.js';
 import {COLLECTION_READ_POLICY,shouldRunScheduled} from './collection-read-policy.js';
 import {runPipelineJob} from './pipeline-runs-v3.40.0.js';
@@ -7,10 +8,15 @@ import {userMarkLockEndpoint,readUserMarkLock} from './user-mark-lock.js';
 import app from './index-v3.48.2.js';
 import {markRecordProvenance} from './mark-record-provenance.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
-export const VERSION='3.49.21';
+export const VERSION='3.49.22';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(['/v1/lab/race-reference-notes','/lab/race-reference-notes'].includes(u.pathname)){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
+   if(request.method!=='GET')return Response.json({ok:false,error:'read-only endpoint',version:VERSION},{status:405,headers});
+   try{const data=await readEditorialReferences(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')});return u.pathname.startsWith('/v1/')?Response.json({...data,version:VERSION},{headers}):new Response(editorialReferencePage(data),{headers:{...headers,'content-type':'text/html; charset=utf-8','x-content-type-options':'nosniff'}});}catch(e){return Response.json({ok:false,error:String(e.message||e),version:VERSION},{status:/登録がない/.test(String(e))?404:/照合できません/.test(String(e))?409:503,headers});}
+  }
   if(u.pathname==='/v1/lab/collection-read-policy'&&request.method==='GET')return Response.json({ok:true,version:VERSION,policy:COLLECTION_READ_POLICY},{headers:{'cache-control':'no-store','access-control-allow-origin':'*'}});
   if(u.pathname==='/v1/lab/scheduled-read-budget'&&request.method==='GET'){
    try{return Response.json({ok:true,version:VERSION,budget:await scheduledReadStatus(env.DB)},{headers:{'cache-control':'no-store','access-control-allow-origin':'*'}});}catch{return Response.json({ok:false,version:VERSION,error:'DB読み取り予算を確認できません。定期処理は予算確認に成功するまで実行しません。'},{status:503,headers:{'cache-control':'no-store'}});}
@@ -67,6 +73,7 @@ export default {
   if(!shouldRunScheduled(event))return;
   return runWithScheduledReadBudget(env.DB,async db=>{
   const budgetEnv={...env,DB:db};
+  try{await seedEditorialReferences(db);}catch{console.warn('editorial reference seed unavailable');}
   if(event.cron==='*/3 * * * *'&&Math.floor(Number(event.scheduledTime)/60000)%12===0){
    try{await runPipelineJob(db,'prior-details','scheduled',()=>scheduledPriorDetails(db),{scheduledTime:event.scheduledTime});}catch{ /* Failure is recorded; existing collection jobs must still run. */ }
   }

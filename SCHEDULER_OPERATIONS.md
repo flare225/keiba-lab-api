@@ -77,3 +77,24 @@ earlier race's discovery refresh could fail and impose the shared pause before
 a later race's already-known horses were considered. Discovery remains enabled
 when cached work is exhausted. Missing links are never guessed, formal cards
 remain separate, and an active global cooldown is never bypassed.
+
+## User-supplied editorial reference notes (v3.49.22)
+
+The supplied Shuka article is summarized into 18 unverified horse notes with
+source URL, publication date, user-provided timestamp, pedigree claims,
+reported performances, editorial views and reconciliation checks. The article
+is not an official data provider. Its aggregate trends and opinions never feed
+scores, running-style classifications, model training or mark revisions.
+
+Allowed cron invocations seed `lab_editorial_reference_notes` idempotently under
+the existing scheduled D1 budget. Only this new table and its immutable triggers
+are written; no public write endpoint is added. Each stored note includes source
+metadata and SHA-256, and reads compare both content and hash to the versioned
+reference. Corrections require a new reference version. Seed failure does not
+block the existing collection jobs and never counts as successful persistence.
+
+GET `/v1/lab/race-reference-notes?date=2026-10-18&venue=京都&race_no=11` reports actual
+saved counts, and `/lab/race-reference-notes` with the same query renders them.
+The progress page links to the notes. GET never creates schema or seeds rows;
+0 saved notes must remain unconfirmed until a real cron seeds and readback
+returns all 18. Source notes are not new official past performances.

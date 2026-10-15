@@ -19,7 +19,7 @@ export async function discoverExpectedCard(db,source,deps={}){
   const bytes=await response.arrayBuffer();if(bytes.byteLength>1500000)throw Error('ページサイズ上限です。');
   const html=new TextDecoder(/charset\s*=\s*["']?utf-?8/i.test(response.headers.get('content-type')||'')?'utf-8':'shift_jis').decode(bytes);
   if(card){
-   const roster=await saveConfirmedPredraw(db,html,card,source);status='confirmed-predraw-saved';next=stamp+86400000;
+   const roster=await saveConfirmedPredraw(db,html,card,source,{allowUnassignedConnections:true});status='confirmed-predraw-saved';next=stamp+86400000;
    return {ok:true,status,confirmedRunners:roster.runners.length,externalRequests:1,officialCardsCreated:false};
   }
   const links=extractLinks(html,url).map(link=>{try{officialUrl(link);return metaFromRacecardUrl(link)}catch{return null}}).filter(m=>m?.date===source.date&&m.venue===source.venue&&m.raceNo===source.raceNo).sort((a,b)=>Number(b.detailed)-Number(a.detailed));

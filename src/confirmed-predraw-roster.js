@@ -2,7 +2,7 @@ import {metaFromRacecardUrl} from './index-v1.1.4.js';
 import {sha256} from './card-evidence.js';
 const plain=s=>String(s||'').replace(/<[^>]*>/g,' ').replace(/&nbsp;|&#160;/g,' ').replace(/\s+/g,' ').trim();
 const cell=(row,name)=>row.match(new RegExp('<td\\b[^>]*class=["\']'+name+'["\'][^>]*>([\\s\\S]*?)</td>','i'))?.[1];
-export function parseConfirmedPredraw(html,url,target){
+export function parseConfirmedPredraw(html,url,target,{allowUnassignedConnections=false}={}){
  const u=new URL(url),meta=metaFromRacecardUrl(url);
  if(u.origin!=='https://www.jra.go.jp'||u.pathname!=='/JRADB/accessD.html'||!meta||meta.date!==target.date||meta.venue!==target.venue||meta.raceNo!==Number(target.raceNo))throw Error('Confirmed roster source identity mismatch');
  const table=html.match(/<table\b[^>]*>[\s\S]*?class=["']horse["'][\s\S]*?<\/table>/i)?.[0];
@@ -13,19 +13,20 @@ export function parseConfirmedPredraw(html,url,target){
   if(cell(row,'num')===undefined||cell(row,'waku')===undefined||plain(cell(row,'num'))||plain(cell(row,'waku'))||/<img\b/i.test(cell(row,'waku')))throw Error('Not a pre-draw roster');
   const horse=cell(row,'horse'),j=cell(row,'jockey')||'',nameBlock=horse.match(/<div class=["']name["']>([\s\S]*?)<\/div>/i)?.[1]||'',link=nameBlock.match(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i);
   const age=plain(j.match(/<p class=["']age["']>([\s\S]*?)<\/p>/i)?.[1]).match(/^([牡牝セ騸])(\d{1,2})\//);
-  const weight=Number(plain(j.match(/<p class=["']weight["']>([\s\S]*?)<\/p>/i)?.[1]).replace(/\s*kg$/i,''));
+  const weightText=plain(j.match(/<p class=["']weight["']>([\s\S]*?)<\/p>/i)?.[1]).replace(/\s*kg$/i,'');
+  const weight=allowUnassignedConnections&&(!weightText||weightText==='未定')?null:Number(weightText);
   const jockey=plain(j.match(/<p class=["']jockey["']>([\s\S]*?)<\/p>/i)?.[1]);
-  if(!link||!age||!jockey||!Number.isFinite(weight)||weight<40||weight>70)throw Error('Incomplete confirmed runner');
+  if(!link||!age||(!jockey&&!allowUnassignedConnections)||(weight===null?!allowUnassignedConnections:!Number.isFinite(weight)||weight<40||weight>70))throw Error('Incomplete confirmed runner: '+(!link?'horse link':!age?'age':!jockey?'jockey':'assigned weight'));
   const profile=new URL(link[1].replace(/&amp;/g,'&'),url);
   if(profile.origin!==u.origin||profile.pathname!=='/JRADB/accessU.html'||!/^pw01dud00\d{10}\//.test(profile.searchParams.get('CNAME')||''))throw Error('Invalid confirmed profile');
-  return {horse_name:plain(link[2]),age:Number(age[2]),sex:age[1],jockey,assigned_weight:weight,profile_url:profile.href,horse_no:null,frame_no:null};
+  return {horse_name:plain(link[2]),age:Number(age[2]),sex:age[1],jockey:jockey||null,assigned_weight:weight,profile_url:profile.href,horse_no:null,frame_no:null};
  });
  const cells=[...table.matchAll(/<td\b[^>]*class=["']horse["']/gi)].length;
  if(!runners.length||runners.length>18||cells!==runners.length||new Set(runners.map(r=>r.horse_name)).size!==runners.length)throw Error('Incomplete or duplicate confirmed roster');
  return {raceKey:`${target.date}:${target.venue}:${target.raceNo}`,sourceUrl:url,runners};
 }
-export async function saveConfirmedPredraw(db,html,url,target){
- const roster=parseConfirmedPredraw(html,url,target);
+export async function saveConfirmedPredraw(db,html,url,target,options){
+ const roster=parseConfirmedPredraw(html,url,target,options);
  await db.prepare('CREATE TABLE IF NOT EXISTS lab_confirmed_predraw_rosters(race_key TEXT PRIMARY KEY,source_url TEXT NOT NULL,source_sha256 TEXT NOT NULL,runners_json TEXT NOT NULL,checked_at TEXT NOT NULL)').run();
  await db.prepare('INSERT OR REPLACE INTO lab_confirmed_predraw_rosters VALUES(?,?,?,?,?)').bind(roster.raceKey,url,await sha256(html),JSON.stringify(roster.runners),new Date().toISOString()).run();
  return roster;

@@ -98,3 +98,24 @@ saved counts, and `/lab/race-reference-notes` with the same query renders them.
 The progress page links to the notes. GET never creates schema or seeds rows;
 0 saved notes must remain unconfirmed until a real cron seeds and readback
 returns all 18. Source notes are not new official past performances.
+
+## Article claim reconciliation (v3.49.23)
+
+A separate immutable `lab_editorial_claim_checks` table records the comparison
+of 36 individually named race values against stored JRA profiles. It never
+modifies the original editorial notes, mark revisions, LOCK, model weights or
+learning credit. Exact horse, year, race, venue, surface and specified distance
+must identify one valid prior result. Missing/ambiguous/wrong-cohort/non-JRA or
+future evidence remains pending; disagreements are retained as contradictions.
+Closing times additionally require the existing immutable official result-page
+proof bound to the same past row and race metadata.
+
+Allowed cron jobs check two bounded evidence queries. A source fingerprint
+prevents repeated writes and reconciliation when evidence is unchanged. All
+claim results for a new fingerprint commit atomically; former snapshots remain
+immutable. No new verification is generated on/after the target race day.
+GET references now returns hash-checked results and links matched facts to JRA
+sources on the reference page. Career totals, pedigree, opinions, running style,
+pace, aggregate historical trends and unsupported facts remain unverified.
+The normal assessment adapter continues to read canonical past-performance rows
+under its existing limits; article claims do not add a duplicate score feature.

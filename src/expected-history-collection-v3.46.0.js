@@ -1,6 +1,7 @@
 import {EXPECTED_SOURCES,expectedAge} from './expected-runner-preview-v3.30.0.js';
 import {discoverExpectedProfiles} from './expected-profile-discovery-v3.47.0.js';
 import {readConfirmedPredraw} from './confirmed-predraw-roster.js';
+import {discoverExpectedCard} from './expected-card-discovery.js';
 import {completeCollectedTraining} from './history-learning-completion.js';
 import {collectionStatus,collectHistoryBatch,officialUrl,jstDay,scheduledCollection} from './history-collection-v3.37.0.js';
 
@@ -46,6 +47,8 @@ export async function collectUpcomingExpectedHistory(db,deps={}){
   if(r.attempted||r.status==='cooldown')return {...r,stage:'expected-runner-prior-history',snapshotId:source.snapshotId,authoritativeForCard:false};
  }
  for(const source of discoverySources){
+  const card=await discoverExpectedCard(db,source,deps);
+  if(card.externalRequests||card.status==='cooldown')return card;
   const discovery=await discoverExpectedProfiles(db,source,deps);
   if(discovery.externalRequests||discovery.status==='cooldown')return discovery;
  }

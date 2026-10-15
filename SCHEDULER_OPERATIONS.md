@@ -46,3 +46,25 @@ usage before this instrumentation was deployed. Failed queries may have
 unreported reads. This is **not** account usage or a guarantee against the D1
 free-tier quota. No paid-plan or billing changes were made. Do not compute
 account remaining quota as 5,000,000 minus this partial counter.
+
+## Upcoming-race priority and split budget (v3.49.20)
+
+Supersedes the v3.49.19 1,000,000-row threshold: the shared scheduled budget
+is now 2,000,000 observed rows/day, with learning-cron invocations capped at
+250,000/day within that total. The initial observation was 270,358 reads over
+roughly 3.7 hours; 1,000,000 would be restrictive if that pace continued for a
+whole day. These remain provisional operating budgets, not measured account
+allowances. No guarantee of remaining free-tier account quota is made.
+
+A learning-only pause does not block collection invocations. A shared budget,
+unknown measurement or D1 quota pause still blocks both. In-flight overshoot
+remains possible. The aggregate counter is retained without resetting it;
+pre-split observations are explicitly unattributed and still count toward the
+shared total. New per-lane and aggregate totals commit in a single D1 batch.
+User writes, manual collection and existing shared JRA cooldown are unchanged.
+
+Each scheduled history turn checks upcoming target races before ordinary
+history, replacing alternate past-training-first turns. Ordinary collection
+still runs when upcoming targets have no actionable work, including non-target
+races. A blocked/cooldown upcoming request never falls through to a second
+source request. This does not invent missing profile links or final cards.

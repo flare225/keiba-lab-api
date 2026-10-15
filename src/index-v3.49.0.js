@@ -1,4 +1,4 @@
-import {scheduledReadStatus,runWithScheduledReadBudget} from './scheduled-read-budget.js';
+import {scheduledReadStatus,runWithScheduledReadBudget,scheduledBudgetLane} from './scheduled-read-budget.js';
 import {COLLECTION_READ_POLICY,shouldRunScheduled} from './collection-read-policy.js';
 import {runPipelineJob} from './pipeline-runs-v3.40.0.js';
 import {priorDetailStatus,collectPriorDetails,scheduledPriorDetails} from './prior-result-details.js';
@@ -7,7 +7,7 @@ import {userMarkLockEndpoint,readUserMarkLock} from './user-mark-lock.js';
 import app from './index-v3.48.2.js';
 import {markRecordProvenance} from './mark-record-provenance.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
-export const VERSION='3.49.19';
+export const VERSION='3.49.20';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
@@ -71,6 +71,6 @@ export default {
    try{await runPipelineJob(db,'prior-details','scheduled',()=>scheduledPriorDetails(db),{scheduledTime:event.scheduledTime});}catch{ /* Failure is recorded; existing collection jobs must still run. */ }
   }
   await app.scheduled(event,budgetEnv,ctx);await collectLockedMarkResults(db);
-  });
+  },Date.now,scheduledBudgetLane(event));
  }
 };

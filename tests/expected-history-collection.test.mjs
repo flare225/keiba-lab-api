@@ -5,6 +5,25 @@ import app from '../src/index-v3.46.0.js';
 import {MAIN_EXPECTED_SOURCE,EXPECTED_SOURCES,expectedAge,historyForExpected} from '../src/expected-runner-preview-v3.30.0.js';
 import {discoverExpectedProfiles} from '../src/expected-profile-discovery-v3.47.0.js';
 import {comparisonPage} from '../src/mark-comparison-page-v3.42.0.js';
+import {discoverExpectedCard} from '../src/expected-card-discovery.js';
+test('official roster discovery follows witnessed exact-date links one page per shared-budget batch',async()=>{
+ const {db,sql}=await fixture(),s={...source,officialRosterDiscoveryUrl:'https://www.jra.go.jp/keiba/race/095.html'};
+ const card='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604031120261010/9E';
+ let time=stamp,calls=0;
+ const deps={now:()=>time,fetcher:async()=>{calls++;return new Response('<a href="'+card.replace('20261010','20261011')+'">wrong day</a><a href="'+card+'">card</a>',{headers:{'content-type':'text/html;charset=utf-8'}})}};
+ assert.equal((await discoverExpectedCard(db,s,deps)).status,'official-card-link-found');assert.equal(calls,1);
+ assert.equal(sql.prepare('SELECT card_url FROM lab_expected_card_discovery').get().card_url,card);
+ assert.equal((await discoverExpectedCard(db,s,deps)).externalRequests,0);
+ time+=61000;const roster='<table><caption>2026年10月10日 東京<img alt="11レース"></caption><thead></thead><tbody><tr><td class="waku"></td><td class="num"></td><td class="horse"><div class="name"><a href="'+profile+'">HorseA</a></div></td><td class="jockey"><p class="age">牡2/黒鹿</p><p class="weight">56kg</p><p class="jockey">騎手</p></td></tr></tbody></table>';
+ const result=await discoverExpectedCard(db,s,{...deps,fetcher:async(url,opts)=>{calls++;assert.equal(url,card);assert.equal(opts.method,'GET');return new Response(roster,{headers:{'content-type':'text/html;charset=utf-8'}})}});
+ assert.equal(result.status,'confirmed-predraw-saved');assert.equal(result.confirmedRunners,1);assert.equal(calls,2);assert.equal((await expectedHistoryContext(db,s)).runners[0].horse_no,null);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,1);sql.close();
+});
+test('official roster discovery 403 stops the shared source for an hour',async()=>{
+ const {db,sql}=await fixture(),s={...source,officialRosterDiscoveryUrl:'https://www.jra.go.jp/keiba/race/095.html'};let calls=0;
+ const r=await discoverExpectedCard(db,s,{now:()=>stamp,fetcher:async()=>{calls++;return new Response('',{status:403})}});assert.equal(r.ok,false);
+ assert.equal(sql.prepare('SELECT next_batch_at FROM lab_history_collection_budget').get().next_batch_at,stamp+3600000);
+ assert.equal((await discoverExpectedCard(db,s,{now:()=>stamp+61000,fetcher:()=>{throw Error('retry')}})).externalRequests,0);assert.equal(calls,1);sql.close();
+});
 const stamp=Date.parse('2026-10-07T00:00:00Z');
 const source={snapshotId:'test-v1',date:'2026-10-10',venue:'東京',raceNo:11,raceName:'試験',age:2,names:['HorseA','HorseB']};
 const profile='https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024100001/AA';

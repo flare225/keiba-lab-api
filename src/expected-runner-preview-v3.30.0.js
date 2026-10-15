@@ -26,6 +26,7 @@ export const SHUKA_EXPECTED_SOURCE={
 };
 EXPECTED_SOURCES.push(SHUKA_EXPECTED_SOURCE);
 export const FUJI_EXPECTED_SOURCE={
+ officialRosterDiscoveryUrl:'https://www.jra.go.jp/keiba/race/095.html',
  raceKey:'2026-10-17:東京:11',date:'2026-10-17',venue:'東京',raceNo:11,raceName:'富士ステークス',surface:'芝',distance:1600,priority:0,
  snapshotId:'netkeiba-fuji-20261015-v1',provider:'netkeiba',sourcePublishedAt:null,observedAt:'2026-10-14T23:26:17.905755Z',
  sourceUrl:'https://race.netkeiba.com/race/shutuba.html?race_id=202605040611',corroboratingUrl:'https://www.jra.go.jp/keiba/race/095.html',officialHorsePage:'https://www.jra.go.jp/keiba/race/095/horse.html',

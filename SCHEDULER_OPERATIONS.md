@@ -20,3 +20,29 @@ The October 10–12 storage audit remains consistent: 72 programs, zero cards/ru
 A bounded observation spanning 15:00 JST did not find a scheduled invocation. The status endpoint still reports cronHeartbeat=not-observed; manual success is not proof of automatic execution. This does not establish a configuration fault: Cloudflare documents that Cron Trigger changes can take up to 15 minutes to propagate (https://developers.cloudflare.com/workers/configuration/cron-triggers/). The deployed runtime configuration and a subsequent real cron invocation still need verification.
 
 No direct Cloudflare connection is available in this workspace; plugin discovery returned no Cloudflare matches. Do not claim the cron is operational until a scheduled run or the provider's execution record is observed.
+
+## Scheduled D1 read budget (v3.49.19)
+
+All allowed Worker cron jobs now share a UTC-day counter in
+`lab_scheduled_read_usage`. Successful query `meta.rows_read` is accumulated
+atomically, including reads made by write statements and batch statements.
+`first()` obtains the same SQL result through `all()` once, retaining metadata
+and returning the first row/column with the existing null/error behavior.
+The existing SQL, transactions, collection cooldown and user write routes are
+unchanged. Bookkeeping is outside this counter.
+
+Before dispatching the next cron invocation, a counter at or above 1,000,000
+observed rows pauses background jobs until the next UTC day (09:00 JST).
+Missing metadata also pauses subsequent jobs for that day, rather than treating
+unknown reads as zero. If the durable budget cannot be checked, no job starts.
+Running jobs finish normally and their counters are flushed even after errors;
+there is no interruption inside an existing save/transaction. Concurrent jobs
+and a large individual query can overshoot the threshold.
+
+GET `/v1/lab/scheduled-read-budget` exposes the measured scope and next reset.
+The work progress page shows the same counter. It does not measure user/API
+requests, manual collection, CI SQL, other Workers/databases, bookkeeping, or
+usage before this instrumentation was deployed. Failed queries may have
+unreported reads. This is **not** account usage or a guarantee against the D1
+free-tier quota. No paid-plan or billing changes were made. Do not compute
+account remaining quota as 5,000,000 minus this partial counter.

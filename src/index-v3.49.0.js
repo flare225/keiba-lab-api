@@ -1,3 +1,4 @@
+import {scheduledReadStatus,runWithScheduledReadBudget} from './scheduled-read-budget.js';
 import {COLLECTION_READ_POLICY,shouldRunScheduled} from './collection-read-policy.js';
 import {runPipelineJob} from './pipeline-runs-v3.40.0.js';
 import {priorDetailStatus,collectPriorDetails,scheduledPriorDetails} from './prior-result-details.js';
@@ -6,11 +7,14 @@ import {userMarkLockEndpoint,readUserMarkLock} from './user-mark-lock.js';
 import app from './index-v3.48.2.js';
 import {markRecordProvenance} from './mark-record-provenance.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
-export const VERSION='3.49.18';
+export const VERSION='3.49.19';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
   if(u.pathname==='/v1/lab/collection-read-policy'&&request.method==='GET')return Response.json({ok:true,version:VERSION,policy:COLLECTION_READ_POLICY},{headers:{'cache-control':'no-store','access-control-allow-origin':'*'}});
+  if(u.pathname==='/v1/lab/scheduled-read-budget'&&request.method==='GET'){
+   try{return Response.json({ok:true,version:VERSION,budget:await scheduledReadStatus(env.DB)},{headers:{'cache-control':'no-store','access-control-allow-origin':'*'}});}catch{return Response.json({ok:false,version:VERSION,error:'DB読み取り予算を確認できません。定期処理は予算確認に成功するまで実行しません。'},{status:503,headers:{'cache-control':'no-store'}});}
+  }
   if(u.pathname==='/v1/lab/prior-result-details'){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*','access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'content-type'};
    if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
@@ -45,7 +49,7 @@ export default {
   }
   const response=await app.fetch(request,env,ctx);
   let data;try{data=await response.clone().json();}catch{return response;}
-  if(data&&typeof data==='object'){data.version=VERSION;if(u.pathname==='/v1/lab/work-progress')data.readPolicy=COLLECTION_READ_POLICY;}
+  if(data&&typeof data==='object'){data.version=VERSION;if(u.pathname==='/v1/lab/work-progress'){data.readPolicy=COLLECTION_READ_POLICY;try{data.scheduledReadBudget=await scheduledReadStatus(env.DB);}catch{data.scheduledReadBudget=null;}}}
   if(response.ok&&request.method==='GET'&&u.pathname==='/v1/lab/user-marks'&&Array.isArray(data?.latest)){
    for(const revision of data.latest){
     try{
@@ -61,9 +65,12 @@ export default {
  },
  async scheduled(event,env,ctx){
   if(!shouldRunScheduled(event))return;
+  return runWithScheduledReadBudget(env.DB,async db=>{
+  const budgetEnv={...env,DB:db};
   if(event.cron==='*/3 * * * *'&&Math.floor(Number(event.scheduledTime)/60000)%12===0){
-   try{await runPipelineJob(env.DB,'prior-details','scheduled',()=>scheduledPriorDetails(env.DB),{scheduledTime:event.scheduledTime});}catch{ /* Failure is recorded; existing collection jobs must still run. */ }
+   try{await runPipelineJob(db,'prior-details','scheduled',()=>scheduledPriorDetails(db),{scheduledTime:event.scheduledTime});}catch{ /* Failure is recorded; existing collection jobs must still run. */ }
   }
-  await app.scheduled(event,env,ctx);await collectLockedMarkResults(env.DB);
+  await app.scheduled(event,budgetEnv,ctx);await collectLockedMarkResults(db);
+  });
  }
 };

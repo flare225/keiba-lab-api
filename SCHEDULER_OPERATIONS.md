@@ -131,3 +131,7 @@ The policy change generates a new fingerprint even if source data is unchanged.
 Compatible v1 evidence stays readable until the next normal cron writes v2,
 and all old snapshots remain immutable. Claim definitions and values are the
 same between versions; this is not a new score rule or a manual claim override.
+# v3.49.25: upcoming official pre-draw prior details
+
+Prior-result enrichment can use the saved JRA confirmed pre-draw roster before numbered cards exist. Supplementary/article rosters cannot enter this path. The existing age/date/course filters, verified profile-to-result identity, immutable evidence, one-horse batch and shared JRA lease/cooldown remain in force. Upcoming confirmed rosters receive scheduled detail slots before archive targets. No numbered card, mark, LOCK or prediction is created by this path.
+

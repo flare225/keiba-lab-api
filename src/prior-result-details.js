@@ -4,6 +4,15 @@ import {ensureCollectionTables,officialUrl} from './history-collection-v3.37.0.j
 import {parsePastPerformances} from './collection-profile-parser-v3.32.0.js';
 import {parseOfficialResultDetails} from './result-detail-v3.39.0.js';
 import {jraPageRequest,isJraSourceBlocked} from './jra-page-request.js';
+import {expectedHistoryContext,upcomingExpectedSources} from './expected-history-collection-v3.46.0.js';
+async function detailContext(db,input){
+ const c=await assessmentContext(db,input);
+ if(c.official)return c;
+ const context=await expectedHistoryContext(db,c);
+ if(context.rosterBasis!=='confirmed-predraw')throw Error('公式の枠順前名簿または正式出馬表が必要です。');
+ return {...c,raceKey:context.race.race_key,runners:context.runners,rosterBasis:'confirmed-predraw'};
+}
+const eligible="FROM jra_past_performances p JOIN json_each(?) e ON json_extract(e.value,'$.horse_name')=p.horse_name WHERE p.race_date<? AND CAST(json_extract(e.value,'$.age') AS INTEGER) BETWEEN 2 AND 20 AND p.race_date>=MAX('2016-01-01',printf('%d-01-01',CAST(substr(?,1,4) AS INTEGER)-CAST(json_extract(e.value,'$.age') AS INTEGER)+2))";
 const venues=['','札幌','函館','福島','新潟','東京','中山','中京','京都','阪神','小倉'];
 export const PRIOR_DETAIL_POLICY={version:'verified-prior-result-v1',maxHorsesPerBatch:1,maxExternalRequestsPerBatch:2,minRequestGapMs:5000,minBatchGapMs:60000,targetDateExcluded:true,scoreWeightsChanged:false,userMarksChanged:false};
 export function priorResultLinks(html,horseName,profileUrl,targetDate){
@@ -43,14 +52,14 @@ async function ensure(db){
  for(const action of ['UPDATE','DELETE'])await db.prepare(`CREATE TRIGGER IF NOT EXISTS trg_prior_detail_no_${action.toLowerCase()} BEFORE ${action} ON lab_prior_detail_evidence BEGIN SELECT RAISE(ABORT,'prior detail evidence is immutable'); END`).run();
 }
 async function candidates(db,c){
- return(await db.prepare("SELECT p.* FROM jra_past_performances p JOIN jra_runners r ON r.horse_name=p.horse_name AND r.race_key=? WHERE p.race_date<? AND r.age BETWEEN 2 AND 20 AND p.race_date>=MAX('2016-01-01',printf('%d-01-01',CAST(substr(?,1,4) AS INTEGER)-r.age+2)) AND p.finish_position BETWEEN 1 AND p.field_size AND p.surface=? AND ABS(p.distance-?)<=400 AND (p.last3f IS NULL OR p.corner_positions IS NULL OR p.corner_positions='') ORDER BY p.race_date DESC,p.id").bind(c.raceKey,c.date,c.date,c.surface,c.distance).all()).results||[];
+ return(await db.prepare("SELECT p.* "+eligible+" AND p.finish_position BETWEEN 1 AND p.field_size AND p.surface=? AND ABS(p.distance-?)<=400 AND (p.last3f IS NULL OR p.corner_positions IS NULL OR p.corner_positions='') ORDER BY p.race_date DESC,p.id").bind(JSON.stringify(c.runners),c.date,c.date,c.surface,c.distance).all()).results||[];
 }
 export function profilePositionCoverage(rows,c){
  return c.runners.map(r=>{const recent=rows.filter(p=>p.horse_name===r.horse_name).sort((a,b)=>String(b.race_date).localeCompare(a.race_date)||b.id-a.id).slice(0,8).map(p=>({date:p.race_date,venue:p.venue,surface:p.surface,distance:Number(p.distance),fieldSize:Number(p.field_size),finish:Number(p.finish_position),cornerPositions:p.corner_positions}));
-  const a=assessPositionHistory({available:true,recent},c);return{horseName:r.horse_name,horseNo:Number(r.horse_no),validPositionRows:a.validPositionRows,neededRows:Math.max(0,3-a.validPositionRows),basis:'stored-profile-latest-eight',predictionStatusNotInferred:true};});
+  const a=assessPositionHistory({available:true,recent},c);return{horseName:r.horse_name,horseNo:r.horse_no==null?null:Number(r.horse_no),validPositionRows:a.validPositionRows,neededRows:Math.max(0,3-a.validPositionRows),basis:'stored-profile-latest-eight',predictionStatusNotInferred:true};});
 }
 async function coverage(db,c){
- const rows=(await db.prepare("SELECT p.* FROM jra_past_performances p JOIN jra_runners r ON r.horse_name=p.horse_name AND r.race_key=? WHERE p.race_date<? AND r.age BETWEEN 2 AND 20 AND p.race_date>=MAX('2016-01-01',printf('%d-01-01',CAST(substr(?,1,4) AS INTEGER)-r.age+2)) ORDER BY p.race_date DESC,p.id DESC").bind(c.raceKey,c.date,c.date).all()).results||[];
+ const rows=(await db.prepare("SELECT p.* "+eligible+" ORDER BY p.race_date DESC,p.id DESC").bind(JSON.stringify(c.runners),c.date,c.date).all()).results||[];
  return profilePositionCoverage(rows,c);
 }
 export function selectPriorCandidate(rows,attempts,positionCoverage,stamp){
@@ -68,14 +77,14 @@ async function schedulerStatus(db,c){
  return{targetLastCheckedAt:target?.last_run_at?new Date(target.last_run_at).toISOString():null,lastRun:run?{startedAt:new Date(run.started_at).toISOString(),finishedAt:run.finished_at?new Date(run.finished_at).toISOString():null,status:run.status,error:run.error||null,result,raceMatches:result?.raceKey===c.raceKey}:null,manualRunsProveCron:false};
 }
 export async function priorDetailStatus(db,input,stamp=Date.now()){
- const c=await assessmentContext(db,input),pending=await candidates(db,c);let attempts=[],budget=null;
+ const c=await detailContext(db,input),pending=await candidates(db,c);let attempts=[],budget=null;
  try{attempts=(await db.prepare('SELECT * FROM lab_prior_detail_attempts').all()).results||[];budget=await db.prepare("SELECT next_batch_at,locked_until FROM lab_history_collection_budget WHERE name='jra-history'").first()}catch(e){if(!/no such table/.test(String(e)))throw e}
  const by=new Map(attempts.map(a=>[Number(a.past_id),a]));
  return{ok:true,race:{date:c.date,venue:c.venue,raceNo:c.raceNo,runnerCount:c.runners.length},positionCoverage:await coverage(db,c),scheduler:await schedulerStatus(db,c),remainingRows:pending.length,readyRows:pending.filter(p=>Number(by.get(p.id)?.retry_at||0)<=stamp).length,nextBatchAt:budget?new Date(Math.max(budget.next_batch_at,budget.locked_until)).toISOString():null,rows:pending.map(p=>({pastId:p.id,horseName:p.horse_name,date:p.race_date,venue:p.venue,raceName:p.race_name,missingLast3f:p.last3f==null,missingCorners:!p.corner_positions,status:by.get(p.id)?.status||'pending',error:by.get(p.id)?.error||null,retryAt:by.has(p.id)?new Date(by.get(p.id).retry_at).toISOString():null})),policy:PRIOR_DETAIL_POLICY};
 }
 export async function collectPriorDetails(db,input,deps={}){
  const now=deps.now||Date.now,fetcher=deps.fetcher||fetch,wait=deps.wait||(ms=>new Promise(r=>setTimeout(r,ms)));
- await ensure(db);const c=await assessmentContext(db,input),rows=await candidates(db,c),attempts=(await db.prepare('SELECT * FROM lab_prior_detail_attempts').all()).results||[];
+ await ensure(db);const c=await detailContext(db,input),rows=await candidates(db,c),attempts=(await db.prepare('SELECT * FROM lab_prior_detail_attempts').all()).results||[];
  await db.prepare('INSERT OR IGNORE INTO lab_prior_detail_targets(race_key,date,venue,race_no) VALUES(?,?,?,?)').bind(c.raceKey,c.date,c.venue,c.raceNo).run();
  const p=selectPriorCandidate(rows,attempts,await coverage(db,c),now());
  if(!p)return{ok:true,status:rows.length?'waiting':'complete',externalRequests:0,savedRows:0};
@@ -108,6 +117,14 @@ export async function collectPriorDetails(db,input,deps={}){
 }
 
 export async function scheduledPriorDetails(db,deps={}){
+ // Upcoming official pre-draw rosters use the same source lease and one-horse limit.
+ // An article or supplementary registration list cannot authorize this path.
+ for(const source of upcomingExpectedSources((deps.now||Date.now)(),deps.sources)){
+  const context=await expectedHistoryContext(db,source);
+  if(context.rosterBasis!=='confirmed-predraw')continue;
+  const status=await priorDetailStatus(db,source,(deps.now||Date.now)());
+  if(status.readyRows)return collectPriorDetails(db,source,deps);
+ }
  let targets;try{targets=(await db.prepare('SELECT * FROM lab_prior_detail_targets ORDER BY last_run_at LIMIT 8').all()).results||[]}catch(e){if(/no such table/.test(String(e)))return{ok:true,status:'idle',externalRequests:0};throw e}
  for(const t of targets){
   const input={date:t.date,venue:t.venue,raceNo:t.race_no},status=await priorDetailStatus(db,input,(deps.now||Date.now)());

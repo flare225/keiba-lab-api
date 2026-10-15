@@ -12,6 +12,18 @@ test('403 pauses shared source for one hour and avoids consecutive retries',asyn
 
 import {profilePositionCoverage,selectPriorCandidate,scheduledPriorDetails} from '../src/prior-result-details.js';
 import {runPipelineJob} from '../src/pipeline-runs-v3.40.0.js';
+test('official pre-draw collection needs no numbered card and excludes removed horses',async()=>{
+ const {sql,db}=await database(),input={date:'2026-10-18',venue:'京都',raceNo:11};
+ sql.exec("DELETE FROM jra_races;DELETE FROM jra_runners;CREATE TABLE lab_confirmed_predraw_rosters(race_key TEXT PRIMARY KEY,source_url TEXT,source_sha256 TEXT,runners_json TEXT,checked_at TEXT);");
+ sql.prepare('INSERT INTO lab_confirmed_predraw_rosters VALUES(?,?,?,?,?)').run('2026-10-18:京都:11','https://www.jra.go.jp/JRADB/accessD.html','hash',JSON.stringify([{horse_name:'HorseA',age:3,horse_no:null}]),'2026-10-15');
+ sql.exec("INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,surface,distance,finish_position,field_size,source_url,fetched_at) SELECT 'Removed',race_date,venue,race_name,surface,distance,finish_position,field_size,source_url,fetched_at FROM jra_past_performances");
+ const stamp=Date.parse('2026-10-15T12:00:00Z');
+ const status=await priorDetailStatus(db,input,stamp);assert.equal(status.rows.length,1);assert.equal(status.positionCoverage[0].horseNo,null);
+ let calls=0;const result=await scheduledPriorDetails(db,{now:()=>stamp,wait:async()=>{},fetcher:async url=>{calls++;return new Response(url.includes('accessU')?profileHtml:html,{headers:{'content-type':'text/html;charset=utf-8'}})}});
+ assert.equal(result.savedRows,1);assert.equal(calls,2);assert.equal(sql.prepare("SELECT last3f FROM jra_past_performances WHERE horse_name='HorseA'").get().last3f,33.6);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_runners').get().n,0);assert.equal(sql.prepare("SELECT last3f FROM jra_past_performances WHERE horse_name='Removed'").get().last3f,null);
+ sql.exec('DELETE FROM lab_confirmed_predraw_rosters');await assert.rejects(()=>priorDetailStatus(db,input,stamp),/公式の枠順前名簿/);sql.close();
+});
 test('coverage priority serves a horse missing evidence before a newer run of an already covered horse',()=>{
  const rows=[{id:1,horse_name:'A',race_date:'2026-09-01'},{id:2,horse_name:'B',race_date:'2026-08-01'}];
  assert.equal(selectPriorCandidate(rows,[],[{horseName:'A',validPositionRows:3},{horseName:'B',validPositionRows:0}],100).horse_name,'B');

@@ -31,18 +31,23 @@ export async function expectedHistoryStatus(db,now=Date.now(),sources=EXPECTED_S
  return {races,rosterCoverage:'対象の週末レースを表示。全馬分の正式出馬表を保存したレースは正式出走馬、それまでは保存済み想定馬を集計します。全レースの取得完了を示すものではありません。',guardrails:{readOnly:true,externalRequests:0,officialCardsNeverCreated:true,horseNumbersNeverInferred:true,sourcePriority:'JRA',sameGlobalSourceBudget:true}};
 }
 export async function collectUpcomingExpectedHistory(db,deps={}){
- const now=deps.now||Date.now;
+ const now=deps.now||Date.now,discoverySources=[];
+ // Use verified cached profiles across all target races before requesting a
+ // discovery page. A failing discovery must not repeatedly starve known horses.
  for(const source of upcomingExpectedSources(now(),deps.sources||EXPECTED_SOURCES)){
   const formal=await rows(db,'SELECT r.race_key FROM jra_races r WHERE r.race_date=? AND r.venue=? AND r.race_no=? AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key)',[source.date,source.venue,source.raceNo]);
   if(formal.length){
    if(source.priority===0){const r=await collectHistoryBatch(db,{date:source.date,venue:source.venue,raceNo:source.raceNo,historyLimit:10,batchSize:1},deps);if(r.attempted||r.status==='cooldown')return {...r,stage:'main-race-official-history'};}
    continue;
   }
-  const confirmed=await readConfirmedPredraw(db,source);
-  if(!confirmed){const discovery=await discoverExpectedProfiles(db,source,deps);if(discovery.externalRequests||discovery.status==='cooldown')return discovery;}
   const context=await expectedHistoryContext(db,source);
+  if(context.rosterBasis!=='confirmed-predraw')discoverySources.push(source);
   const r=await collectHistoryBatch(db,{historyLimit:10,batchSize:1},{...deps,context});
   if(r.attempted||r.status==='cooldown')return {...r,stage:'expected-runner-prior-history',snapshotId:source.snapshotId,authoritativeForCard:false};
+ }
+ for(const source of discoverySources){
+  const discovery=await discoverExpectedProfiles(db,source,deps);
+  if(discovery.externalRequests||discovery.status==='cooldown')return discovery;
  }
  return {ok:true,status:'idle',externalRequests:0};
 }

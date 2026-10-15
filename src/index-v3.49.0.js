@@ -1,3 +1,4 @@
+import {COLLECTION_READ_POLICY,shouldRunScheduled} from './collection-read-policy.js';
 import {runPipelineJob} from './pipeline-runs-v3.40.0.js';
 import {priorDetailStatus,collectPriorDetails,scheduledPriorDetails} from './prior-result-details.js';
 import {collectLockedMarkResults,readLockedMarkResults} from './locked-mark-result-evidence.js';
@@ -5,10 +6,11 @@ import {userMarkLockEndpoint,readUserMarkLock} from './user-mark-lock.js';
 import app from './index-v3.48.2.js';
 import {markRecordProvenance} from './mark-record-provenance.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
-export const VERSION='3.49.17';
+export const VERSION='3.49.18';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/collection-read-policy'&&request.method==='GET')return Response.json({ok:true,version:VERSION,policy:COLLECTION_READ_POLICY},{headers:{'cache-control':'no-store','access-control-allow-origin':'*'}});
   if(u.pathname==='/v1/lab/prior-result-details'){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*','access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'content-type'};
    if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
@@ -43,7 +45,7 @@ export default {
   }
   const response=await app.fetch(request,env,ctx);
   let data;try{data=await response.clone().json();}catch{return response;}
-  if(data&&typeof data==='object')data.version=VERSION;
+  if(data&&typeof data==='object'){data.version=VERSION;if(u.pathname==='/v1/lab/work-progress')data.readPolicy=COLLECTION_READ_POLICY;}
   if(response.ok&&request.method==='GET'&&u.pathname==='/v1/lab/user-marks'&&Array.isArray(data?.latest)){
    for(const revision of data.latest){
     try{
@@ -58,6 +60,7 @@ export default {
   return new Response(JSON.stringify(data),{status:response.status,headers:response.headers});
  },
  async scheduled(event,env,ctx){
+  if(!shouldRunScheduled(event))return;
   if(event.cron==='*/3 * * * *'&&Math.floor(Number(event.scheduledTime)/60000)%12===0){
    try{await runPipelineJob(env.DB,'prior-details','scheduled',()=>scheduledPriorDetails(env.DB),{scheduledTime:event.scheduledTime});}catch{ /* Failure is recorded; existing collection jobs must still run. */ }
   }

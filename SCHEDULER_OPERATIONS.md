@@ -119,3 +119,15 @@ sources on the reference page. Career totals, pedigree, opinions, running style,
 pace, aggregate historical trends and unsupported facts remain unverified.
 The normal assessment adapter continues to read canonical past-performance rows
 under its existing limits; article claims do not add a duplicate score feature.
+
+## Exact JRA race-display aliases (v3.49.24)
+
+Stored JRA profile rows use `チューリップ` and `スイートピー` for the
+corresponding named stakes. Reconciliation v2 recognizes only these two exact
+abbreviations; similar names/suffixes, wrong years, courses, sources and duplicate
+candidates still remain pending. No past-performance rows are renamed.
+
+The policy change generates a new fingerprint even if source data is unchanged.
+Compatible v1 evidence stays readable until the next normal cron writes v2,
+and all old snapshots remain immutable. Claim definitions and values are the
+same between versions; this is not a new score rule or a manual claim override.

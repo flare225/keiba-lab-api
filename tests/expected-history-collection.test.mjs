@@ -46,3 +46,16 @@ test('upcoming profile is fetched first even in the former training slot; shared
  sql.exec("DELETE FROM lab_history_collection_receipts");
  const second=await scheduledWeekendHistory(db,deps);assert.equal(second.status,'cooldown');assert.equal(trainingCalls,0);assert.equal(requests,1);sql.close();
 });
+
+test('later race cached profile is collected before earlier race discovery, without bypassing shared cooldown',async()=>{
+ const {db,sql}=await fixture();const earlier={...source,snapshotId:'earlier',date:'2026-10-09',names:['UnknownHorse'],officialHorsePage:'https://www.jra.go.jp/keiba/race/095/horse.html'},later={...source,snapshotId:'later',officialHorsePage:'https://www.jra.go.jp/keiba/g1/shuka/horse.html'};let requests=0;
+ const deps={sources:[earlier,later],now:()=>stamp,wait:async()=>{},fetcher:async url=>{requests++;assert.equal(url,'https://www.jra.go.jp/JRADB/accessU.html','cached history must precede both discovery pages');return new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}});}};
+ const r=await collectUpcomingExpectedHistory(db,deps);assert.equal(r.snapshotId,'later');assert.equal(r.addedRows,1);assert.equal(requests,1);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_past_performances').get().n,1);
+ // Pending known history cannot use the global pause as a reason to discover elsewhere.
+ sql.exec('DELETE FROM lab_history_collection_receipts');const next=await collectUpcomingExpectedHistory(db,deps);assert.equal(next.status,'cooldown');assert.equal(requests,1);sql.close();
+});
+test('discovery still runs when no target race has an actionable cached profile',async()=>{
+ const {db,sql}=await fixture();sql.exec('DELETE FROM lab_history_profile_links');const s={...MAIN_EXPECTED_SOURCE,names:['カムニャック'],ages:{'カムニャック':4}};let requests=0;
+ const r=await collectUpcomingExpectedHistory(db,{sources:[s],now:()=>stamp,fetcher:async url=>{requests++;assert.equal(url,s.officialHorsePage);return new Response('<h1>2026年10月11日 アイルランドトロフィー</h1><h3><a href="'+profile+'">カムニャック</a></h3><p>牝4歳 調教師：調教師（栗東） 父：種牡馬 母：母馬 母の父：母父</p>',{headers:{'content-type':'text/html; charset=utf-8'}});}});
+ assert.equal(r.status,'discovered');assert.equal(requests,1);assert.equal((await expectedHistoryContext(db,s)).runners[0].profile_url,profile);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_past_performances').get().n,0);sql.close();
+});

@@ -7,7 +7,7 @@ import {userMarkLockEndpoint,readUserMarkLock} from './user-mark-lock.js';
 import app from './index-v3.48.2.js';
 import {markRecordProvenance} from './mark-record-provenance.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
-export const VERSION='3.49.20';
+export const VERSION='3.49.21';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);

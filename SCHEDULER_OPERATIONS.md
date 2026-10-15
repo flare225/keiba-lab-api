@@ -68,3 +68,12 @@ history, replacing alternate past-training-first turns. Ordinary collection
 still runs when upcoming targets have no actionable work, including non-target
 races. A blocked/cooldown upcoming request never falls through to a second
 source request. This does not invent missing profile links or final cards.
+
+## Cached profiles before discovery (v3.49.21)
+
+The upcoming-race collector now checks verified cached profile work across all
+upcoming target races before requesting a profile-discovery page. Previously an
+earlier race's discovery refresh could fail and impose the shared pause before
+a later race's already-known horses were considered. Discovery remains enabled
+when cached work is exhausted. Missing links are never guessed, formal cards
+remain separate, and an active global cooldown is never bypassed.

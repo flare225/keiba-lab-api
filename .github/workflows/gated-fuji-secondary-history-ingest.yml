@@ -1,0 +1,117 @@
+name: Gated Fuji secondary history ingest
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/gated-fuji-secondary-history-ingest.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gated-fuji-secondary-history-ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read shared acquisition gates first
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://keiba-lab-api.sekai-no-bancyou.workers.dev'
+          curl -fsS --max-time 20 -H 'cache-control: no-cache' "$base/v1/lab/expected-history-status" -o /tmp/expected-history-status.json
+          curl -fsS --max-time 20 -H 'cache-control: no-cache' "$base/v1/lab/pipeline-status" -o /tmp/pipeline-status.json
+          jq -e '.ok == true' /tmp/expected-history-status.json >/dev/null
+          jq -e '.ok == true' /tmp/pipeline-status.json >/dev/null
+          gates="$(jq -r '[.. | objects | .nextBatchAt? | strings] | unique | .[]' /tmp/expected-history-status.json /tmp/pipeline-status.json)"
+          if [[ -z "$gates" ]]; then
+            curl -fsS --max-time 20 -H 'cache-control: no-cache' --get \
+              --data-urlencode 'date=2026-10-11' \
+              --data-urlencode 'venue=東京' \
+              --data-urlencode 'race_no=11' \
+              "$base/v1/lab/prior-result-details" -o /tmp/shared-prior-result-gate.json
+            jq -e '.ok == true' /tmp/shared-prior-result-gate.json >/dev/null
+            gates="$(jq -r '[.. | objects | .nextBatchAt? | strings] | unique | .[]' /tmp/shared-prior-result-gate.json)"
+          fi
+          if [[ -z "$gates" ]]; then
+            echo 'No shared nextBatchAt was readable; fail closed without any write.'
+            echo 'allow=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          now_epoch="$(date -u +%s)"
+          latest=''
+          latest_epoch=0
+          while IFS= read -r gate; do
+            gate_epoch="$(date -u -d "$gate" +%s)"
+            if (( gate_epoch > latest_epoch )); then latest="$gate"; latest_epoch="$gate_epoch"; fi
+          done <<< "$gates"
+          echo "Observed shared nextBatchAt: $latest"
+          if (( latest_epoch > now_epoch )); then
+            echo "Shared gate is still active; no write sent."
+            echo 'allow=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo 'allow=true' >> "$GITHUB_OUTPUT"
+
+      - name: Confirm deployed API version
+        if: steps.gate.outputs.allow == 'true'
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 20 -H 'cache-control: no-cache' \
+            'https://keiba-lab-api.sekai-no-bancyou.workers.dev/v1/lab/deploy-check' -o /tmp/deploy-check.json
+          jq -e '.ok == true and .version == "3.49.29"' /tmp/deploy-check.json >/dev/null
+
+      - name: Persist the dated Fuji secondary-source snapshot once
+        if: steps.gate.outputs.allow == 'true'
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 30 -X POST \
+            -H 'content-type: application/json' \
+            --data '{"date":"2026-10-17","venue":"東京","raceNo":11,"confirm":"INGEST"}' \
+            'https://keiba-lab-api.sekai-no-bancyou.workers.dev/v1/lab/expected-history-ingest' \
+            -o /tmp/ingest-result.json
+          jq -e '
+            .ok == true and
+            .snapshotId == "netkeiba-fuji-20261015-v1" and
+            .historyRows == 4 and
+            .officialTablesModified == false and
+            .scoreMutation == false and
+            .markMutation == false and
+            .sourceUrl == "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040611" and
+            .observedAt == "2026-10-16"
+          ' /tmp/ingest-result.json >/dev/null
+          echo 'One idempotent sidecar ingest accepted: 4 dated secondary-source rows.'
+
+      - name: Read the stored rows back through the read-only preview
+        if: steps.gate.outputs.allow == 'true'
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 30 -X POST \
+            -H 'content-type: application/json' \
+            --data '{"date":"2026-10-17","venue":"東京","raceNo":11,"phase":"initial","sourceSnapshotId":"netkeiba-fuji-20261015-v1","marks":[{"horseName":"シュガークン","mark":"注"}]}' \
+            'https://keiba-lab-api.sekai-no-bancyou.workers.dev/v1/lab/expected-runner-preview' \
+            -o /tmp/preview-readback.json
+          jq -e '
+            .ok == true and
+            .phase == "initial" and
+            .audit.marked[0].horseName == "シュガークン" and
+            .audit.marked[0].mark == "注" and
+            .audit.marked[0].laboRank == null and
+            .audit.marked[0].laboScore == null and
+            .audit.guardrails.readOnly == true and
+            .audit.guardrails.markMutation == false and
+            .audit.guardrails.scoreMutation == false and
+            (.audit.historySidecar | length == 1) and
+            (.audit.historySidecar[0].supplementalRecent | length == 4) and
+            ([.audit.historySidecar[0].supplementalRecent[] |
+              select(.dbSource == "netkeiba-dated-history" and
+                     .sourceUrl == "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040611" and
+                     .date < "2026-10-17")] | length == 4)
+          ' /tmp/preview-readback.json >/dev/null
+          echo 'DB readback verified: 4 netkeiba rows; no JRA table, score, or user-mark mutation.'

@@ -31,18 +31,27 @@ export function rankAssessment(rows){
  for(const row of rows){row.referenceRank=row.assessment.available?1+scored.filter(x=>x.assessment.evidenceScore>row.assessment.evidenceScore).length:null;row.tiedCount=row.assessment.available?scored.filter(x=>x.assessment.evidenceScore===row.assessment.evidenceScore).length:0}
  return rows;
 }
+export function rankSupplementalAssessment(rows){
+ const scored=rows.filter(r=>r.supplementalAssessment?.available).sort((a,b)=>b.supplementalAssessment.evidenceScore-a.supplementalAssessment.evidenceScore);
+ for(const row of rows){row.supplementalRank=row.supplementalAssessment?.available?1+scored.filter(x=>x.supplementalAssessment.evidenceScore>row.supplementalAssessment.evidenceScore).length:null;row.supplementalTiedCount=row.supplementalAssessment?.available?scored.filter(x=>x.supplementalAssessment.evidenceScore===row.supplementalAssessment.evidenceScore).length:0}
+ return rows;
+}
 export async function expectedAssessment(db,input){
  const {source,marks}=validatePreview(input);const track=input.track||null;
  if(track&&!CONDITIONS.includes(track))throw Error('想定馬場は良・稍重・重・不良から指定してください。');
  // Read each runner once. Human marks are never a model feature and do not select the ranking pool.
  const full=await expectedRunnerPreview(db,{...input,marks:source.names.map(horseName=>({horseName,mark:'注'}))});
  const histories=new Map(full.audit.historySidecar.map(h=>[h.horseName,h]));
- const all=rankAssessment(source.names.map(horseName=>({horseName,assessment:assessExpectedHistory(histories.get(horseName),source,track)})));
+ const all=rankSupplementalAssessment(rankAssessment(source.names.map(horseName=>{
+  const history=histories.get(horseName),supplemental=history?.supplementalRecent||[];
+  return{horseName,assessment:assessExpectedHistory(history,source,track),supplementalAssessment:assessExpectedHistory({available:supplemental.length>0,recent:supplemental,warnings:[]},source,track)};
+ })));
  const byName=new Map(all.map(x=>[x.horseName,x]));
  return{...full,audit:{...full.audit,marked:marks.map(m=>({...m,laboRank:null,laboScore:null})),historySidecar:marks.map(m=>histories.get(m.horseName))},
   assessment:{modelVersion:'existing-safe-core-1.5-expected-adapter-v1',stage:'provisional-evidence-assessment',trackAssumption:track,
    trackBasis:track?'user-scenario-not-confirmed-race-day-track':'unknown',runnerPool:all.length,
    scoredRunners:all.filter(r=>r.assessment.available).length,marked:marks.map(m=>({...byName.get(m.horseName),humanMark:m.mark})),allRunners:all,raceShape:buildRaceShapeEvidence(all),
+   supplementalComparison:{provider:'netkeiba',separateFromPrimaryHistory:true,notJraVerified:true,independentRanking:true},
    guardrails:{fullExpectedRunnerPool:true,humanMarksUsedInScore:false,noExternalFetch:true,lockedPredictionsModified:false,noForcedTieBreak:true,accuracyImprovementValidated:false,automaticMarksAssigned:false,targetResultUsed:false}}
  };
 }

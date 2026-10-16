@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {Script} from 'node:vm';
 import {assessExpectedHistory,expectedAssessment,rankAssessment} from '../src/expected-assessment-v3.31.0.js';
-import {EXPECTED_SOURCES} from '../src/expected-runner-preview-v3.30.0.js';
+import {EXPECTED_SOURCES,FUJI_EXPECTED_SOURCE,historyForExpected} from '../src/expected-runner-preview-v3.30.0.js';
 import {ingestExpectedHistory} from '../src/expected-history-snapshot-v3.30.0.js';
 import {expectedPreviewPage} from '../src/expected-preview-page-v3.31.0.js';
 const race=EXPECTED_SOURCES[0];
@@ -39,7 +39,21 @@ test('real SQLite snapshot roundtrip uses full pool and marks never change the s
  assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_expected_history_snapshots').get().n,18);sql.close();
 });
 test('new page exposes scenario and provisional assessment, inline script compiles',()=>{
- const html=expectedPreviewPage();assert.ok(html.includes('馬場の想定'));assert.ok(html.includes('/v1/lab/race-history-assessment'));assert.ok(html.includes('的中確率ではありません'));for(const [,s] of html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g))new Script(s);
+ const html=expectedPreviewPage();assert.ok(html.includes('馬場の想定'));assert.ok(html.includes('/v1/lab/race-history-assessment'));assert.ok(html.includes('的中確率ではありません'));assert.ok(html.includes('二次ソース評価（netkeiba・別集計）'));assert.ok(html.includes('LABO主評価と別集計'));for(const [,s] of html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g))new Script(s);
+});
+
+test('secondary history stays separate from JRA profile values and gets its own non-formal rank',async()=>{
+ const {sql,db}=database();
+ sql.exec("CREATE TABLE lab_expected_history_snapshots(snapshot_id TEXT,horse_name TEXT,race_date TEXT,venue TEXT,payload_json TEXT,source_url TEXT,ingested_at TEXT);CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,race_name TEXT,source_url TEXT,runner_count INTEGER,surface TEXT,distance INTEGER);CREATE TABLE jra_runners(race_key TEXT,horse_no INTEGER,horse_name TEXT,age INTEGER);CREATE TABLE lab_race_outcomes(race_key TEXT,horse_no INTEGER,finish_position INTEGER);CREATE TABLE lab_race_result_details(race_key TEXT,horse_no INTEGER,finish_position INTEGER,finish_status TEXT,time_text TEXT,time_seconds REAL,corner_positions TEXT,last3f REAL,source_url TEXT);INSERT INTO jra_past_performances VALUES('ファンダム','2026-09-05','中山','京成杯AH','芝',1600,4,16,'1:32.2',NULL,'10-10-11','良','https://www.jra.go.jp/JRADB/accessU.html');");
+ const supplemental={horse_name:'ファンダム',race_date:'2026-09-05',venue:'中山',race_name:'京成杯AH',surface:'芝',distance:1600,finish_position:4,field_size:16,time_text:'1:32.2',last3f:33.5,corner_positions:'10-10-11',track_condition:'良',source_url:FUJI_EXPECTED_SOURCE.sourceUrl};
+ sql.prepare('INSERT INTO lab_expected_history_snapshots VALUES(?,?,?,?,?,?,?)').run(FUJI_EXPECTED_SOURCE.snapshotId,supplemental.horse_name,supplemental.race_date,supplemental.venue,JSON.stringify(supplemental),supplemental.source_url,'2026-10-16T07:00:00.000Z');
+ const history=await historyForExpected(db,FUJI_EXPECTED_SOURCE,'ファンダム');
+ assert.equal(history.recent[0].dbSource,'stored-profile-history');assert.equal(history.recent[0].last3f,null);assert.equal(history.summary.last3fRecorded,0);
+ assert.equal(history.supplementalRecent[0].dbSource,'netkeiba-dated-history');assert.equal(history.supplementalRecent[0].last3f,33.5);assert.equal(history.supplementalSummary.last3fRecorded,1);
+ assert.equal(history.recent[0].sourceEvidence.length,2);assert.equal(history.recent[0].supplementalSourceUrl,FUJI_EXPECTED_SOURCE.sourceUrl);
+ const assessment=await expectedAssessment(db,{date:FUJI_EXPECTED_SOURCE.date,venue:FUJI_EXPECTED_SOURCE.venue,raceNo:FUJI_EXPECTED_SOURCE.raceNo,marks:[{horseName:'ファンダム',mark:'◎'}]});
+ const runner=assessment.assessment.allRunners.find(r=>r.horseName==='ファンダム');assert.equal(assessment.assessment.runnerPool,14);assert.notEqual(runner.supplementalAssessment.evidenceScore,null);assert.equal(runner.supplementalRank,1);assert.equal(assessment.assessment.supplementalComparison.separateFromPrimaryHistory,true);assert.equal(assessment.audit.historySidecar[0].recent[0].last3f,null);assert.equal(assessment.audit.historySidecar[0].supplementalRecent[0].last3f,33.5);
+ sql.close();
 });
 
 import {raceHistoryAssessment,targetInput} from '../src/race-history-assessment-v3.31.0.js';

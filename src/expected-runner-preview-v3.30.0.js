@@ -90,17 +90,35 @@ export async function historyForExpected(db,source,horseName,limit=8){
  const valid=r=>typeof r.race_date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(r.race_date)&&r.race_date>=fromDate&&r.race_date<beforeDate;
  const byRace=new Map();let conflict=false;
  for(const raw of [...expected.map(r=>({...r,dbSource:'netkeiba-dated-history'})),...profiles.map(r=>({...r,dbSource:'stored-profile-history'})),...rich.map(r=>({...r,dbSource:'official-result'}))].filter(valid)){
-  const row={date:raw.race_date,venue:raw.venue||null,raceName:raw.race_name||null,surface:raw.surface||null,distance:number(raw.distance),fieldSize:number(raw.field_size),finish:number(raw.finish_position),finishStatus:raw.finish_status||null,time:raw.time_text||null,timeSeconds:number(raw.time_seconds)??seconds(raw.time_text),last3f:number(raw.last3f),cornerPositions:raw.corner_positions||null,trackCondition:raw.track_condition||null,sourceUrl:raw.source_url||null,detailSourceUrl:raw.detail_source_url||null,supplementalSourceUrl:raw.dbSource==='netkeiba-dated-history'?raw.source_url||null:null,dbSource:raw.dbSource};
+  const row={date:raw.race_date,venue:raw.venue||null,raceName:raw.race_name||null,surface:raw.surface||null,distance:number(raw.distance),fieldSize:number(raw.field_size),finish:number(raw.finish_position),finishStatus:raw.finish_status||null,time:raw.time_text||null,timeSeconds:number(raw.time_seconds)??seconds(raw.time_text),last3f:number(raw.last3f),cornerPositions:raw.corner_positions||null,trackCondition:raw.track_condition||null,sourceUrl:raw.source_url||null,detailSourceUrl:raw.detail_source_url||null,dbSource:raw.dbSource};
   const key=row.date+'|'+row.venue;
-  const old=byRace.get(key);
-  if(old){
-   for(const field of ['finish','surface','distance'])if(old[field]!=null&&row[field]!=null&&old[field]!==row[field])conflict=true;
-   for(const [field,value] of Object.entries(row))if(value!=null)old[field]=value;
-   old.dbSource=[...new Set([old.dbSource,row.dbSource])].join('+');
-  }else byRace.set(key,row);
+  const rows=byRace.get(key)||[];rows.push(row);byRace.set(key,rows);
  }
- const recent=[...byRace.values()].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,cap);
+ // Keep each provider's values intact. The primary row chooses the strongest
+ // available source; netkeiba remains a separate supplemental observation.
+ // It must never fill null JRA fields or overwrite a JRA value.
+ const rank={'official-result':3,'stored-profile-history':2,'netkeiba-dated-history':1};
+ const sourceFields=['surface','distance','finish','fieldSize','time','last3f','cornerPositions','trackCondition'];
+ const groups=[...byRace.values()].map(rows=>{
+  rows.sort((a,b)=>(rank[b.dbSource]||0)-(rank[a.dbSource]||0));
+  const distinct=new Map();
+  for(const row of rows){
+   const same=distinct.get(row.dbSource);
+   if(same&&sourceFields.some(field=>same[field]!=null&&row[field]!=null&&same[field]!==row[field]))conflict=true;
+   if(!same)distinct.set(row.dbSource,row);
+  }
+  const primary=rows[0];
+  const sourceEvidence=rows.map(row=>({provider:row.dbSource,sourceUrl:row.sourceUrl,detailSourceUrl:row.detailSourceUrl,values:Object.fromEntries(sourceFields.map(field=>[field,row[field]]))}));
+  const crossSourceConflict=rows.slice(1).some(row=>sourceFields.some(field=>primary[field]!=null&&row[field]!=null&&primary[field]!==row[field]));
+  if(rows.slice(1).some(row=>['finish','surface','distance','fieldSize'].some(field=>primary[field]!=null&&row[field]!=null&&primary[field]!==row[field])))conflict=true;
+  return{primary,supplemental:rows.filter(row=>row.dbSource==='netkeiba-dated-history'),sourceEvidence,crossSourceConflict};
+ });
+ const recent=groups.map(group=>({...group.primary,sourceEvidence:group.sourceEvidence,sourceConflict:group.crossSourceConflict,
+  supplementalSourceUrl:group.supplemental[0]?.sourceUrl||null})).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,cap);
+ const supplementalRecent=groups.flatMap(group=>group.primary.dbSource==='netkeiba-dated-history'?[]:group.supplemental.map(row=>({...row,sourceEvidence:[{provider:row.dbSource,sourceUrl:row.sourceUrl,values:Object.fromEntries(sourceFields.map(field=>[field,row[field]]))}]}))).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,cap);
  if(conflict)warnings.push('conflicting-history-identity');
+ if(recent.some(row=>row.sourceConflict))warnings.push('source-value-conflict');
+ if(supplementalRecent.length)warnings.push('supplemental-source-values');
  const finished=recent.filter(r=>Number.isInteger(r.finish)&&r.finish>0);
  const last3fs=recent.map(r=>r.last3f).filter(v=>v!=null&&v>0);
  const sameCondition=finished.filter(r=>r.surface===source.surface&&r.distance===source.distance);
@@ -120,7 +138,8 @@ export async function historyForExpected(db,source,horseName,limit=8){
  if(last3fs.length<recent.length)warnings.push('last3f-incomplete');
  return{horseName,beforeDate,fromDate,antiLeakageRule:'from_date <= race_date < target_date',
   identityBasis:'exact-horse-name + age-consistent-birth-cohort-window',
-  available:!conflict&&recent.length>0,summary,recent:conflict?[]:recent,warnings};
+  available:!conflict&&recent.length>0,summary,recent:conflict?[]:recent,
+  supplementalRecent:conflict?[]:supplementalRecent,supplementalSummary:{source:'netkeiba-dated-history',storedStarts:supplementalRecent.length,last3fRecorded:supplementalRecent.filter(row=>row.last3f!=null&&row.last3f>0).length},warnings};
 }
 export async function expectedRunnerPreview(db,input={}){
  const {source,marks}=validatePreview(input);

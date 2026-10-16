@@ -18,6 +18,20 @@ test('official roster discovery follows witnessed exact-date links one page per 
  const result=await discoverExpectedCard(db,s,{...deps,fetcher:async(url,opts)=>{calls++;assert.equal(url,card);assert.equal(opts.method,'GET');return new Response(roster,{headers:{'content-type':'text/html;charset=utf-8'}})}});
  assert.equal(result.status,'confirmed-predraw-saved');assert.equal(result.confirmedRunners,1);assert.equal(calls,2);assert.equal((await expectedHistoryContext(db,s)).runners[0].horse_no,null);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,1);sql.close();
 });
+test('published drawn JRA card is stored as the official race card instead of being rejected as pre-draw',async()=>{
+ const sql=new DatabaseSync(':memory:');
+ sql.exec('CREATE TABLE jra_races (race_key TEXT PRIMARY KEY,race_date TEXT NOT NULL,venue TEXT NOT NULL,race_no INTEGER NOT NULL,race_name TEXT,surface TEXT,distance INTEGER,source_url TEXT,runner_count INTEGER NOT NULL DEFAULT 0,fetched_at TEXT NOT NULL,UNIQUE(race_date,venue,race_no));CREATE TABLE jra_runners (race_key TEXT NOT NULL,horse_no INTEGER NOT NULL,frame_no INTEGER,horse_name TEXT NOT NULL,sex TEXT,age INTEGER,assigned_weight REAL,jockey TEXT,trainer TEXT,fetched_at TEXT NOT NULL,PRIMARY KEY(race_key,horse_no));');
+ const db={prepare(q){const wrap=(args=[])=>({bind(...a){return wrap(a)},async first(){return sql.prepare(q).get(...args)||null},async all(){return{results:sql.prepare(q).all(...args)}},async run(){const r=sql.prepare(q).run(...args);return{meta:{changes:Number(r.changes)}}}});return wrap()},async batch(ss){const out=[];for(const s of ss)out.push(await s.run());return out;}};
+ await ensureCollectionTables(db);
+ const s={...source,officialRosterDiscoveryUrl:'https://www.jra.go.jp/keiba/race/095.html'},card='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604031120261010/9E';
+ let time=stamp,calls=0;
+ const deps={now:()=>time,fetcher:async url=>{calls++;if(url===s.officialRosterDiscoveryUrl)return new Response('<a href="'+card+'">出馬表</a>',{headers:{'content-type':'text/html;charset=utf-8'}});assert.equal(url,card);return new Response('<html>drawn official card</html>',{headers:{'content-type':'text/html;charset=utf-8'}})},inspectSourceCard:()=>({allHorseNumbersObserved:true,allFramesObserved:true,sourceRowCount:1,declaredCount:1,countBasis:'explicit-label',frames:new Map([[1,1]])}),parseRace:(_page,date,venue,raceNo)=>({raceDate:date,venue,raceNo,raceName:'試験GII',surface:'芝',distance:1600,sourceUrl:card,runnerCount:1,runners:[{horseNo:1,frameNo:1,name:'HorseA',sex:'牡',age:2,assignedWeight:56,jockey:'騎手',trainer:'調教師'}]})};
+ assert.equal((await discoverExpectedCard(db,s,deps)).status,'official-card-link-found');time+=61000;
+ const result=await discoverExpectedCard(db,s,deps);assert.equal(result.status,'official-card-saved');assert.equal(result.formalCardSaved,true);assert.equal(result.runnerCount,1);assert.equal(result.externalRequests,1);assert.equal(calls,2);
+ assert.equal(JSON.stringify(sql.prepare('SELECT race_key,horse_no,frame_no,horse_name FROM jra_runners').all()),JSON.stringify([{race_key:'2026-10-10:東京:11',horse_no:1,frame_no:1,horse_name:'HorseA'}]));
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_card_source_evidence WHERE race_key=?').get('2026-10-10:東京:11').n,1);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_history_collection_targets WHERE race_key=?').get('2026-10-10:東京:11').n,1);sql.close();
+});
 test('official roster discovery 403 stops the shared source for an hour',async()=>{
  const {db,sql}=await fixture(),s={...source,officialRosterDiscoveryUrl:'https://www.jra.go.jp/keiba/race/095.html'};let calls=0;
  const r=await discoverExpectedCard(db,s,{now:()=>stamp,fetcher:async()=>{calls++;return new Response('',{status:403})}});assert.equal(r.ok,false);

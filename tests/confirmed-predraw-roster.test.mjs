@@ -13,5 +13,10 @@ test('history-only roster may retain unpublished connections as null, but never 
  assert.throws(()=>parseConfirmedPredraw(missing,url,target));
  for(const bad of [missing.replace('牡2/黒鹿','未定'),missing.replace('class="num"></td>','class="num">1</td>'),missing.replace('未定','100')])assert.throws(()=>parseConfirmedPredraw(bad,url,target,options));
 });
+test('official JRA sex-age accepts the published せん spelling and preserves its source value',()=>{
+ const gelding=html.replace('牡2/黒鹿','せん4/鹿').replace('出走馬','セン馬');
+ const r=parseConfirmedPredraw(gelding,url,target,{allowUnassignedConnections:true}).runners[0];
+ assert.equal(r.horse_name,'セン馬');assert.equal(r.sex,'せん');assert.equal(r.age,4);
+});
 test('rejects wrong source identity, partial numbering, duplicate rows and incomplete fields',()=>{for(const h of [html.replace('2026年10月10日','2026年10月11日'),html.replace('alt="11レース"','alt="12レース"'),html.replace('class="num"></td>','class="num">1</td>'),html.replace(row,row+row),html.replace('56.0','未定'),html.replace('今の騎手','')])assert.throws(()=>parseConfirmedPredraw(h,url,target));assert.throws(()=>parseConfirmedPredraw(html,url.replace('www.jra.go.jp','example.com'),target));});
 test('isolated saved confirmed roster supplies history context and excludes withdrawn expected horses',async()=>{let saved;const queries=[];const db={prepare(q){queries.push(q);return{bind(...args){return{async run(){saved={race_key:args[0],source_url:args[1],source_sha256:args[2],runners_json:args[3],checked_at:args[4]};},async first(){return saved;}}},async run(){}}}};await saveConfirmedPredraw(db,html,url,target);assert.equal((await readConfirmedPredraw(db,target)).runners.length,1);const c=await expectedHistoryContext(db,target);assert.equal(c.rosterBasis,'confirmed-predraw');assert.equal(c.runners[0].horse_name,'出走馬');assert.equal(c.race.race_key,'expected:test');assert.ok(queries.every(q=>!q.includes('jra_runners')&&!q.includes('jra_races')));});

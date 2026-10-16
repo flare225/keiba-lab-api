@@ -1,0 +1,69 @@
+name: Fuji secondary history DB readback
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/fuji-secondary-history-readback.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Read shared status first
+        run: |
+          set -euo pipefail
+          base='https://keiba-lab-api.sekai-no-bancyou.workers.dev'
+          curl -fsS --max-time 20 -H 'cache-control: no-cache' "$base/v1/lab/expected-history-status" -o /tmp/history-status.json
+          curl -fsS --max-time 20 -H 'cache-control: no-cache' "$base/v1/lab/pipeline-status" -o /tmp/pipeline-status.json
+          jq -e '.ok == true' /tmp/history-status.json >/dev/null
+          jq -e '.ok == true' /tmp/pipeline-status.json >/dev/null
+          gates="$(jq -r '[.. | objects | .nextBatchAt? | strings] | unique | .[]' /tmp/history-status.json /tmp/pipeline-status.json)"
+          if [[ -z "$gates" ]]; then
+            curl -fsS --max-time 20 -H 'cache-control: no-cache' --get \
+              --data-urlencode 'date=2026-10-11' --data-urlencode 'venue=東京' --data-urlencode 'race_no=11' \
+              "$base/v1/lab/prior-result-details" -o /tmp/prior-gate.json
+            jq -e '.ok == true' /tmp/prior-gate.json >/dev/null
+            gates="$(jq -r '[.. | objects | .nextBatchAt? | strings] | unique | .[]' /tmp/prior-gate.json)"
+          fi
+          if [[ -n "$gates" ]]; then printf '%s\n' "$gates" | sort -u; else echo 'nextBatchAt unavailable'; fi
+          curl -fsS --max-time 20 -H 'cache-control: no-cache' "$base/v1/lab/deploy-check" -o /tmp/deploy.json
+          jq -e '.ok == true and .version == "3.49.29"' /tmp/deploy.json >/dev/null
+
+      - name: Query saved Fuji rows through read-only preview
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 30 -X POST -H 'content-type: application/json' \
+            --data '{"date":"2026-10-17","venue":"東京","raceNo":11,"phase":"initial","sourceSnapshotId":"netkeiba-fuji-20261015-v1","marks":[{"horseName":"シュガークン","mark":"注"}]}' \
+            'https://keiba-lab-api.sekai-no-bancyou.workers.dev/v1/lab/expected-runner-preview' -o /tmp/preview.json
+          jq -c '{
+            ok, phase, identityBasis, scoreMutation,
+            source: {snapshotId:.source.snapshotId,runnerCount:.source.runnerCount},
+            marked:.audit.marked, guards:.audit.guardrails,
+            sidecar:[.audit.historySidecar[]? | {
+              horseName, available, fromDate, beforeDate,
+              summary, supplementalSummary, warnings,
+              supplementalRecent:[.supplementalRecent[]? | {date,venue,finish,last3f,cornerPositions,dbSource,sourceUrl}]
+            }]
+          }' /tmp/preview.json
+          jq -e '
+            .ok == true and
+            .phase == "initial" and
+            .audit.marked[0].mark == "注" and
+            .audit.marked[0].laboRank == null and
+            .audit.marked[0].laboScore == null and
+            .audit.guardrails.readOnly == true and
+            .audit.guardrails.markMutation == false and
+            .audit.guardrails.scoreMutation == false and
+            (.audit.historySidecar | length == 1) and
+            (.audit.historySidecar[0].supplementalRecent | length == 4) and
+            ([.audit.historySidecar[0].supplementalRecent[] |
+              select(.dbSource == "netkeiba-dated-history" and
+                     .sourceUrl == "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040611" and
+                     .date < "2026-10-17")] | length == 4)
+          ' /tmp/preview.json >/dev/null

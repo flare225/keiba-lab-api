@@ -12,7 +12,7 @@ export function parseConfirmedPredraw(html,url,target,{allowUnassignedConnection
  const runners=raw.map(row=>{
   if(cell(row,'num')===undefined||cell(row,'waku')===undefined||plain(cell(row,'num'))||plain(cell(row,'waku'))||/<img\b/i.test(cell(row,'waku')))throw Error('Not a pre-draw roster');
   const horse=cell(row,'horse'),j=cell(row,'jockey')||'',nameBlock=horse.match(/<div class=["']name["']>([\s\S]*?)<\/div>/i)?.[1]||'',link=nameBlock.match(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i);
-  const age=plain(j.match(/<p class=["']age["']>([\s\S]*?)<\/p>/i)?.[1]).match(/^([牡牝セ騸])(\d{1,2})\//);
+  const age=plain(j.match(/<p class=["']age["']>([\s\S]*?)<\/p>/i)?.[1]).match(/^(牡|牝|セ|せん|騸)(\d{1,2})\//);
   const weightText=plain(j.match(/<p class=["']weight["']>([\s\S]*?)<\/p>/i)?.[1]).replace(/\s*kg$/i,'');
   const weight=allowUnassignedConnections&&(!weightText||weightText==='未定')?null:Number(weightText);
   const jockey=plain(j.match(/<p class=["']jockey["']>([\s\S]*?)<\/p>/i)?.[1]);

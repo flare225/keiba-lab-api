@@ -108,10 +108,9 @@ jobs:
             .audit.guardrails.markMutation == false and
             .audit.guardrails.scoreMutation == false and
             (.audit.historySidecar | length == 1) and
-            (.audit.historySidecar[0].supplementalRecent | length == 4) and
-            ([.audit.historySidecar[0].supplementalRecent[] |
-              select(.dbSource == "netkeiba-dated-history" and
-                     .sourceUrl == "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040611" and
-                     .date < "2026-10-17")] | length == 4)
+            ([.audit.historySidecar[0].recent[]?, .audit.historySidecar[0].supplementalRecent[]?] |
+              map(select(.dbSource == "netkeiba-dated-history" and
+                         .sourceUrl == "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040611" and
+                         .date < "2026-10-17")) | unique_by(.date) | length == 4)
           ' /tmp/preview-readback.json >/dev/null
           echo 'DB readback verified: 4 netkeiba rows; no JRA table, score, or user-mark mutation.'

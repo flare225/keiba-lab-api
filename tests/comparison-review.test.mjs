@@ -17,3 +17,22 @@ test('corrupt history and unavailable storage cannot be falsely enabled by rende
 test('quota failures preserve existing history and never report success',async()=>{const p=page();const c=initComparison({...p,now:()=>stamp,fetcher:async()=>({ok:true,json:async()=>data()})});p.selects[0].value='◎';await c.compare();p.storage.setItem=()=>{throw Error('quota');};c.recordCheckpoint();assert(p.nodes.get('recordStatus').textContent.includes('記録できません'));assert(p.nodes.get('reviewCount').textContent.includes('0件'));});
 test('frame context requires current full-field fingerprint and makes only two read queries',async()=>{const runners=[{horse_no:1,frame_no:1,horse_name:'エース',age:2},{horse_no:2,frame_no:2,horse_name:'スター',age:2}];const e={runner_count:2,horse_numbers_observed:1,frames_observed:1,declared_count:2,source_row_count:2,parsed_count:2,card_fetched_at:'now',fetched_at:'now',runner_sha256:await sha256(runnerFingerprint(runners)),source_sha256:'source'};let calls=0;const db={prepare(sql){calls++;assert(sql.startsWith('SELECT'));return{bind(){return this;},all:async()=>({results:runners}),first:async()=>e};}};assert.equal((await reviewCardContext(db,target,{official:true},stamp)).frameVerified,true);assert.equal(calls,2);e.runner_count=3;assert.equal((await reviewCardContext(db,target,{official:true},stamp)).frameVerified,false);e.runner_count=2;e.runner_sha256='stale';assert.equal((await reviewCardContext(db,target,{official:true},stamp)).frameVerified,false);calls=0;assert.equal((await reviewCardContext(db,target,{official:false},stamp)).frameVerified,false);assert.equal(calls,0);});
 test('served review/client modules exactly match source and parse independently of bundler naming',async()=>{const review=await(await app.fetch(new Request('https://test/lab/comparison-review.js'),{},{})).text(),client=await(await app.fetch(new Request('https://test/lab/mark-comparison-client.js'),{},{})).text();assert.equal(review,await readFile(new URL('../src/comparison-review-v3.42.0.js',import.meta.url),'utf8'));assert.equal(client,(await readFile(new URL('../src/mark-comparison-client-v3.42.0.js',import.meta.url),'utf8')).replace("'./mark-comparison-core-v3.41.0.js'","'/lab/mark-comparison-core.js'").replace("'./comparison-review-v3.42.0.js'","'/lab/comparison-review.js'")+'\ninitComparison({document});\n');new Function(review.replaceAll('export ',''));new Function(client.replace(/^import[^;]+;\n/gm,'').replace('export ',''));const pageText=await(await app.fetch(new Request('https://test/lab/expected-preview'),{},{})).text();assert(pageText.includes('今の比較を記録'));assert(pageText.includes('reviewBaseline'));});
+test('full-field position evidence is rendered for unmarked runners with one shared data read',async()=>{
+ const d=data();d.assessment.allRunners[0].assessment.runningStyle={available:true,label:'前方傾向',style:'front',validPositionRows:3};
+ d.assessment.allRunners[1].assessment.runningStyle={available:false,label:'未判定',style:'unknown',validPositionRows:1};
+ const p=page();let calls=0;const c=initComparison({...p,fetcher:async()=>{calls++;return{ok:true,json:async()=>d};}});p.selects[0].value='◎';await c.compare();
+ const html=p.nodes.get('allRunnerTable').innerHTML;
+ assert(html.includes('位置取りを確認できる馬 1/2頭'));assert(html.includes('前方傾向：エース'));assert(html.includes('通過順の補完待ち：スター'));assert(html.includes('有効通過順'));
+ p.selects[0].value='△';await c.compare();assert.equal(calls,1);
+});
+test('checkpoint freezes position records and detects evidence changes without changing scores or rejecting legacy checkpoints',()=>{
+ const d=data();d.assessment.allRunners[0].assessment.runningStyle={available:true,label:'前方傾向',style:'front',validPositionRows:3,records:[{date:'2026-09-01',positions:[2,3],sourceUrl:'https://example.test/prior'}]};
+ const a=makeCheckpoint(target,d,marks,'initial',stamp);
+ d.assessment.allRunners[0].assessment.runningStyle.records[0].positions[0]=5;
+ d.assessment.allRunners[0].assessment.runningStyle.validPositionRows=4;
+ const b=makeCheckpoint(target,d,marks,'initial',stamp+1),change=compareCheckpoints(a,b).changes[0];
+ assert.equal(a.rows[0].positionEvidence.records[0].positions[0],2);assert.equal(a.rows[0].positionEvidence.validPositionRows,3);
+ assert.equal(change.changed,true);assert.equal(change.scoreDelta,0);assert.equal(change.rankComparable,true);
+ const legacy=JSON.parse(JSON.stringify(a));for(const r of legacy.rows)delete r.positionEvidence;
+ assert.equal(readCheckpoints(JSON.stringify([legacy]),reviewRaceKey(target)).length,1);
+});

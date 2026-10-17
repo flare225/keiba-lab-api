@@ -15,3 +15,18 @@ test('deployed browser scripts exactly match tested source, independent of bundl
 function fakePage(){const nodes=new Map(),selects=[{dataset:{horse:'エース'},value:''},{dataset:{horse:'スター'},value:''}];const node=id=>{if(!nodes.has(id))nodes.set(id,{textContent:'',innerHTML:'',value:'',disabled:false,listeners:{},addEventListener(k,f){this.listeners[k]=f;},querySelectorAll(){return selects;}});return nodes.get(id)};node('comparisonTarget').textContent=JSON.stringify({date:'2026-10-10',venue:'東京',raceNo:11,names:['エース','スター']});return{nodes,selects,document:{getElementById:node},storage:{getItem(){return null},setItem(){}}};}
 test('rapid mark changes share one DB read and only the latest comparison is rendered',async()=>{const p=fakePage();let calls=0,resolve;const fetcher=()=>{calls++;return new Promise(r=>resolve=r)};const c=initComparison({...p,fetcher});p.selects[0].value='◎';const first=c.compare();await Promise.resolve();await Promise.resolve();p.selects[0].value='△';const second=c.compare();resolve({ok:true,json:async()=>({...fixture(),ok:true})});await Promise.all([first,second]);assert.equal(calls,1);assert(p.nodes.get('results').innerHTML.includes('△ エース'));assert(p.nodes.get('results').innerHTML.includes('印とDBの見方が近い'));p.selects[0].value='◎';await c.compare();assert.equal(calls,1);assert(p.nodes.get('results').innerHTML.includes('別の見方も確認'));p.selects[0].value='';await c.compare();assert.equal(calls,1);assert.equal(p.nodes.get('results').innerHTML,'');});
 test('track change refreshes the DB; a failed refresh clears stale scores',async()=>{const p=fakePage();let calls=0;const c=initComparison({...p,fetcher:async()=>{calls++;if(calls===2)return{ok:false,json:async()=>({ok:false,error:'DB確認を保留'})};return{ok:true,json:async()=>({...fixture(),ok:true})};}});p.selects[0].value='◎';await c.compare();p.nodes.get('trackScenario').value='重';await c.compare();assert.equal(calls,2);assert.equal(p.nodes.get('results').innerHTML,'');assert.equal(p.nodes.get('baselineNote').textContent,'');assert(p.nodes.get('status').textContent.includes('DB確認を保留'));});
+test('comparison exposes existing position evidence without altering score or rank, and escapes its rendered label',async()=>{
+ const d=fixture(),style={available:true,label:'前方傾向 <script>',validPositionRows:3,missingReason:null};
+ d.assessment.allRunners[0].assessment.runningStyle=style;
+ const before=JSON.stringify(d),row=buildMarkComparison(d).rows[0];
+ assert.deepEqual(row.positionEvidence,{available:true,label:style.label,validRows:3,missingReason:null,scoreApplied:false});
+ assert.equal(row.score,75);assert.equal(row.referenceRank,7);assert.equal(JSON.stringify(d),before);
+ const p=fakePage();p.selects[0].value='◎';
+ await initComparison({...p,fetcher:async()=>({ok:true,json:async()=>({...d,ok:true})})}).compare();
+ const html=p.nodes.get('results').innerHTML;
+ assert(html.includes('過去の位置取り'));assert(html.includes('通過順 3走'));
+ assert(html.includes('前方傾向 &lt;script&gt;'));assert(!html.includes('<script>'));
+ assert(html.includes('実際のペース・有利不利は未判定'));
+ const missing=buildMarkComparison(fixture()).rows[0].positionEvidence;
+ assert.equal(missing.available,false);assert.equal(missing.label,'未判定');assert.equal(missing.validRows,0);
+});

@@ -50,5 +50,5 @@ export async function schedulerStatus(db,{limit=10,now=new Date()}={}){
  const nowMs=now.getTime();
  const present=row=>{if(!row)return null;return{...row,progress:JSON.parse(row.progress_json),progress_json:undefined,stalled:row.status==='running'&&nowMs-Date.parse(row.started_at)>30*60*1000};};
  const heartbeat=!latestScheduled?'not-observed':nowMs-Date.parse(latestScheduled.scheduled_at)>90*60*1000?'overdue':latestScheduled.status==='running'?'running':'observed';
- return{ok:true,version:VERSION,checkedAt:now.toISOString(),configuredCron:'0 * * * *',rotation:'five-hour-complete-sweep',cronHeartbeat:heartbeat,latestScheduled:present(latestScheduled),runs:rows.map(present),note:'Manual runs do not prove cron execution. cards-not-discovered does not prove nonpublication.'};
+ return{ok:true,version:VERSION,checkedAt:now.toISOString(),configuredCron:'0 * * * *',rotation:'program-count-based-sweep',cronHeartbeat:heartbeat,latestScheduled:present(latestScheduled),runs:rows.map(present),note:'Manual runs do not prove cron execution. cards-not-discovered does not prove nonpublication.'};
 }

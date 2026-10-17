@@ -11,20 +11,15 @@ function addUtcDays(date,days){
   const d=new Date(`${date}T00:00:00Z`);d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10);
 }
 
-export function rotationPairs(dateCount,hour){
+export function rotationPairs(dateCount,hour,slots=3){
   if(dateCount<=0)return[];
   if(dateCount<3){
-    const slot=((hour%3)+3)%3;
+    const slot=((hour%slots)+slots)%slots;
     return Array.from({length:dateCount},(_,dateIndex)=>({dateIndex,slot}));
   }
-  const phases=[
-    [{dateIndex:0,slot:0},{dateIndex:1,slot:0}],
-    [{dateIndex:2,slot:0},{dateIndex:0,slot:1}],
-    [{dateIndex:1,slot:1},{dateIndex:2,slot:1}],
-    [{dateIndex:0,slot:2},{dateIndex:1,slot:2}],
-    [{dateIndex:2,slot:2}],
-  ];
-  return phases[((hour%5)+5)%5];
+  const pairs=Array.from({length:slots*dateCount},(_,i)=>({dateIndex:i%dateCount,slot:Math.floor(i/dateCount)}));
+  const phases=Math.ceil(pairs.length/2),phase=((hour%phases)+phases)%phases;
+  return pairs.slice(phase*2,phase*2+2);
 }
 
 export async function runScheduledFast(event,env,ctx,deps={stage:app.fetch,ingest:ingestDay,today:todayJst}){
@@ -34,9 +29,10 @@ export async function runScheduledFast(event,env,ctx,deps={stage:app.fetch,inges
   const staging=await stageResponse.json();
   if(!stageResponse.ok||!staging.ok)throw new Error(`Program staging failed: ${staging.error||'no successful dates'}`);
 
-  const dates=(await env.DB.prepare('SELECT DISTINCT race_date FROM jra_race_program WHERE race_date>=? ORDER BY race_date LIMIT 3').bind(date).all()).results||[];
+  const dates=(await env.DB.prepare('SELECT race_date,COUNT(*) AS race_count FROM jra_race_program WHERE race_date>=? GROUP BY race_date ORDER BY race_date LIMIT 3').bind(date).all()).results||[];
   const hour=Math.floor(Number(event.scheduledTime)/3600000);
-  const pairs=rotationPairs(dates.length,hour);
+  const slots=Math.max(1,...dates.map(r=>Math.ceil(Number(r.race_count||24)/8)));
+  const pairs=rotationPairs(dates.length,hour,slots).filter(p=>p.slot*8<Number(dates[p.dateIndex]?.race_count||24));
   const runs=[];
 
   for(const pair of pairs){
@@ -54,7 +50,7 @@ export async function runScheduledFast(event,env,ctx,deps={stage:app.fetch,inges
   return{
     date,
     rotationVersion:ROTATION_VERSION,
-    rotationPolicy:dates.length===3?'all 72 date/slot combinations covered once within any complete 5-hour phase cycle':'all available dates are swept across three 8-card slots within 3 hours',
+    rotationPolicy:'dynamic program counts; every 8-card slot included, at most two batches per run',
     staging:{successfulDates:staging.successfulDates,totalProgramRaces:staging.totalProgramRaces,runs:staging.runs},
     pairs:pairs.map(p=>({date:dates[p.dateIndex]?.race_date||null,slot:p.slot,cursor:p.slot*8})),
     runs,

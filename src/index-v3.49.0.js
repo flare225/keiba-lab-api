@@ -11,7 +11,7 @@ import {markRecordProvenance} from './mark-record-provenance.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
 import {collectTodayMainHistory} from './today-main-history-priority.js';
 import {collectUpcomingOfficialHistory,upcomingOfficialHistoryPlan} from './upcoming-official-history.js';
-export const VERSION='3.49.34';
+export const VERSION='3.49.35';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);

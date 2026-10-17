@@ -11,20 +11,25 @@ import {markRecordProvenance} from './mark-record-provenance.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
 import {collectTodayMainHistory} from './today-main-history-priority.js';
 import {collectUpcomingOfficialHistory,upcomingOfficialHistoryPlan} from './upcoming-official-history.js';
-import {captureSourceTrackRace,sourceTrackStatus,scheduledSourceTrack} from './learning-source-track-v3.49.36.js';
+import {captureSourceTrackRace,sourceTrackStatus} from './learning-source-track-v3.49.36.js';
 import {learningSourceTrackPage} from './learning-source-track-page-v3.49.36.js';
+import {statusCacheKey,readStatusCache,writeStatusCache} from './status-read-cache.js';
 export const VERSION='3.49.36';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  const statusKey=statusCacheKey(request),statusCache=globalThis.caches?.default;
+  const cachedStatus=await readStatusCache(statusCache,statusKey);if(cachedStatus)return cachedStatus;
   if(u.pathname==='/lab/learning-source-track'&&request.method==='GET')return new Response(learningSourceTrackPage(),{headers:{'cache-control':'no-store','content-type':'text/html; charset=utf-8','x-content-type-options':'nosniff'}});
   if(['/v1/lab/learning-source-track','/v1/lab/learning-source-track-capture'].includes(u.pathname)){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*','access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'content-type'};
    if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
    try{
-    if(u.pathname.endsWith('-capture')){if(request.method!=='POST')return Response.json({ok:false,error:'method not allowed',version:VERSION},{status:405,headers});const input=await request.json();if(input.confirm!=='CAPTURE')throw Error('confirm CAPTURE が必要です。');return Response.json({...await captureSourceTrackRace(env.DB,input),version:VERSION},{headers})}
+    if(u.pathname.endsWith('-capture')){if(request.method!=='POST')return Response.json({ok:false,error:'method not allowed',version:VERSION},{status:405,headers});const input=await request.json();if(input.confirm!=='CAPTURE')throw Error('confirm CAPTURE が必要です。');const result=await captureSourceTrackRace(env.DB,input);try{await statusCache?.delete(new Request(new URL('/v1/lab/learning-source-track',u.origin).toString(),{method:'GET'}))}catch{}return Response.json({...result,version:VERSION},{headers})}
     if(request.method!=='GET')return Response.json({ok:false,error:'method not allowed',version:VERSION},{status:405,headers});
-    return Response.json({...await sourceTrackStatus(env.DB),version:VERSION},{headers});
+    const response=Response.json({...await sourceTrackStatus(env.DB),version:VERSION},{headers});
+    if(statusKey)await writeStatusCache(statusCache,statusKey,response);
+    return response;
    }catch(e){return Response.json({ok:false,error:String(e.message||e),version:VERSION},{status:400,headers})}
   }
   if(u.pathname==='/v1/lab/upcoming-history-plan'&&request.method==='GET'){
@@ -85,7 +90,9 @@ export default {
     }
    }
   }
-  return new Response(JSON.stringify(data),{status:response.status,headers:response.headers});
+  const finalResponse=new Response(JSON.stringify(data),{status:response.status,headers:response.headers});
+  if(statusKey)await writeStatusCache(statusCache,statusKey,finalResponse);
+  return finalResponse;
  },
  async scheduled(event,env,ctx){
   if(!shouldRunScheduled(event))return;
@@ -102,7 +109,6 @@ export default {
    try{await runPipelineJob(db,'prior-details','scheduled',()=>scheduledPriorDetails(db),{scheduledTime:event.scheduledTime});}catch{ /* Failure is recorded; existing collection jobs must still run. */ }
   }
   await app.scheduled(event,budgetEnv,ctx);
-  if(event.cron==='0,10,20,30,40,50 * * * *')try{await runPipelineJob(db,'learning-source-track','scheduled',()=>scheduledSourceTrack(db,Number(event.scheduledTime)),{scheduledTime:event.scheduledTime});}catch{console.warn('secondary source learning track deferred');}
   await collectLockedMarkResults(db);
   },Date.now,scheduledBudgetLane(event));
  }

@@ -1,9 +1,9 @@
 import {jraPageRequest,isJraSourceBlocked} from './jra-page-request.js';
-import {ensureResultSources,resultSourceMeta,discoverResultSource,resultDiscoveryTarget} from './official-result-sources-v3.39.0.js';
+import {ensureResultSources,resultSourceMeta,discoverResultSource,resultDiscoveryTarget,resultWindowOpen,RESULT_SAME_DAY_SETTLE_MS} from './official-result-sources-v3.39.0.js';
 import {parseOfficialResultDetails,persistVerifiedResultDetails,ensureResultDetailTables} from './result-detail-v3.39.0.js';
 import {ensureCollectionTables,officialUrl,jstDay} from './history-collection-v3.32.0.js';
 import {targetInput} from './race-history-assessment-v3.31.0.js';
-export const RICH_POLICY={version:'bounded-jra-result-v2-obstacle-average1f',maxRacesPerBatch:1,maxExternalRequestsPerBatch:1,concurrency:1,minBatchGapMs:60000,throttlePauseMs:3600000,scheduledCron:'8,18,28,38,48,58 * * * *',archivedDatesSupported:true,sourcePriority:'JRA',targetDayExcludedFromAssessment:true};
+export const RICH_POLICY={version:'bounded-jra-result-v3-same-day-after-official-start',maxRacesPerBatch:1,maxExternalRequestsPerBatch:1,concurrency:1,minBatchGapMs:60000,throttlePauseMs:3600000,scheduledCron:'8,18,28,38,48,58 * * * *',archivedDatesSupported:true,sourcePriority:'JRA',sameDayResultCollection:true,sameDaySettleBufferMs:RESULT_SAME_DAY_SETTLE_MS,targetDayExcludedFromAssessment:true};
 const isObstacle=r=>String(r.surface||'').startsWith('障害')||String(r.race_name||'').startsWith('障害');
 const obstacleSql="(r.surface LIKE '障害%' OR r.race_name LIKE '障害%')";
 const requiresCorners=r=>!isObstacle(r)&&!(r.venue==='新潟'&&r.surface==='芝'&&Number(r.distance)===1000);
@@ -27,7 +27,8 @@ export async function richResultStatus(db,date){
 async function ensure(db){await ensureCollectionTables(db);await ensureResultDetailTables(db);await ensureResultSources(db);await db.prepare('CREATE TABLE IF NOT EXISTS lab_rich_collection_receipts(race_key TEXT PRIMARY KEY,policy_version TEXT NOT NULL,status TEXT NOT NULL,checked_at INTEGER NOT NULL,next_check_at INTEGER NOT NULL,last3f_rows INTEGER NOT NULL,corners_rows INTEGER NOT NULL,error TEXT)').run()}
 export async function collectRichResult(db,input,deps={}){
  const now=deps.now||Date.now,fetcher=deps.fetcher||fetch,t=targetInput(input);
- if(t.date>=jstDay(now()))throw Error('詳細結果の補完は前日以前のレースを対象にします。');
+ if(t.date>jstDay(now()))throw Error('未来日の詳細結果は取得できません。');
+ if(t.date===jstDay(now())&&!await resultWindowOpen(db,t.date,t.venue,t.raceNo,now()))throw Error('当日結果は公式発走時刻から35分後以降に取得します。発走時刻または公式番組を確認できません。');
  if(!deps.tablesEnsured)await ensure(db);
  const race=await db.prepare('SELECT race_key,race_date,venue,race_no,race_name,runner_count,surface,distance FROM jra_races WHERE race_date=? AND venue=? AND race_no=?').bind(t.date,t.venue,t.raceNo).first();if(!race)throw Error('正式出馬表が未保存です。');
  const runners=(await db.prepare('SELECT horse_no,horse_name FROM jra_runners WHERE race_key=? ORDER BY horse_no').bind(race.race_key).all()).results||[];
@@ -71,7 +72,8 @@ export async function collectRichResult(db,input,deps={}){
 }
 export async function scheduledRichResult(db,deps={}){
  const now=deps.now||Date.now;await ensure(db);const today=jstDay(now()),fromDate=new Date(Date.parse(today+'T00:00:00Z')-14*86400000).toISOString().slice(0,10);
- const race=await db.prepare(`SELECT r.race_date,r.venue,r.race_no FROM jra_races r LEFT JOIN lab_race_result_details d ON d.race_key=r.race_key LEFT JOIN lab_rich_collection_receipts c ON c.race_key=r.race_key LEFT JOIN lab_obstacle_average1f a ON a.race_key=d.race_key AND a.horse_no=d.horse_no AND a.horse_name=d.horse_name WHERE (r.race_date>=? OR EXISTS(SELECT 1 FROM lab_official_result_sources s WHERE s.race_key=r.race_key)) AND r.race_date<? AND (c.race_key IS NULL OR c.policy_version<>? OR c.next_check_at<=?) AND (EXISTS(SELECT 1 FROM lab_race_outcomes o WHERE o.race_key=r.race_key AND o.source_url IS NOT NULL) OR EXISTS(SELECT 1 FROM lab_official_result_sources s WHERE s.race_key=r.race_key)) GROUP BY r.race_key HAVING COUNT(d.id)<r.runner_count OR ${missingLast}>0 OR ${missingAverage}>0 OR (NOT ${obstacleSql} AND NOT(r.venue='新潟' AND r.surface='芝' AND COALESCE(r.distance,0)=1000) AND ${missingCorner}>0) ORDER BY COALESCE(c.checked_at,0),r.race_date,r.venue,r.race_no LIMIT 1`).bind(fromDate,today,RICH_POLICY.version,now()).first();
+ const candidates=(await db.prepare(`SELECT r.race_date,r.venue,r.race_no FROM jra_races r LEFT JOIN lab_race_result_details d ON d.race_key=r.race_key LEFT JOIN lab_rich_collection_receipts c ON c.race_key=r.race_key LEFT JOIN lab_obstacle_average1f a ON a.race_key=d.race_key AND a.horse_no=d.horse_no AND a.horse_name=d.horse_name WHERE (r.race_date>=? OR EXISTS(SELECT 1 FROM lab_official_result_sources s WHERE s.race_key=r.race_key)) AND r.race_date<=? AND (c.race_key IS NULL OR c.policy_version<>? OR c.next_check_at<=?) AND (EXISTS(SELECT 1 FROM lab_race_outcomes o WHERE o.race_key=r.race_key AND o.source_url IS NOT NULL) OR EXISTS(SELECT 1 FROM lab_official_result_sources s WHERE s.race_key=r.race_key)) GROUP BY r.race_key HAVING COUNT(d.id)<r.runner_count OR ${missingLast}>0 OR ${missingAverage}>0 OR (NOT ${obstacleSql} AND NOT(r.venue='新潟' AND r.surface='芝' AND COALESCE(r.distance,0)=1000) AND ${missingCorner}>0) ORDER BY COALESCE(c.checked_at,0),r.race_date,r.venue,r.race_no LIMIT 100`).bind(fromDate,today,RICH_POLICY.version,now()).all()).results||[];
+ let race=null;for(const candidate of candidates)if(await resultWindowOpen(db,candidate.race_date,candidate.venue,candidate.race_no,now())){race=candidate;break;}
  const sourceTarget=await resultDiscoveryTarget(db,now());if(sourceTarget&&(!race||sourceTarget.race_date<race.race_date))return{...await discoverResultSource(db,{...deps,sourceTarget}),policy:RICH_POLICY};
  return race?collectRichResult(db,{date:race.race_date,venue:race.venue,raceNo:race.race_no},{...deps,tablesEnsured:true}):{...await discoverResultSource(db,deps),policy:RICH_POLICY};
 }

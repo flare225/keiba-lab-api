@@ -11,6 +11,8 @@ export function buildMarkComparison(data,marks=data.audit?.marked||[]){
   const r=all.get(mark.horseName);if(!r||!(mark.mark in RULES)||seen.has(mark.horseName))throw Error('馬名・初期印・重複を確認してください。');seen.add(mark.horseName);
   const s=r.assessment,h=history.get(r.horseName),recent=h?.recent||[],d=s.detail||{},c=s.components||{};
   const reasons=[metric('過去の着順',c.basicAbilityResults,d.ability?.validFinishRows),metric('直近の成績',c.recentPerformanceDevelopment,d.recent?.rows),metric('コース・距離',c.courseDistanceFit,d.course?.exactDistance?.validFinishRows),metric('想定馬場',c.ground,d.ground?.validFinishRows)];
+  const position=s.runningStyle;
+  const positionEvidence={available:position?.available===true,label:position?.available===true?position.label:'未判定',validRows:position?.validPositionRows||0,missingReason:position?.missingReason||null,scoreApplied:false};
   const gaps=[];
   if(!s.available)gaps.push('有効な履歴を確認できず、仮評価を保留しています。');
   if(s.validFinishRows<3)gaps.push('有効な着順は'+s.validFinishRows+'走。履歴が少ないため参考量が限られます。');
@@ -27,7 +29,7 @@ export function buildMarkComparison(data,marks=data.audit?.marked||[]){
   else if(a.scoredRunners<a.runnerPool){state='incomplete-pool';label='全馬の履歴補完待ち';explanation='評価できた'+a.scoredRunners+'頭内の参考順位です。全馬そろってから比較します。';}
   else if(rank<=limit&&rank+ties-1>limit){state='tie-boundary';label='同点グループ内の比較';explanation='同点の馬に差を付けず、初期印との比較を保留しています。';}
   else if(mark.mark==='消'?rank<=limit:rank>limit){state='review';label='別の見方も確認';explanation=mark.mark==='消'?'DBでは参考上位に入ります。印を見直す材料として確認できます。':'DBの参考順位と初期印に差があります。根拠と不足項目を確認できます。';}
-  return{horseName:r.horseName,horseNo:r.horseNo??mark.horseNo??null,humanMark:mark.mark,score:s.evidenceScore,referenceRank:rank,tiedCount:ties,state,label,explanation,reasons,gaps:[...new Set(gaps)],validFinishRows:s.validFinishRows,coveragePct:s.modelCoveragePct,history:h||null};
+  return{horseName:r.horseName,horseNo:r.horseNo??mark.horseNo??null,humanMark:mark.mark,score:s.evidenceScore,referenceRank:rank,tiedCount:ties,state,label,explanation,reasons,gaps:[...new Set(gaps)],validFinishRows:s.validFinishRows,coveragePct:s.modelCoveragePct,positionEvidence,history:h||null};
  });
  const chosen=new Set(marks.map(m=>m.horseName));
  return{rows,unmarkedCandidates:a.allRunners.filter(r=>r.assessment.available&&!chosen.has(r.horseName)).sort((x,y)=>x.referenceRank-y.referenceRank).filter(r=>r.referenceRank<=3).map(r=>({horseName:r.horseName,referenceRank:r.referenceRank,tiedCount:r.tiedCount,score:r.assessment.evidenceScore,validFinishRows:r.assessment.validFinishRows})),runnerPool:a.runnerPool,scoredRunners:a.scoredRunners,trackAssumption:a.trackAssumption,summary:{aligned:rows.filter(r=>r.state==='aligned').length,review:rows.filter(r=>r.state==='review').length,held:rows.filter(r=>!['aligned','review'].includes(r.state)).length},guardrails:{humanMarksUsedInScore:false,targetResultUsed:false,noForcedTieBreak:true,accuracyImprovementValidated:false},scoreMeaning:'過去走の参考指数。的中確率ではありません。'};

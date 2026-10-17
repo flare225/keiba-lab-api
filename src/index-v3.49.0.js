@@ -11,10 +11,22 @@ import {markRecordProvenance} from './mark-record-provenance.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
 import {collectTodayMainHistory} from './today-main-history-priority.js';
 import {collectUpcomingOfficialHistory,upcomingOfficialHistoryPlan} from './upcoming-official-history.js';
-export const VERSION='3.49.35';
+import {captureSourceTrackRace,sourceTrackStatus,scheduledSourceTrack} from './learning-source-track-v3.49.36.js';
+import {learningSourceTrackPage} from './learning-source-track-page-v3.49.36.js';
+export const VERSION='3.49.36';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/lab/learning-source-track'&&request.method==='GET')return new Response(learningSourceTrackPage(),{headers:{'cache-control':'no-store','content-type':'text/html; charset=utf-8','x-content-type-options':'nosniff'}});
+  if(['/v1/lab/learning-source-track','/v1/lab/learning-source-track-capture'].includes(u.pathname)){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*','access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'content-type'};
+   if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
+   try{
+    if(u.pathname.endsWith('-capture')){if(request.method!=='POST')return Response.json({ok:false,error:'method not allowed',version:VERSION},{status:405,headers});const input=await request.json();if(input.confirm!=='CAPTURE')throw Error('confirm CAPTURE が必要です。');return Response.json({...await captureSourceTrackRace(env.DB,input),version:VERSION},{headers})}
+    if(request.method!=='GET')return Response.json({ok:false,error:'method not allowed',version:VERSION},{status:405,headers});
+    return Response.json({...await sourceTrackStatus(env.DB),version:VERSION},{headers});
+   }catch(e){return Response.json({ok:false,error:String(e.message||e),version:VERSION},{status:400,headers})}
+  }
   if(u.pathname==='/v1/lab/upcoming-history-plan'&&request.method==='GET'){
    try{return Response.json({ok:true,version:VERSION,races:await upcomingOfficialHistoryPlan(env.DB),horizonDays:7,scope:'stored-official-cards',externalRequests:0},{headers:{'cache-control':'no-store'}});}catch{return Response.json({ok:false,version:VERSION,error:'収集予定を確認できません。'},{status:503});}
   }
@@ -89,7 +101,9 @@ export default {
   if(event.cron==='*/3 * * * *'&&Math.floor(Number(event.scheduledTime)/60000)%12===0){
    try{await runPipelineJob(db,'prior-details','scheduled',()=>scheduledPriorDetails(db),{scheduledTime:event.scheduledTime});}catch{ /* Failure is recorded; existing collection jobs must still run. */ }
   }
-  await app.scheduled(event,budgetEnv,ctx);await collectLockedMarkResults(db);
+  await app.scheduled(event,budgetEnv,ctx);
+  if(event.cron==='0,10,20,30,40,50 * * * *')try{await runPipelineJob(db,'learning-source-track','scheduled',()=>scheduledSourceTrack(db,Number(event.scheduledTime)),{scheduledTime:event.scheduledTime});}catch{console.warn('secondary source learning track deferred');}
+  await collectLockedMarkResults(db);
   },Date.now,scheduledBudgetLane(event));
  }
 };

@@ -30,3 +30,11 @@ test('comparison exposes existing position evidence without altering score or ra
  const missing=buildMarkComparison(fixture()).rows[0].positionEvidence;
  assert.equal(missing.available,false);assert.equal(missing.label,'未判定');assert.equal(missing.validRows,0);
 });
+test('position coverage includes unmarked horses and cannot invent complete coverage or a pace forecast',()=>{
+ const d=fixture();d.assessment.runnerPool=2;
+ d.assessment.allRunners[0].assessment.runningStyle={available:true,label:'先頭通過が多い',style:'lead',validPositionRows:3};
+ let c=buildMarkComparison(d);assert.deepEqual(c.positionCoverage.frontCandidates,['エース']);assert.deepEqual(c.positionCoverage.unknownHorses,['スター']);assert.equal(c.positionCoverage.coverageComplete,false);assert.equal(c.positionCoverage.paceForecast,null);
+ d.assessment.allRunners[1].assessment.runningStyle={available:true,label:'後方傾向',style:'back',validPositionRows:3};
+ c=buildMarkComparison(d);assert.equal(c.positionCoverage.coverageComplete,true);assert.equal(c.positionCoverage.observedRunners,2);assert.equal(c.positionField.length,2);
+ d.assessment.runnerPool=3;assert.equal(buildMarkComparison(d).positionCoverage.coverageComplete,false);
+});

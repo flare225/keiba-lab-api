@@ -14,10 +14,11 @@ import {collectUpcomingOfficialHistory,upcomingOfficialHistoryPlan} from './upco
 import {captureSourceTrackRace,sourceTrackStatus} from './learning-source-track-v3.49.36.js';
 import {learningSourceTrackPage} from './learning-source-track-page-v3.49.36.js';
 import {statusCacheKey,readStatusCache,writeStatusCache} from './status-read-cache.js';
-export const VERSION='3.49.36';
+export const VERSION='3.49.37';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/deploy-check'&&request.method==='GET')return Response.json({ok:true,version:VERSION,build:'comparison-field-position-and-evidence-history',now:new Date().toISOString()},{headers:{'cache-control':'no-store','access-control-allow-origin':'*'}});
   const statusKey=statusCacheKey(request),statusCache=globalThis.caches?.default;
   const cachedStatus=await readStatusCache(statusCache,statusKey);if(cachedStatus)return cachedStatus;
   if(u.pathname==='/lab/learning-source-track'&&request.method==='GET')return new Response(learningSourceTrackPage(),{headers:{'cache-control':'no-store','content-type':'text/html; charset=utf-8','x-content-type-options':'nosniff'}});

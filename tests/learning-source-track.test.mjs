@@ -52,6 +52,17 @@ test('production API exposes readback and requires explicit capture intent',asyn
  const post=await worker.fetch(new Request('https://api.test/v1/lab/learning-source-track-capture',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({date:'2026-10-17',venue:'東京',raceNo:11})}),{DB:db},{});assert.equal(post.status,400);assert.equal((await post.json()).error,'confirm CAPTURE が必要です。');assert.equal(sql.prepare("SELECT COUNT(*) n FROM lab_learning_source_features").get().n,before);assert.equal(VERSION,'3.49.36');sql.close();
 });
 
+test('repeated source-track status reads are served from edge cache without another D1 query',async()=>{
+ const {sql,db}=fixture(),rows=new Map(),old=globalThis.caches;let queryCount=0;
+ globalThis.caches={default:{async match(key){return rows.get(key.url)?.clone()||null},async put(key,response){rows.set(key.url,response.clone())},async delete(key){return rows.delete(key.url)}}};
+ const prepare=db.prepare.bind(db);db.prepare=sqlText=>{queryCount++;return prepare(sqlText)};
+ try{
+  const req=()=>new Request('https://api.test/v1/lab/learning-source-track');
+  const first=await worker.fetch(req(),{DB:db},{});assert.equal(first.status,200);await first.text();const afterFirst=queryCount;assert.ok(afterFirst>0);
+  const second=await worker.fetch(req(),{DB:db},{});assert.equal(second.status,200);await second.text();assert.equal(queryCount,afterFirst);
+ }finally{if(old===undefined)delete globalThis.caches;else globalThis.caches=old;sql.close()}
+});
+
 test('source lane page compiles and accurately describes its isolated score scope',async()=>{
  const html=learningSourceTrackPage();for(const [,script] of html.matchAll(/<script>([\s\S]*?)<\/script>/g))new Script(script);assert.ok(html.includes('現行スコア、予想順位、ユーザー印、LOCKは変更しません'));assert.ok(html.includes('勝率や期待値の確率モデルではありません'));
  const page=await worker.fetch(new Request('https://api.test/lab/learning-source-track'),{},{});assert.equal(page.status,200);assert.match(await page.text(),/二次ソース学習レーン/);

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
-import {assertBeforeOfficialStart,EXPERIMENT,captureExperimentRace,freezeExperiment,hash} from '../src/learning-experiment-v3.40.0.js';
+import {assertBeforeOfficialStart,EXPERIMENT,captureExperimentRace,freezeExperiment,hash,validationCapturedBeforeRace} from '../src/learning-experiment-v3.40.0.js';
 
 function programDb(startTime='15:45',sourceUrl='https://www.jra.go.jp/JRADB/accessD.html'){
  const db={prepare(sql){return{bind(){return{async first(){return sql.includes('jra_race_program')?{start_time:startTime,source_url:sourceUrl}:null}}}}}};
@@ -11,7 +11,7 @@ function programDb(startTime='15:45',sourceUrl='https://www.jra.go.jp/JRADB/acce
 test('same-day validation window opens only before official JRA post time with a safety buffer',async()=>{
  const context={date:'2026-10-17',venue:'東京',raceNo:11};
  const allowed=await assertBeforeOfficialStart(programDb(),context,Date.parse('2026-10-17T00:00:00Z')); // 09:00 JST
- assert.deepEqual(allowed,{ok:true,startTime:'15:45',bufferMinutes:5});
+ assert.equal(allowed.ok,true);assert.equal(allowed.startTime,'15:45');assert.equal(allowed.bufferMinutes,5);
  await assert.rejects(()=>assertBeforeOfficialStart(programDb(),context,Date.parse('2026-10-17T06:41:00Z')),/発走5分前/); // 15:41 JST
 });
 
@@ -31,6 +31,6 @@ test('same-day official race can save result-blind validation features before sc
  const result=await captureExperimentRace(db,{date:'2026-10-17',venue:'東京',raceNo:11},now);
  assert.equal(result.status,'awaiting-results');assert.equal(result.phase,'validation');assert.equal(result.runnerCount,2);
  const row=sql.prepare('SELECT * FROM lab_learning_features WHERE race_key=?').get('2026-10-17|東京|11');assert.ok(row);
- const features=JSON.parse(row.features_json);assert.equal(features.guardrails.targetResultReadForFeatures,false);assert.equal(features.guardrails.humanMarksUsed,false);assert.ok(features.runners.every(r=>r.candidateScore!==null));
+ const features=JSON.parse(row.features_json);assert.equal(validationCapturedBeforeRace(row,features),true);assert.equal(validationCapturedBeforeRace({...row,captured_at:'2026-10-17T07:00:00Z'},features),false);assert.equal(features.guardrails.targetResultReadForFeatures,false);assert.equal(features.guardrails.humanMarksUsed,false);assert.ok(features.runners.every(r=>r.candidateScore!==null));
  sql.close();
 });

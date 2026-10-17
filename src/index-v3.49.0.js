@@ -9,7 +9,8 @@ import {userMarkLockEndpoint,readUserMarkLock} from './user-mark-lock.js';
 import app from './index-v3.48.2.js';
 import {markRecordProvenance} from './mark-record-provenance.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
-export const VERSION='3.49.31';
+import {collectTodayMainHistory} from './today-main-history-priority.js';
+export const VERSION='3.49.32';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
@@ -74,6 +75,10 @@ export default {
   if(!shouldRunScheduled(event))return;
   return runWithScheduledReadBudget(env.DB,async db=>{
   const budgetEnv={...env,DB:db};
+  if(event.cron==='*/3 * * * *'){
+   const priority=await collectTodayMainHistory(db,{now:()=>Number(event.scheduledTime)});
+   if(priority){await runPipelineJob(db,'history','scheduled',async()=>priority,{scheduledTime:event.scheduledTime});await collectLockedMarkResults(db);return;}
+  }
   try{await seedEditorialReferences(db);await verifyEditorialClaims(db);}catch{console.warn('editorial reference seed unavailable');}
   if(event.cron==='*/3 * * * *'&&Math.floor(Number(event.scheduledTime)/60000)%12===0){
    try{await runPipelineJob(db,'prior-details','scheduled',()=>scheduledPriorDetails(db),{scheduledTime:event.scheduledTime});}catch{ /* Failure is recorded; existing collection jobs must still run. */ }

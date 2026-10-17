@@ -49,13 +49,24 @@ async function attachLabels(db,feature,now){
  if(!labels.every(r=>{try{const u=new URL(r.source_url);return['www.jra.go.jp','jra.go.jp','www.jra.jp','jra.jp'].includes(u.hostname)&&u.protocol==='https:'&&!!r.source_sha256&&(r.finish_position!=null?(Number.isInteger(Number(r.finish_position))&&Number(r.finish_position)>0&&Number(r.finish_position)<=labels.length):['scratched','excluded','did-not-finish','disqualified'].includes(r.finish_status))}catch{return false}})||!labels.some(x=>Number(x.finish_position)===1))return{status:'awaiting-verified-results'};
  const body=json(labels),sha=await hash(body);await db.prepare('INSERT OR IGNORE INTO lab_learning_labels VALUES(?,?,?,?,?)').bind(EXPERIMENT.id,feature.race_key,body,sha,new Date(now).toISOString()).run();return{status:'labels-saved',runnerCount:labels.length};
 }
+export async function assertBeforeOfficialStart(db,context,now=Date.now()){
+ let program;try{program=await db.prepare('SELECT start_time,source_url FROM jra_race_program WHERE race_date=? AND venue=? AND race_no=?').bind(context.date,context.venue,context.raceNo).first()}catch{throw Error('当日検証にはJRA公式開催番組の発走予定時刻が必要です。')}
+ const match=/^(\d{1,2}):(\d{2})$/.exec(String(program?.start_time||''));
+ let officialProgram=false;try{const u=new URL(program?.source_url||'');officialProgram=u.protocol==='https:'&&['jra.go.jp','www.jra.go.jp','jra.jp','www.jra.jp'].includes(u.hostname)}catch{}
+ if(!match||!officialProgram)throw Error('当日検証にはJRA公式開催番組の発走予定時刻が必要です。');
+ const [hour,minute]=match.slice(1).map(Number);if(hour>23||minute>59)throw Error('JRA公式発走予定時刻を確認できません。');
+ const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Tokyo',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(now));
+ const part=name=>Number(parts.find(x=>x.type===name)?.value);const currentMinutes=part('hour')*60+part('minute'),startMinutes=hour*60+minute;
+ if(currentMinutes>=startMinutes-5)throw Error('発走5分前以降は事前特徴量を保存しません。');
+ return{ok:true,startTime:program.start_time,bufferMinutes:5};
+}
 export async function captureExperimentRace(db,input,now=Date.now(),tablesEnsured=false){
  if(!tablesEnsured)await ensureExperiment(db);await protocol(db);const t=targetInput(input);
  const phase=t.date<EXPERIMENT.validationFrom?'training':'validation';if(t.date<EXPERIMENT.trainingFrom)throw Error('実験対象期間より前のレースです。');
  const old=await db.prepare('SELECT * FROM lab_learning_features WHERE experiment_id=? AND race_date=? AND race_key IN (SELECT race_key FROM jra_races WHERE race_date=? AND venue=? AND race_no=?)').bind(EXPERIMENT.id,t.date,t.date,t.venue,t.raceNo).first();if(old){if(await hash(old.features_json)!==old.features_sha256)throw Error('保存した特徴量のハッシュが一致しません。');return{ok:true,raceKey:old.race_key,phase:old.phase,featureAlreadySaved:true,...await attachLabels(db,old,now)}}
  if(phase==='training'&&t.date>=jstDay(now))throw Error('学習用の過去レースは前日以前を指定してください。');
- let candidate=null;if(phase==='validation'){if(t.date<=jstDay(now))throw Error('検証用の特徴量は前日までに保存します。結果を見た後には作成しません。');candidate=await db.prepare('SELECT * FROM lab_learning_candidates WHERE experiment_id=?').bind(EXPERIMENT.id).first();if(!candidate)return{ok:true,status:'awaiting-candidate',phase,externalRequests:0};if(await hash(candidate.candidate_json)!==candidate.candidate_sha256)throw Error('学習候補のハッシュが一致しません。')}
- const context=await assessmentContext(db,t);if(!context.official)throw Error('正式出馬表が未保存です。');const runners=await bulkFeatures(db,context),candidateData=candidate?JSON.parse(candidate.candidate_json):null;
+ let candidate=null;if(phase==='validation'){if(t.date<jstDay(now))throw Error('検証用の特徴量は対象日の前日以前に作成しません。');candidate=await db.prepare('SELECT * FROM lab_learning_candidates WHERE experiment_id=?').bind(EXPERIMENT.id).first();if(!candidate)return{ok:true,status:'awaiting-candidate',phase,externalRequests:0};if(await hash(candidate.candidate_json)!==candidate.candidate_sha256)throw Error('学習候補のハッシュが一致しません。')}
+ const context=await assessmentContext(db,t);if(!context.official)throw Error('正式出馬表が未保存です。');if(phase==='validation'&&t.date===jstDay(now))await assertBeforeOfficialStart(db,context,now);const runners=await bulkFeatures(db,context),candidateData=candidate?JSON.parse(candidate.candidate_json):null;
  const missing=runners.filter(r=>scoreFeatures(r.components,BASE_WEIGHTS)==null).map(r=>r.horseName);
  if(missing.length){await saveCollectionReceipt(db,context.raceKey,phase,'awaiting-prior-history',now,missing);return{ok:true,status:'awaiting-prior-history',raceKey:context.raceKey,phase,missingHistoryHorses:missing,featureSaved:false,externalRequests:0}}
  const body=json({featureVersion:EXPERIMENT.featureVersion,race:{raceKey:context.raceKey,date:context.date,venue:context.venue,raceNo:context.raceNo},trackScenario:EXPERIMENT.track,raceShape:buildRaceShapeEvidence(runners.map(r=>({...r,assessment:{runningStyle:r.runningStyle}}))),phase,retrospective:phase==='training',candidateSha256:candidate?.candidate_sha256||null,runners:runners.map(r=>({...r,baselineScore:scoreFeatures(r.components,BASE_WEIGHTS),candidateScore:candidateData?scoreFeatures(r.components,candidateData.weights):null})),guardrails:{targetResultReadForFeatures:false,humanMarksUsed:false,priorDatesOnly:true,retrospectiveAccuracyCredit:false}}),sha=await hash(body),at=new Date(now).toISOString();

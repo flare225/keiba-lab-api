@@ -10,10 +10,14 @@ import app from './index-v3.48.2.js';
 import {markRecordProvenance} from './mark-record-provenance.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
 import {collectTodayMainHistory} from './today-main-history-priority.js';
-export const VERSION='3.49.33';
+import {collectUpcomingOfficialHistory,upcomingOfficialHistoryPlan} from './upcoming-official-history.js';
+export const VERSION='3.49.34';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/upcoming-history-plan'&&request.method==='GET'){
+   try{return Response.json({ok:true,version:VERSION,races:await upcomingOfficialHistoryPlan(env.DB),horizonDays:7,scope:'stored-official-cards',externalRequests:0},{headers:{'cache-control':'no-store'}});}catch{return Response.json({ok:false,version:VERSION,error:'収集予定を確認できません。'},{status:503});}
+  }
   if(['/v1/lab/race-reference-notes','/lab/race-reference-notes'].includes(u.pathname)){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
    if(request.method!=='GET')return Response.json({ok:false,error:'read-only endpoint',version:VERSION},{status:405,headers});
@@ -78,6 +82,8 @@ export default {
   if(event.cron==='*/3 * * * *'){
    const priority=await collectTodayMainHistory(db,{now:()=>Number(event.scheduledTime)});
    if(priority){await runPipelineJob(db,'history','scheduled',async()=>priority,{scheduledTime:event.scheduledTime});await collectLockedMarkResults(db);return;}
+   const upcoming=await collectUpcomingOfficialHistory(db,{now:()=>Number(event.scheduledTime)});
+   if(upcoming){await runPipelineJob(db,'history','scheduled',async()=>upcoming,{scheduledTime:event.scheduledTime});await collectLockedMarkResults(db);return;}
   }
   try{await seedEditorialReferences(db);await verifyEditorialClaims(db);}catch{console.warn('editorial reference seed unavailable');}
   if(event.cron==='*/3 * * * *'&&Math.floor(Number(event.scheduledTime)/60000)%12===0){

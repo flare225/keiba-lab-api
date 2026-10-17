@@ -61,7 +61,7 @@ export async function assertBeforeOfficialStart(db,context,now=Date.now()){
  if(currentMinutes>=startMinutes-5)throw Error('発走5分前以降は事前特徴量を保存しません。');
  return{ok:true,startTime:program.start_time,bufferMinutes:5};
 }
-async function featureCapturedBeforeOfficialStart(db,race,capturedAt){
+export async function featureCapturedBeforeOfficialStart(db,race,capturedAt){
  let program;try{program=await db.prepare('SELECT start_time,source_url FROM jra_race_program WHERE race_date=? AND venue=? AND race_no=?').bind(race.date,race.venue,race.raceNo).first()}catch{return false}
  const match=/^(\d{1,2}):(\d{2})$/.exec(String(program?.start_time||''));let official=false;try{const u=new URL(program?.source_url||'');official=u.protocol==='https:'&&['jra.go.jp','www.jra.go.jp','jra.jp','www.jra.jp'].includes(u.hostname)}catch{}
  if(!match||!official)return false;const hour=Number(match[1]),minute=Number(match[2]);if(hour>23||minute>59)return false;

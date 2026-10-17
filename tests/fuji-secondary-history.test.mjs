@@ -15,24 +15,24 @@ function database(){
 }
 
 test('Fuji secondary history persists only the verified runner under its own source snapshot',async()=>{
- assert.equal(FUJI_HISTORY_ROWS.length,4);
- assert.deepEqual([...new Set(FUJI_HISTORY_ROWS.map(row=>row.horse_name))],['シュガークン']);
+ assert.equal(FUJI_HISTORY_ROWS.length,8);
+ assert.deepEqual([...new Set(FUJI_HISTORY_ROWS.map(row=>row.horse_name))],['エンペラーズソード','シュガークン']);
  for(const row of FUJI_HISTORY_ROWS){
   assert.ok(row.race_date<FUJI_EXPECTED_SOURCE.date);
   assert.ok(row.last3f>0);
   assert.ok(FUJI_EXPECTED_SOURCE.names.includes(row.horse_name));
   assert.equal(row.source_url,FUJI_HISTORY_SOURCE_URL);
-  assert.equal(row.observed_at,FUJI_HISTORY_OBSERVED_AT);
+  assert.ok(row.observed_at.startsWith(row.horse_name==='シュガークン'?FUJI_HISTORY_OBSERVED_AT:'2026-10-17T'));
  }
  const {sql,db,queries}=database();
  await ingestExpectedHistory(db,FUJI_EXPECTED_SOURCE);
  await ingestExpectedHistory(db,FUJI_EXPECTED_SOURCE);
  const saved=sql.prepare('SELECT snapshot_id,horse_name,race_date,source_url,payload_json FROM lab_expected_history_snapshots ORDER BY race_date DESC').all();
- assert.equal(saved.length,4);
- assert.ok(saved.every(row=>row.snapshot_id===FUJI_EXPECTED_SOURCE.snapshotId&&row.horse_name==='シュガークン'&&row.source_url===FUJI_HISTORY_SOURCE_URL));
+ assert.equal(saved.length,8);
+ assert.ok(saved.every(row=>row.snapshot_id===FUJI_EXPECTED_SOURCE.snapshotId&&['シュガークン','エンペラーズソード'].includes(row.horse_name)&&row.source_url===FUJI_HISTORY_SOURCE_URL));
  assert.ok(saved.every(row=>JSON.parse(row.payload_json).source_url===FUJI_HISTORY_SOURCE_URL));
  const result=await ingestExpectedHistory(db,FUJI_EXPECTED_SOURCE);
- assert.equal(result.historyRows,4);
+ assert.equal(result.historyRows,8);
  assert.equal(result.snapshotId,FUJI_EXPECTED_SOURCE.snapshotId);
  assert.equal(result.officialTablesModified,false);
  assert.equal(result.scoreMutation,false);

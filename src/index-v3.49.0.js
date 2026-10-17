@@ -10,7 +10,7 @@ import app from './index-v3.48.2.js';
 import {markRecordProvenance} from './mark-record-provenance.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
 import {collectTodayMainHistory} from './today-main-history-priority.js';
-export const VERSION='3.49.32';
+export const VERSION='3.49.33';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);

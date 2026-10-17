@@ -4,6 +4,12 @@
 export const FUJI_HISTORY_SOURCE_URL='https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040611';
 export const FUJI_HISTORY_OBSERVED_AT='2026-10-16';
 export const FUJI_HISTORY_ROWS=[
+ ...[
+  ['2026-04-04','中山','ダービー卿CT',8,15,'1:33.8',35.9,'1-1-1','稍'],
+  ['2026-03-15','中山','東風S',7,16,'1:32.5',35.2,'1-1-1','良'],
+  ['2026-02-10','東京','東京新聞杯',11,16,'1:32.9',34.5,'3-2','良'],
+  ['2025-11-23','東京','秋色S',1,17,'1:31.9',34.5,'1-1','良']
+ ].map(([race_date,venue,race_name,finish_position,field_size,time_text,last3f,corner_positions,track_condition])=>({horse_name:'エンペラーズソード',race_date,venue,race_name,surface:'芝',distance:1600,finish_position,field_size,time_text,last3f,corner_positions,track_condition,source_url:FUJI_HISTORY_SOURCE_URL,observed_at:'2026-10-17T04:02:30Z'})),
  {horse_name:'シュガークン',race_date:'2026-06-14',venue:'阪神',race_name:'宝塚記念',surface:'芝',distance:2200,finish_position:17,field_size:18,time_text:'2:15.3',last3f:38.0,corner_positions:'3-3-5-7',track_condition:'重',source_url:FUJI_HISTORY_SOURCE_URL,observed_at:FUJI_HISTORY_OBSERVED_AT},
  {horse_name:'シュガークン',race_date:'2026-05-16',venue:'新潟',race_name:'新潟大賞典',surface:'芝',distance:2000,finish_position:15,field_size:15,time_text:'2:00.1',last3f:35.2,corner_positions:'2-2',track_condition:'良',source_url:FUJI_HISTORY_SOURCE_URL,observed_at:FUJI_HISTORY_OBSERVED_AT},
  {horse_name:'シュガークン',race_date:'2024-05-26',venue:'東京',race_name:'東京優駿',surface:'芝',distance:2400,finish_position:7,field_size:17,time_text:'2:25.2',last3f:34.7,corner_positions:'2-2-2-1',track_condition:'良',source_url:FUJI_HISTORY_SOURCE_URL,observed_at:FUJI_HISTORY_OBSERVED_AT},

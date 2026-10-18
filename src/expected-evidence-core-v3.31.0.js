@@ -28,14 +28,15 @@ function weightedAverage(values, weights) {
 function finishPercentile(row) {
   const finish = Number(row.finish_position);
   const field = Number(row.field_size);
-  if (!Number.isFinite(finish) || !Number.isFinite(field) || finish < 1 || field < 2 || finish > field) return null;
+  if (!Number.isInteger(finish) || !Number.isInteger(field) || finish < 1 || field < 2 || finish > field) return null;
   return clamp(1 - (finish - 1) / (field - 1), 0, 1);
 }
 
 function summarizeRows(rows) {
   const percentiles = rows.map(finishPercentile).filter((v) => v != null);
-  const wins = rows.filter((r) => Number(r.finish_position) === 1).length;
-  const top3 = rows.filter((r) => Number(r.finish_position) >= 1 && Number(r.finish_position) <= 3).length;
+  const validRows = rows.filter((r) => finishPercentile(r) != null);
+  const wins = validRows.filter((r) => Number(r.finish_position) === 1).length;
+  const top3 = validRows.filter((r) => Number(r.finish_position) >= 1 && Number(r.finish_position) <= 3).length;
   const last3fValues = rows.map((r) => Number(r.last3f)).filter((v) => Number.isFinite(v) && v > 0);
   return {
     rows: rows.length,

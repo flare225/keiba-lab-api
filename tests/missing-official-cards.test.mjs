@@ -20,3 +20,8 @@ test('stored same-day same-venue card navigation is preferred over calendar disc
  const p=await missingOfficialCards(db,date,now);assert.equal(p.missing[0].sourceUrl,sibling);assert.equal(p.missing[0].sourceBasis,'stored-sibling-card');
  await collectMissingOfficialCard(db,{date,venue:'新潟',raceNo:11},{now:()=>now,discover:async(_db,s)=>{assert.equal(s.officialRosterDiscoveryUrl,sibling);assert.equal(s.officialCardUrl,undefined);return{ok:true,status:'official-card-link-found',externalRequests:1}}});sql.close();
 });
+
+test('scheduled upcoming-only cards do not consume a slot for finished races',async()=>{
+ const {sql,db}=fixture();sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(date,'新潟',4,'11:05',card);
+ const r=await collectMissingOfficialCard(db,{date,upcomingOnly:true},{now:()=>now,discover:async()=>assert.fail('must not fetch past card in urgent slot')});assert.equal(r.externalRequests,0);sql.close();
+});

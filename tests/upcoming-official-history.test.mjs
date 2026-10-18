@@ -38,3 +38,11 @@ test('unresolved early cards cannot starve later ordinary races and status reads
  }
  assert.equal(acquired,true);
 });
+
+test('today profiles without links are collected before future cards',async()=>{
+ const today={raceKey:'today',date:'2026-10-17',venue:'新潟',raceNo:11},future={...today,raceKey:'future',date:'2026-10-25'};let selected;
+ const result=await collectUpcomingOfficialHistory({}, {now:()=>stamp,plan:async()=>[future,today],status:async()=>({runners:[{storedRows:0,due:true,profileUrl:null}]}),collect:async(_,input)=>{selected=input;return{externalRequests:1}}});
+ assert.equal(selected.date,today.date);assert.equal(result.priorityRaceKey,'today');
+ let futureReads=0;
+ assert.equal((await collectUpcomingOfficialHistory({}, {now:()=>stamp,plan:async()=>[today,future],status:async(_,input)=>{if(input.date===future.date)futureReads++;return{runners:[{storedRows:0,due:false}]}},collect:async()=>assert.fail('must not collect')})).status,'awaiting-today-history');assert.equal(futureReads,0);
+});

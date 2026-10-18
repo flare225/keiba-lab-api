@@ -19,7 +19,7 @@ export async function verifyPublishedRelease(expectedVersion,{fetcher=globalThis
  const response=await fetcher(endpoint,{redirect:'error',signal:AbortSignal.timeout(15000)});
  if(!response.ok)throw Error('Release identity check blocked: HTTP '+response.status+'; no retry performed');
  let body;try{body=await response.json();}catch{throw Error('Release identity response is not JSON')}
- if(body?.ok!==true||body.version!==expectedVersion)throw Error('Published release identity does not match tested source');
+ if(body?.ok!==true||body.version!==expectedVersion)throw Error('Published release identity does not match tested source: expected '+expectedVersion+', received '+(typeof body?.version==='string'&&/^[0-9.]{1,30}$/.test(body.version)?body.version:'unknown'));
  return{ok:true,version:body.version,scope:'release-identity-only',databaseVerified:false};
 }
 

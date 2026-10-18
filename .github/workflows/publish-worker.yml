@@ -58,4 +58,6 @@ jobs:
           command: deploy --config wrangler.jsonc
       - name: Verify published release without database reads
         if: steps.credential.outputs.ready == 'true'
-        run: node scripts/verify-published-release.mjs
+        run: |
+          sleep 15
+          node scripts/verify-published-release.mjs

@@ -36,6 +36,7 @@ async function saveDrawnOfficialCard(db,html,url,responseStatus,source,stamp,dep
 }
 // Follow only published links. Each delivery fetches one page under the shared lease.
 export async function discoverExpectedCard(db,source,deps={}){
+ if(source.officialCardUrl){const meta=metaFromRacecardUrl(officialUrl(source.officialCardUrl));if(!meta||meta.date!==source.date||meta.venue!==source.venue||meta.raceNo!==Number(source.raceNo))throw Error('公式出馬表リンクの対象が一致しません。');}
  if(!source.officialRosterDiscoveryUrl)return {ok:true,status:'not-configured',externalRequests:0};
  const now=deps.now||Date.now,stamp=now();await ensureCollectionTables(db);
  await db.prepare('CREATE TABLE IF NOT EXISTS lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,card_url TEXT,next_attempt_at INTEGER NOT NULL,status TEXT,error TEXT)').run();
@@ -43,7 +44,7 @@ export async function discoverExpectedCard(db,source,deps={}){
  if(Number(previous?.next_attempt_at)>stamp)return {ok:true,status:'card-discovery-not-due',externalRequests:0};
  const token=crypto.randomUUID(),claim=await db.prepare("UPDATE lab_history_collection_budget SET locked_until=?,lock_token=? WHERE name='jra-history' AND locked_until<=? AND next_batch_at<=?").bind(stamp+120000,token,stamp,stamp).run();
  if(Number(claim.meta?.changes)!==1)return {ok:true,status:'cooldown',externalRequests:0};
- let pause=60000,next=stamp+3600000,card=previous?.card_url||null,status='failed',error=null;
+ let pause=60000,next=stamp+3600000,card=previous?.card_url||source.officialCardUrl||null,status='failed',error=null;
  try{
   const url=officialUrl(card||source.officialRosterDiscoveryUrl);
   if(card){const identity=metaFromRacecardUrl(url);if(!identity||identity.date!==source.date||identity.venue!==source.venue||identity.raceNo!==Number(source.raceNo))throw Error('公式出馬表リンクの対象レースが一致しません。');}

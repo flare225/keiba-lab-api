@@ -73,3 +73,24 @@ race-relative time features (only with a complete comparable race), and a new
 separately versioned experiment for pace/position features. New model dimensions
 must not mutate the existing frozen experiment. Probability calibration and
 odds-based expected value follow measured out-of-date validation, not raw scores.
+
+## Operations readback, 2026-10-18 12:30 JST
+
+Use the application's native Node.js fetch client for authorized Worker operations.
+The local Python urllib client returned Cloudflare HTTP403/error1010 while Node's
+standard fetch returned HTTP200 from the identical deploy-check endpoint in the
+same environment. No alternate hostname, browser impersonation, or security-rule
+change was needed. A failed Python request does not establish that Worker/D1 is
+unavailable. Never replay writes to diagnose a read failure.
+
+Node readback confirmed final marks and hash-verified immutable locks for Fuji S
+(14 entries, revision 6, lock 2026-10-17T06:32:13.879Z, deadline 06:45Z) and Shuka
+Sho (17 entries, revision 1, lock 2026-10-18T02:17:52.157Z, deadline 06:40Z).
+Both official cards and at least three stored history rows per runner exist.
+Fuji S official profile histories still have zero last3f observations; basic row
+coverage must not be described as complete rich-history coverage.
+
+Work-progress reported 33 eligible training races over two days and a created
+candidate. Validation had 2 races over two days against the minimum of 10 races;
+canReviewCandidate was false. These counts are point-in-time observations, not
+an accuracy improvement claim or permission to rebuild past pre-race features.

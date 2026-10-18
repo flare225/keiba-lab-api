@@ -20,7 +20,9 @@ export async function readUserMarkLock(db,raceKey,phase){
  let row;try{row=await db.prepare('SELECT * FROM lab_user_mark_locks WHERE race_key=? AND phase=?').bind(raceKey,phase).first()}catch(e){if(/no such table/.test(String(e)))return null;throw e}
  if(!row)return null;
  if(await sha256(row.snapshot_json)!==row.snapshot_sha256)throw Error('事前LOCKのハッシュが一致しません。');
- return {revisionId:row.revision_id,lockedAt:row.locked_at,deadline:row.deadline,snapshotSha256:row.snapshot_sha256,immutable:true};
+ const snapshot=JSON.parse(row.snapshot_json);
+ if(snapshot.raceKey!==raceKey||snapshot.phase!==phase||snapshot.revisionId!==row.revision_id||snapshot.lockedAt!==row.locked_at||snapshot.deadline!==row.deadline)throw Error('事前LOCKの記録が一致しません。');
+ return {revisionId:row.revision_id,lockedAt:row.locked_at,deadline:row.deadline,snapshotSha256:row.snapshot_sha256,immutable:true,integrityVerified:true,auditSha256:snapshot.auditSha256};
 }
 export async function lockUserMark(db,input,now=Date.now()){
  const date=String(input.date||''),venue=String(input.venue||''),no=Number(input.raceNo),phase=input.phase;

@@ -68,3 +68,16 @@ test('any stored race uses its own course, full card, and historical age correct
  await assert.rejects(()=>raceHistoryAssessment(db,{date:'2026-10-11',venue:'京都',raceNo:1,marks:[{horseName:'馬A',mark:'◎'}]}),/出馬表/);sql.close();
  assert.throws(()=>targetInput({date:'2026-02-30',venue:'東京',raceNo:1}));
 });
+
+test('invalid finish identities cannot inflate rates or create fractional placing scores',()=>{
+ const recent=[{...run,finish:5,fieldSize:10},{...run,finish:1,fieldSize:null},{...run,finish:2,fieldSize:1},{...run,finish:1.5,fieldSize:10},{...run,finish:1,fieldSize:10.5}];
+ const a=assessExpectedHistory({available:true,recent},race,'良');
+ assert.equal(a.validFinishRows,1);
+ assert.equal(a.detail.ability.validFinishRows,1);
+ assert.equal(a.detail.ability.winRatePct,0);
+ assert.equal(a.detail.ability.top3RatePct,0);
+ assert.equal(a.detail.course.exactDistance.winRatePct,0);
+ assert.equal(a.detail.ground.top3RatePct,0);
+ const b=assessExpectedHistory({available:true,recent:[{...run,finish:1.5}]},race);
+ assert.equal(b.available,false);assert.equal(b.evidenceScore,null);
+});

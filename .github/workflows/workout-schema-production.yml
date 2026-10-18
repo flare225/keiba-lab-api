@@ -1,11 +1,5 @@
 name: Live workout schema smoke
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/workout-evidence-v3.49.0.js'
-      - 'src/index-v3.49.0.js'
-      - '.github/workflows/workout-schema-production.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,7 +15,7 @@ jobs:
         run: |
           set -euo pipefail
           for date in 2026-10-10 2026-10-11; do
-            response="$(curl -fsS --retry 2 --retry-delay 2 --max-time 25 \
+            response="$(curl -fsS --max-time 25 \
               --get "$WORKER/v1/lab/workouts" \
               --data-urlencode "date=$date" \
               --data-urlencode "venue=東京" \

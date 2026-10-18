@@ -19,7 +19,25 @@ export function initComparison({document,storage=globalThis.localStorage,fetcher
   results.innerHTML=comparison.rows.map(r=>{
    const h=r.history,old=previous?.rows.find(x=>x.horseName===r.horseName),change=old&&previous.track!==track.value&&old.score!=null&&r.score!=null?'<p class="meta">前の馬場想定 '+esc(previous.track||'未確定')+'：'+value(old.score)+' → 今回：'+value(r.score)+'</p>':'';
    const rank=r.referenceRank==null?'順位は保留':(comparison.scoredRunners<comparison.runnerPool?'評価できた'+comparison.scoredRunners+'頭内 ':'全'+comparison.runnerPool+'頭内 ')+r.referenceRank+'位'+(r.tiedCount>1?'（同点'+r.tiedCount+'頭）':'');
-   const p=r.positionEvidence,position='<h3>過去の位置取り</h3><p>'+esc(p.label)+' · 通過…1348 tokens truncated…ntById('baselineNote').textContent='';status.textContent='初期印を付けると、DBの仮評価が自動で表示されます。';button.disabled=false;return;}
+   const p=r.positionEvidence,position='<h3>過去の位置取り</h3><p>'+esc(p.label)+' · 通過順 '+p.validRows+'走</p><p class="meta">'+esc(p.available?'同じ芝・ダート、距離差400m以内の過去走。最初に記録された通過地点の傾向です。':p.missingReason||'条件に合う通過順を3走以上確認すると表示します。')+' 実際のペース・有利不利は未判定。参考指数への加点はありません。</p>';
+   return '<article class="card"><div class="horsehead"><b>'+esc(r.humanMark)+' '+esc(r.horseName)+'</b><span class="meta">'+(r.horseNo==null?'馬番未確定':r.horseNo+'番')+'</span></div><div class="status"><strong>'+esc(r.label)+'</strong><p>'+esc(r.explanation)+'</p><b>参考指数 '+value(r.score,' / 100')+'</b> · '+esc(rank)+change+'</div><h3>DBが見ている材料</h3><div class="reason-grid">'+r.reasons.map(x=>'<div class="metric"><span>'+esc(x.label)+'</span><b>'+value(x.score)+'</b><small>'+(x.rows==null?'走数は未取得':x.rows+'走')+'</small></div>').join('')+'</div>'+position+'<h3>まだ足りない情報</h3><ul class="gaps">'+r.gaps.map(g=>'<li>'+esc(g)+'</li>').join('')+'</ul><details><summary>根拠の過去走 '+(h?.recent?.length||0)+'走を見る</summary>'+(h?.recent||[]).map(x=>'<div class="race"><b>'+esc(x.date)+' '+esc(x.venue)+' '+esc(x.raceName)+'</b> · '+value(x.finish,'着')+'<small>'+value(x.surface)+' '+value(x.distance,'m')+' / 通過 '+value(x.cornerPositions)+' / 上がり3F '+value(x.last3f,'秒')+' / '+esc(x.dbSource?.includes('netkeiba')?'netkeiba補完・JRA未照合':'保存済みDB')+'</small></div>').join('')+'</details></article>';
+  }).join('');
+  const marksByName=new Map(marks.map(m=>[m.horseName,m.mark])),positions=new Map(comparison.positionField.map(r=>[r.horseName,r])),coverage=comparison.positionCoverage;
+  const fieldPosition='<h3>全馬の位置取り材料</h3><p>位置取りを確認できる馬 '+coverage.observedRunners+'/'+coverage.runnerPool+'頭</p><p>前方傾向：'+esc(coverage.frontCandidates.join('、')||'確認できた馬なし')+'</p><p>通過順の補完待ち：'+esc(coverage.unknownHorses.join('、')||'なし')+'</p><p class="meta">表示した過去走の傾向です。先行傾向の頭数だけでペースや有利不利を決めません。</p>';
+  document.getElementById('allRunnerTable').innerHTML=fieldPosition+'<h2>全馬の参考評価</h2><p class="meta">印を付けていない馬も同じ条件で集計。同点に馬番で差を付けません。</p><div class="table-scroll"><table><thead><tr><th>初期印</th><th>馬名</th><th>参考順位</th><th>参考指数</th><th>有効着順</th><th>位置取り傾向</th><th>有効通過順</th></tr></thead><tbody>'+data.assessment.allRunners.map(r=>'<tr><td>'+esc(marksByName.get(r.horseName)||'—')+'</td><th>'+esc(r.horseName)+'</th><td>'+value(r.referenceRank,'位')+(r.tiedCount>1?'（同点）':'')+'</td><td>'+value(r.assessment.evidenceScore)+'</td><td>'+r.assessment.validFinishRows+'走</td><td>'+esc(positions.get(r.horseName).label)+'</td><td>'+positions.get(r.horseName).validRows+'走</td></tr>').join('')+'</tbody></table></div>';
+  cache.set('previous',{track:track.value,rows:comparison.rows.map(r=>({horseName:r.horseName,score:r.score}))});
+ }
+ async function dataFor(trackKey,force){
+  const old=cache.get(trackKey);if(!force&&old&&now()-old.at<60000)return old.data;
+  if(pending.has(trackKey))return pending.get(trackKey);
+  const work=queue.catch(()=>{}).then(async()=>{
+   const response=await fetcher('/v1/lab/mark-comparison',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({date:target.date,venue:target.venue,raceNo:target.raceNo,phase:'initial',sourceSnapshotId:target.snapshotId,track:trackKey||null,marks:target.names.map(horseName=>({horseName,mark:'注'}))})});
+   const data=await response.json();if(!response.ok||!data.ok)throw Error(data.error||'DBの仮評価を取得できませんでした。');cache.set(trackKey,{at:now(),data});return data;
+  });pending.set(trackKey,work);queue=work;try{return await work;}finally{pending.delete(trackKey);}
+ }
+ async function compare(force=false){
+  clearTimer(timer);const id=++sequence,marks=selected(),trackKey=track.value;save();
+  if(!marks.length){results.innerHTML='';document.getElementById('comparisonSummary').textContent='';document.getElementById('allRunnerTable').textContent='';document.getElementById('baselineNote').textContent='';status.textContent='初期印を付けると、DBの仮評価が自動で表示されます。';button.disabled=false;return;}
   status.textContent='全馬の過去DBから仮評価を確認しています…';results.innerHTML='';document.getElementById('comparisonSummary').textContent='';document.getElementById('allRunnerTable').textContent='';document.getElementById('baselineNote').textContent='';button.disabled=true;
   try{const data=await dataFor(trackKey,force);if(id!==sequence)return;render(data,marks);status.textContent='初期印 '+marks.length+'頭を比較しました。'+(cache.get(trackKey)?'取得済みのDB評価を使い、印を変更しても同じ履歴を再取得しません。':'');}
   catch(e){if(id===sequence)status.textContent='仮比較を表示できませんでした：'+e.message;}

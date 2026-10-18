@@ -6,6 +6,7 @@ on:
       - 'src/**'
       - 'wrangler.jsonc'
       - '.github/workflows/publish-worker.yml'
+      - 'scripts/verify-published-release.mjs'
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,6 +22,11 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test exact release source before publishing
+        run: node --test tests/*.test.mjs
       - name: Check deployment credentials
         id: credential
         shell: bash
@@ -50,30 +56,6 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy --config wrangler.jsonc
-      - name: Verify published workout evidence API
+      - name: Verify published release without database reads
         if: steps.credential.outputs.ready == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          expected="$(node - <<'NODE'
-          const fs = require('fs');
-          const config = fs.readFileSync('wrangler.jsonc','utf8');
-          const entry = config.match(/"main"\s*:\s*"([^"]+)"/);
-          if(!entry) process.exit(2);
-          const version = fs.readFileSync(entry[1],'utf8').match(/export const VERSION\s*=\s*['"]([^'"]+)['"]/);
-          if(!version) process.exit(3);
-          process.stdout.write(version[1]);
-          NODE
-          )"
-          test -n "$expected"
-          url='https://keiba-lab-api.sekai-no-bancyou.workers.dev/v1/lab/workouts?date=2026-10-11&venue=%E6%9D%B1%E4%BA%AC&race_no=11'
-          for attempt in $(seq 1 10); do
-            body="$(curl -fsS --max-time 15 "$url" || true)"
-            if printf '%s' "$body" | jq -e --arg expected "$expected" '.version == $expected and .ok == true and .modelIncorporated == false and (.coverage.official >= 0)' >/dev/null 2>&1; then
-              echo 'Workout evidence API is live (without claiming licensed feed or score incorporation)'
-              exit 0
-            fi
-            sleep 3
-          done
-          echo "New Worker endpoint did not pass verified API check" >&2
-          exit 1
+        run: node scripts/verify-published-release.mjs

@@ -33,6 +33,6 @@ test('deployment identity is current and remains readable without database or ca
  const DB={prepare(){throw Error('deployment check must not touch D1')}};
  const response=await worker.fetch(new Request('https://api.test/v1/lab/deploy-check'),{DB},{}),body=await response.json();
  assert.equal(response.status,200);assert.equal(body.version,VERSION);
- assert.equal(body.build,'comparison-field-position-and-evidence-history');
+ assert.equal(body.build,'verified-user-mark-persistence');
  assert.equal(response.headers.get('cache-control'),'no-store');
 });

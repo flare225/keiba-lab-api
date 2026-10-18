@@ -1,12 +1,13 @@
 import app from './index-v3.8.8.js';
 import {sha256} from './card-evidence.js';
+import {commitVerifiedMarks} from './verified-mark-storage.js';
 
 export const VERSION='3.8.9';
 const H={'content-type':'application/json; charset=UTF-8','access-control-allow-origin':'*','access-control-allow-methods':'GET,POST,OPTIONS','access-control-allow-headers':'content-type,authorization'};
 const json=(d,s=200)=>new Response(JSON.stringify(d,null,2),{status:s,headers:H});
 const stable=v=>JSON.stringify(sort(v));
 function sort(v){return Array.isArray(v)?v.map(sort):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,sort(v[k])])):v}
-async function one(db,q,a=[]){try{return await db.prepare(q).bind(...a).first()}catch{return null}}
+async function one(db,q,a=[]){return await db.prepare(q).bind(...a).first()}
 
 async function ensureImmutableMarkStorage(db){
  await db.prepare(`CREATE TABLE IF NOT EXISTS lab_user_mark_revisions(revision_id TEXT PRIMARY KEY,race_key TEXT NOT NULL,phase TEXT NOT NULL,revision_no INTEGER NOT NULL,track_condition TEXT,identity_basis TEXT NOT NULL,mark_payload_sha256 TEXT NOT NULL,audit_sha256 TEXT NOT NULL,audit_json TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(race_key,phase,revision_no))`).run();
@@ -49,8 +50,9 @@ async function saveImmutable(request,env,ctx){
  const frozen={...data,version:VERSION,stage:'user-mark-saved-and-crosschecked',storageIntegrity:'immutable-at-insert',scoreMutation:false};
  const auditJson=stable(frozen),auditSha256=await sha256(auditJson);
  const statements=[env.DB.prepare('INSERT INTO lab_user_mark_revisions(revision_id,race_key,phase,revision_no,track_condition,identity_basis,mark_payload_sha256,audit_sha256,audit_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(revisionId,data.race.raceKey,data.phase,revisionNo,body.track||data.audit?.trackAssumption||null,data.identityBasis||'unknown',markPayloadSha256,auditSha256,auditJson,stamp),...marks.map(m=>env.DB.prepare('INSERT INTO lab_user_mark_entries(revision_id,race_key,phase,horse_no,horse_name,mark,note,ordinal,created_at) VALUES(?,?,?,?,?,?,?,?,?)').bind(revisionId,data.race.raceKey,data.phase,m.horseNo,m.horseName,m.mark,m.note,m.ordinal,stamp))];
- if(env.DB.batch)await env.DB.batch(statements);else for(const s of statements)await s.run();
- return json({...frozen,revisionNo,revisionId,markPayloadSha256,auditSha256,storageAtomic:Boolean(env.DB.batch),writeReady:true});
+ const readback=await commitVerifiedMarks(env.DB,statements,{revisionId,raceKey:data.race.raceKey,phase:data.phase,revisionNo,markPayloadSha256,auditSha256,auditJson,marks});
+ if(!readback.verified)return json({ok:false,version:VERSION,stage:'user-mark-save-readback-pending',revisionNo,revisionId,markPayloadSha256,auditSha256,storageAtomic:true,storageIntegrity:'readback-pending',readback,retryWrite:false,scoreMutation:false,error:'書き込み後のDB照合を完了できません。再保存せず、改訂IDから保存内容を確認してください。'},503);
+ return json({...frozen,revisionNo,revisionId,markPayloadSha256,auditSha256,storageAtomic:true,storageIntegrity:'verified-by-readback',readback,writeReady:true});
 }
 
 export default{
@@ -59,7 +61,7 @@ export default{
   if(request.method==='OPTIONS')return new Response(null,{status:204,headers:H});
   if(url.pathname==='/')return json({ok:true,service:'keiba-lab-api',version:VERSION,phase:'immutable human-mark revisions'});
   if(url.pathname==='/v1/lab/deploy-check')return json({ok:true,version:VERSION,build:'immutable-user-mark-revisions',now:new Date().toISOString()});
-  if(url.pathname==='/v1/lab/user-mark-capabilities')return json({ok:true,version:VERSION,phases:['initial','post_draw','final'],marks:['◎','○','▲','△','☆','注','消'],writeProtection:'Bearer secret + confirm=SAVE',writeReady:Boolean(env.USER_MARK_WRITE_TOKEN),principles:{humanMarksAreIndependentInput:true,scoreMutation:false,officialCardRequiredForPostDrawAndFinal:true,officialCardEvidenceRequired:true,initialCanUseIsolatedPrecardNames:true,horseNumbersNeverInferredBeforeOfficialCard:true,auditSnapshotPersistedWithRevision:true,nullEvidenceNeverPresentedAsZero:true,revisionImmutableAfterInsert:true,auditFinalizedBeforeInsert:true}});
+  if(url.pathname==='/v1/lab/user-mark-capabilities')return json({ok:true,version:VERSION,phases:['initial','post_draw','final'],marks:['◎','○','▲','△','☆','注','消'],writeProtection:'Bearer secret + confirm=SAVE',writeReady:Boolean(env.USER_MARK_WRITE_TOKEN),principles:{humanMarksAreIndependentInput:true,scoreMutation:false,officialCardRequiredForPostDrawAndFinal:true,officialCardEvidenceRequired:true,initialCanUseIsolatedPrecardNames:true,horseNumbersNeverInferredBeforeOfficialCard:true,auditSnapshotPersistedWithRevision:true,nullEvidenceNeverPresentedAsZero:true,revisionImmutableAfterInsert:true,auditFinalizedBeforeInsert:true,saveSuccessRequiresDbReadback:true}});
   if(!env.DB)return json({ok:false,version:VERSION,error:'D1 DB missing'},500);
   try{
    if(url.pathname==='/v1/lab/user-marks'&&request.method==='POST')return await saveImmutable(request,env,ctx);

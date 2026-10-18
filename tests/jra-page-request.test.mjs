@@ -9,3 +9,8 @@ test('published database URLs become form POST without guessing identities or ho
  for(const n of [403,429,503])assert.equal(isJraSourceBlocked(n),true);
  assert.equal(isJraSourceBlocked(200),false);
 });
+
+test('published official race cards use the accessD form action',()=>{
+ const u='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0104202604021120261018/AA';
+ const r=jraPageRequest(u);assert.equal(r.options.method,'POST');assert.equal(r.url,'https://www.jra.go.jp/JRADB/accessD.html');assert.equal(new URLSearchParams(r.options.body).get('CNAME'),new URL(u).searchParams.get('CNAME'));
+});

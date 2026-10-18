@@ -19,6 +19,6 @@ test('Worker release only deploys with credentials and verifies the live endpoin
  assert.match(workflow,/if: steps\.credential\.outputs\.ready == 'true'/);
  assert.match(workflow,/cloudflare\/wrangler-action@v3/);
  assert.match(workflow,/command: deploy --config wrangler\.jsonc/);
- assert.match(workflow,/Verify published workout evidence API/);
- assert.match(workflow,/New Worker endpoint did not pass verified API check/);
+ assert.match(workflow,/Verify published release without database reads/);
+ assert.match(workflow,/node scripts\/verify-published-release\.mjs/);
 });

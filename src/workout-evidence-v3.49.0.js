@@ -78,7 +78,12 @@ export async function syncWorkoutEvidence(db,env,target,fetcher=fetch){
  .bind(x.raceKey,x.horseNo,x.horseName,x.workoutDate,x.course,x.sessionId,x.fourF,x.lastF,x.sourceName,x.sourceId,x.importedAt));
  if(!db.batch)throw Error('データベースの一括保存が使えません。');
  await db.batch(statements);
- return{ok:true,stored:entries.length,stage:'source-collected',sourceName:input.sourceName,modelIncorporated:false};
+ let saved;
+ try{saved=await query(db,'SELECT horse_no,horse_name,workout_date,course,session_id,four_f,last_f,source_name,source_record_id,imported_at FROM lab_workout_evidence_v349 WHERE race_key=?',[race.race_key]);}
+ catch{return{ok:false,stored:null,attemptedRows:entries.length,stage:'workout-readback-pending',retryWrite:false,modelIncorporated:false};}
+ const verified=entries.every(x=>saved.some(r=>Number(r.horse_no)===x.horseNo&&r.horse_name===x.horseName&&r.workout_date===x.workoutDate&&r.course===x.course&&r.session_id===x.sessionId&&r.four_f===x.fourF&&r.last_f===x.lastF&&r.source_name===x.sourceName&&(r.source_record_id||'')===x.sourceId&&r.imported_at===x.importedAt));
+ if(!verified)return{ok:false,stored:null,attemptedRows:entries.length,stage:'workout-readback-mismatch',retryWrite:false,modelIncorporated:false};
+ return{ok:true,stored:entries.length,stage:'source-collected',storageIntegrity:'verified-by-readback',sourceName:input.sourceName,modelIncorporated:false};
 }
 export async function workoutEndpoint(request,env,fetcher=fetch){
  const url=new URL(request.url);if(request.method==='OPTIONS')return new Response(null,{status:204,headers:HEADERS});
@@ -92,7 +97,7 @@ export async function workoutEndpoint(request,env,fetcher=fetch){
    const expected=env.WORKOUT_SYNC_TOKEN;
    if(!expected||request.headers.get('authorization')!=='Bearer '+expected)return reply({ok:false,error:'許可されていない取得操作です。'},403);
    const body=await request.json();if(body.confirm!=='SYNC')return reply({ok:false,error:'confirm=SYNC required'},400);
-   const target=workoutTarget(body);return reply(await syncWorkoutEvidence(env.DB,env,target,fetcher));
+   const target=workoutTarget(body),result=await syncWorkoutEvidence(env.DB,env,target,fetcher);return reply(result,result.ok?200:503);
   }
   return reply({ok:false,error:'method not allowed'},405);
  }catch(e){

@@ -31,3 +31,11 @@ test('legacy records without hash and invalid timestamps remain unverified',asyn
  }
  const r=await revision();delete r.auditSha256;assert.equal((await markRecordProvenance(r,'2026-10-11')).integrityVerified,false);
 });
+
+test('verified explicit lock proves pre-race timing without granting learning credit',async()=>{
+ const r=await revision('2026-10-11T01:00:00.000Z');r.revisionId='race|final|1';
+ const lock={revisionId:r.revisionId,auditSha256:r.auditSha256,immutable:true,integrityVerified:true,lockedAt:'2026-10-11T02:00:00.000Z',deadline:'2026-10-11T06:40:00.000Z'};
+ const p=await markRecordProvenance(r,'2026-10-11',lock);
+ assert.equal(p.preRaceLock,true);assert.equal(p.status,'verified-pre-race-user-lock');assert.equal(p.validationCreditEligible,false);
+ for(const change of [{revisionId:'other'},{auditSha256:'other'},{integrityVerified:false},{lockedAt:lock.deadline},{lockedAt:'2026-10-11T00:00:00.000Z'},{deadline:'2026-10-12T06:40:00.000Z'}])assert.equal((await markRecordProvenance(r,'2026-10-11',{...lock,...change})).preRaceLock,false);
+});

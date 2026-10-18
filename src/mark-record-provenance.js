@@ -1,7 +1,7 @@
 import {sha256} from './card-evidence.js';
 
 // A prior-day server record is evidence of timing, not an explicit prediction LOCK.
-export async function markRecordProvenance(revision,raceDate){
+export async function markRecordProvenance(revision,raceDate,verifiedLock=null){
  const result={status:'unverified',integrityVerified:false,recordedBeforeRaceDay:false,preRaceLock:false,validationCreditEligible:false};
  if(!/^\d{4}-\d{2}-\d{2}$/.test(raceDate||''))return result;
  const stamp=revision.createdAt;
@@ -25,5 +25,10 @@ export async function markRecordProvenance(revision,raceDate){
  }
  result.integrityVerified=true;
  if(Date.parse(stamp)<midnight){result.recordedBeforeRaceDay=true;result.status='verified-prior-day-record'}
+ if(verifiedLock?.immutable===true&&verifiedLock?.integrityVerified===true&&verifiedLock.revisionId===revision.revisionId&&verifiedLock.auditSha256===expected){
+  const created=Date.parse(stamp),locked=Date.parse(verifiedLock.lockedAt),deadline=Date.parse(verifiedLock.deadline);
+  const deadlineDay=Number.isFinite(deadline)?new Date(deadline+9*3600000).toISOString().slice(0,10):null;
+  if(Number.isFinite(locked)&&Number.isFinite(deadline)&&created<=locked&&locked<deadline&&deadlineDay===raceDate){result.preRaceLock=true;result.status='verified-pre-race-user-lock';}
+ }
  return result;
 }

@@ -5,10 +5,10 @@ import {targetInput} from './race-history-assessment-v3.31.0.js';
 
 export async function missingOfficialCards(db,date,stamp=Date.now()){
  targetInput({date,venue:'東京',raceNo:1});
- const rows=(await db.prepare(`SELECT p.race_date,p.venue,p.race_no,p.start_time,p.source_url FROM jra_race_program p WHERE p.race_date=? AND NOT EXISTS(SELECT 1 FROM jra_races r WHERE r.race_date=p.race_date AND r.venue=p.venue AND r.race_no=p.race_no AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key)) ORDER BY p.race_no DESC,p.venue LIMIT 120`).bind(date).all()).results||[];
+ const rows=(await db.prepare(`SELECT p.race_date,p.venue,p.race_no,p.start_time,p.source_url,(SELECT c.source_url FROM jra_races c WHERE c.race_date=p.race_date AND c.venue=p.venue AND c.runner_count>0 ORDER BY c.race_no LIMIT 1) sibling_url FROM jra_race_program p WHERE p.race_date=? AND NOT EXISTS(SELECT 1 FROM jra_races r WHERE r.race_date=p.race_date AND r.venue=p.venue AND r.race_no=p.race_no AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key)) ORDER BY p.race_no DESC,p.venue LIMIT 120`).bind(date).all()).results||[];
  const unique=[...new Map(rows.map(r=>[r.venue+':'+r.race_no,r])).values()];
  let gate=null;try{gate=await db.prepare("SELECT next_batch_at FROM lab_history_collection_budget WHERE name='jra-history'").first();}catch(e){if(!/no such table/.test(String(e)))throw e;}
- return{ok:true,date,missing:unique.map(r=>({date:r.race_date,venue:r.venue,raceNo:Number(r.race_no),startTime:r.start_time,sourceUrl:r.source_url})),nextBatchAt:Number(gate?.next_batch_at)>0?new Date(Number(gate.next_batch_at)).toISOString():null,externalRequests:0};
+ return{ok:true,date,missing:unique.map(r=>({date:r.race_date,venue:r.venue,raceNo:Number(r.race_no),startTime:r.start_time,sourceUrl:r.sibling_url||r.source_url,sourceBasis:r.sibling_url?'stored-sibling-card':'official-program'})),nextBatchAt:Number(gate?.next_batch_at)>0?new Date(Number(gate.next_batch_at)).toISOString():null,externalRequests:0};
 }
 export async function collectMissingOfficialCard(db,input={},deps={}){
  const stamp=(deps.now||Date.now)(),date=input.date||jstDay(stamp),plan=await missingOfficialCards(db,date,stamp);
@@ -24,7 +24,7 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  const r=candidates[0];if(!r)return{ok:true,status:'complete',externalRequests:0};
  let url;try{url=officialUrl(r.sourceUrl);}catch{return{ok:false,status:'missing-program-source',externalRequests:0};}
  const meta=metaFromRacecardUrl(url);
- const source={date,venue:r.venue,raceNo:r.raceNo,snapshotId:`official-card:${date}:${r.venue}:${r.raceNo}`,officialRosterDiscoveryUrl:url};
+ const source={date,venue:r.venue,raceNo:r.raceNo,snapshotId:`official-card:${date}:${r.venue}:${r.raceNo}:${r.sourceBasis}`,officialRosterDiscoveryUrl:url};
  if(meta?.date===date&&meta.venue===r.venue&&meta.raceNo===r.raceNo)source.officialCardUrl=url;
  return{...await (deps.discover||discoverExpectedCard)(db,source,deps),target:{date,venue:r.venue,raceNo:r.raceNo},predictionRebuilt:false};
 }

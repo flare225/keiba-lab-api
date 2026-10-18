@@ -81,3 +81,18 @@ test('invalid finish identities cannot inflate rates or create fractional placin
  const b=assessExpectedHistory({available:true,recent:[{...run,finish:1.5}]},race);
  assert.equal(b.available,false);assert.equal(b.evidenceScore,null);
 });
+
+test('recent-three live policy uses latest dates and only falls back for missing conditions',()=>{
+ const target={date:'2026-10-18',surface:'芝',venue:'京都',distance:2000};
+ const recent=[{...run,date:'2026-05-01',venue:'京都',distance:2000,trackCondition:'重'},...['2026-07-01','2026-09-01','2026-08-01'].map(date=>({...run,date,venue:'東京',distance:1600,finish:5}))];
+ const h={available:true,recent};
+ const legacy=assessExpectedHistory(h,target,'重');
+ const next=assessExpectedHistory(h,target,'重','recent-three-v1');
+ assert.equal(legacy.historyRows,4);assert.equal(next.historyRows,3);
+ assert.deepEqual(next.historySelection.primaryDates,['2026-09-01','2026-08-01','2026-07-01']);
+ assert.equal(next.detail.ability.winRatePct,0);assert.equal(next.historySelection.courseFallback,true);assert.equal(next.historySelection.groundFallback,true);
+ assert.equal(next.detail.ground.validFinishRows,1);assert.equal(next.detail.course.sameVenueWithin200m.validFinishRows,1);
+ assert.equal(h.recent.length,4);assert.equal(h.recent[0].date,'2026-05-01');
+ const enough=assessExpectedHistory({available:true,recent:recent.map(r=>({...r,venue:'京都',distance:2000,trackCondition:'重'}))},target,'重','recent-three-v1');
+ assert.equal(enough.historySelection.courseFallback,false);assert.equal(enough.historySelection.groundFallback,false);assert.equal(enough.detail.ground.validFinishRows,3);
+});

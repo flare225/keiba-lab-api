@@ -112,11 +112,11 @@ function groundFeatures(history, race, currentTrack) {
   };
 }
 
-export function scoreRunner(history, race, currentTrack) {
+export function scoreRunner(history, race, currentTrack, context = {}) {
   const ability = summarizeRows(history);
   const recent = recentFormFeatures(history);
-  const course = courseDistanceFeatures(history, race);
-  const ground = groundFeatures(history, race, currentTrack);
+  const course = courseDistanceFeatures(context.courseHistory || history, race);
+  const ground = groundFeatures(context.groundHistory || history, race, currentTrack);
 
   const targetWeights = {
     basicAbilityResults: 25,

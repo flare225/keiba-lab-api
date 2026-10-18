@@ -3,22 +3,31 @@ import {scoreRunner} from './expected-evidence-core-v3.31.0.js';
 import {expectedRunnerPreview,validatePreview} from './expected-runner-preview-v3.30.0.js';
 const CONDITIONS=['良','稍重','重','不良'];
 const norm=v=>v==='稍'?'稍重':v;
-export function assessExpectedHistory(history,race,track=null){
+export function assessExpectedHistory(history,race,track=null,policy=null){
  if(track&&!CONDITIONS.includes(track))throw Error('想定馬場は良・稍重・重・不良から指定してください。');
  const rows=(history?.available?history.recent:[])?.filter(r=>r.date<race.date)||[];
- const normalized=rows.map(r=>({race_date:r.date,venue:r.venue,surface:r.surface,distance:r.distance,finish_position:r.finish,field_size:r.fieldSize,last3f:r.last3f,track_condition:norm(r.trackCondition)}));
- const score=scoreRunner(normalized,{surface:race.surface,distance:race.distance,venue:race.venue},track);
+ const ordered=policy==='recent-three-v1'?[...rows].sort((a,b)=>b.date.localeCompare(a.date)):rows;
+ const selected=policy==='recent-three-v1'?ordered.slice(0,3):ordered;
+ const normalize=rows=>rows.map(r=>({race_date:r.date,venue:r.venue,surface:r.surface,distance:r.distance,finish_position:r.finish,field_size:r.fieldSize,last3f:r.last3f,track_condition:norm(r.trackCondition)}));
+ const normalized=normalize(selected),allNormalized=normalize(ordered);
+ const sameCourse=r=>r.surface===race.surface&&r.venue===race.venue&&r.distance===race.distance;
+ const sameGround=r=>r.surface===race.surface&&r.track_condition===track;
+ const valid=r=>Number.isInteger(r.finish_position)&&r.finish_position>0&&Number.isInteger(r.field_size)&&r.field_size>=Math.max(2,r.finish_position);
+ const courseFallback=policy==='recent-three-v1'&&!normalized.some(r=>valid(r)&&sameCourse(r));
+ const groundFallback=policy==='recent-three-v1'&&!!track&&!normalized.some(r=>valid(r)&&sameGround(r));
+ const score=scoreRunner(normalized,{surface:race.surface,distance:race.distance,venue:race.venue},track,{courseHistory:courseFallback?allNormalized:normalized,groundHistory:groundFallback?allNormalized:normalized});
  const finishRows=normalized.filter(r=>Number.isInteger(r.finish_position)&&r.finish_position>0&&Number.isInteger(r.field_size)&&r.field_size>=r.finish_position&&r.field_size>=2);
  // The legacy heuristic confidence uses row count. Invalid finishes must not inflate depth.
  const depthPct=Math.min(finishRows.length/5,1)*100;
  const notes=[];
+ if(policy==='recent-three-v1')notes.push('着順実績・近走は直近3走を使用。距離・馬場の根拠不足時のみ保存済みの過去走を補助参照します。');
  if(!rows.length)notes.push('履歴未保存・照合保留のため評価できません。');
  else if(finishRows.length<3)notes.push('有効な着順履歴が'+finishRows.length+'走のため、参考評価です。');
  if(!score.detail.course.exactDistance.rows)notes.push('同じ芝・ダートと距離の履歴がありません。適性が低いとは断定しません。');
  if(!track)notes.push('当日の馬場は未入力のため、馬場評価を保留しています。');
  else if(!score.detail.ground.rows)notes.push('想定馬場に一致する履歴がなく、馬場評価を保留しています。');
  return{runningStyle:assessPositionHistory(history,race),available:score.evidenceScore!==null,evidenceScore:score.evidenceScore,modelCoveragePct:score.modelCoveragePct,
-  historyRows:rows.length,validFinishRows:finishRows.length,evidenceDepthPct:depthPct,
+  historyRows:selected.length,historySelection:{policy:policy||'legacy',storedRows:rows.length,primaryDates:selected.map(r=>r.date),courseFallback,groundFallback,externalRequests:0},validFinishRows:finishRows.length,evidenceDepthPct:depthPct,
   evidenceStrength:finishRows.length===0?'unavailable':finishRows.length<3?'thin':finishRows.length<5?'limited':'more-history',
   components:score.components,detail:score.detail,notes,
   sameCourseDistanceStarts:normalized.filter(r=>r.surface===race.surface&&r.venue===race.venue&&r.distance===race.distance).length,
@@ -44,11 +53,11 @@ export async function expectedAssessment(db,input){
  const histories=new Map(full.audit.historySidecar.map(h=>[h.horseName,h]));
  const all=rankSupplementalAssessment(rankAssessment(source.names.map(horseName=>{
   const history=histories.get(horseName),supplemental=history?.supplementalRecent||[];
-  return{horseName,assessment:assessExpectedHistory(history,source,track),supplementalAssessment:assessExpectedHistory({available:supplemental.length>0,recent:supplemental,warnings:[]},source,track)};
+  return{horseName,assessment:assessExpectedHistory(history,source,track,'recent-three-v1'),supplementalAssessment:assessExpectedHistory({available:supplemental.length>0,recent:supplemental,warnings:[]},source,track,'recent-three-v1')};
  })));
  const byName=new Map(all.map(x=>[x.horseName,x]));
  return{...full,audit:{...full.audit,marked:marks.map(m=>({...m,laboRank:null,laboScore:null})),historySidecar:marks.map(m=>histories.get(m.horseName))},
-  assessment:{modelVersion:'existing-safe-core-1.5-expected-adapter-v1',stage:'provisional-evidence-assessment',trackAssumption:track,
+  assessment:{modelVersion:'existing-safe-core-1.5-recent-three-v1',stage:'provisional-evidence-assessment',trackAssumption:track,
    trackBasis:track?'user-scenario-not-confirmed-race-day-track':'unknown',runnerPool:all.length,
    scoredRunners:all.filter(r=>r.assessment.available).length,marked:marks.map(m=>({...byName.get(m.horseName),humanMark:m.mark})),allRunners:all,raceShape:buildRaceShapeEvidence(all),
    supplementalComparison:{provider:'netkeiba',separateFromPrimaryHistory:true,notJraVerified:true,independentRanking:true},

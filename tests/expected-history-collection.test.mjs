@@ -92,3 +92,18 @@ test('discovery still runs when no target race has an actionable cached profile'
  const r=await collectUpcomingExpectedHistory(db,{sources:[s],now:()=>stamp,fetcher:async url=>{requests++;assert.equal(url,s.officialHorsePage);return new Response('<h1>2026年10月11日 アイルランドトロフィー</h1><h3><a href="'+profile+'">カムニャック</a></h3><p>牝4歳 調教師：調教師（栗東） 父：種牡馬 母：母馬 母の父：母父</p>',{headers:{'content-type':'text/html; charset=utf-8'}});}});
  assert.equal(r.status,'discovered');assert.equal(requests,1);assert.equal((await expectedHistoryContext(db,s)).runners[0].profile_url,profile);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_past_performances').get().n,0);sql.close();
 });
+
+test('stored three-start target skips collection without taking or extending shared gate',async()=>{
+ const {db,sql}=await fixture();
+ for(const name of source.names)for(const date of ['2026-06-01','2026-07-01','2026-08-01'])sql.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,finish_position,field_size,fetched_at) VALUES(?,?,?,?,?,?,?)').run(name,date,'東京','保存済み',2,10,'2026-10-06T00:00:00Z');
+ const before=sql.prepare("SELECT * FROM lab_history_collection_budget WHERE name='jra-history'").get();
+ const context=await expectedHistoryContext(db,source);
+ const result=await collectHistoryBatch(db,{historyLimit:3,batchSize:1},{context,now:()=>stamp,fetcher:async()=>{throw Error('must not fetch')}});
+ assert.equal(result.status,'complete');assert.equal(result.externalRequests,0);assert.equal(result.attempted,0);
+ assert.deepEqual(sql.prepare("SELECT * FROM lab_history_collection_budget WHERE name='jra-history'").get(),before);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_history_collection_receipts').get().n,0);
+ const status=await expectedHistoryStatus(db,stamp,[source]);assert.equal(status.races[0].historyLimit,3);assert.equal(status.races[0].pendingHorses,0);assert.equal(status.races[0].withStoredHistory,2);
+ const deeper=await collectHistoryBatch(db,{historyLimit:10,batchSize:1},{context,now:()=>stamp,fetcher:async()=>new Response('',{status:403})});
+ assert.equal(deeper.externalRequests,1);assert.equal(deeper.results[0].status,'failed');
+ sql.close();
+});

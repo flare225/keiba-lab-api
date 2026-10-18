@@ -1,3 +1,4 @@
+import {missingOfficialCards,collectMissingOfficialCard} from './missing-official-cards.js';
 import {verifyEditorialClaims} from './editorial-claim-verification.js';
 import {seedEditorialReferences,readEditorialReferences,editorialReferencePage} from './editorial-reference-notes.js';
 import {scheduledReadStatus,runWithScheduledReadBudget,scheduledBudgetLane} from './scheduled-read-budget.js';
@@ -18,6 +19,15 @@ export const VERSION='3.49.38';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/missing-official-cards'||u.pathname==='/v1/lab/missing-official-card-batch'){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
+   try{
+    if(request.method==='GET'&&u.pathname.endsWith('cards'))return Response.json({...await missingOfficialCards(env.DB,u.searchParams.get('date')),version:VERSION},{headers});
+    if(request.method!=='POST'||!u.pathname.endsWith('batch'))return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
+    const b=await request.json();if(b.confirm!=='COLLECT')throw Error('confirm COLLECT が必要です。');
+    return Response.json({...await runPipelineJob(env.DB,'history','manual',()=>collectMissingOfficialCard(env.DB,b)),version:VERSION},{headers});
+   }catch(e){return Response.json({ok:false,error:String(e.message||e),version:VERSION},{status:400,headers});}
+  }
   if(u.pathname==='/v1/lab/deploy-check'&&request.method==='GET')return Response.json({ok:true,version:VERSION,build:'verified-user-mark-persistence',now:new Date().toISOString()},{headers:{'cache-control':'no-store','access-control-allow-origin':'*'}});
   const statusKey=statusCacheKey(request),statusCache=globalThis.caches?.default;
   const cachedStatus=await readStatusCache(statusCache,statusKey);if(cachedStatus)return cachedStatus;
@@ -100,6 +110,8 @@ export default {
   return runWithScheduledReadBudget(env.DB,async db=>{
   const budgetEnv={...env,DB:db};
   if(event.cron==='*/3 * * * *'){
+   const card=await collectMissingOfficialCard(db,{}, {now:()=>Number(event.scheduledTime)});
+   if(card.externalRequests||card.status==='cooldown'){await runPipelineJob(db,'history','scheduled',async()=>card,{scheduledTime:event.scheduledTime});await collectLockedMarkResults(db);return;}
    const priority=await collectTodayMainHistory(db,{now:()=>Number(event.scheduledTime)});
    if(priority){await runPipelineJob(db,'history','scheduled',async()=>priority,{scheduledTime:event.scheduledTime});await collectLockedMarkResults(db);return;}
    const upcoming=await collectUpcomingOfficialHistory(db,{now:()=>Number(event.scheduledTime)});

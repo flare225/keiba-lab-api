@@ -1,0 +1,30 @@
+import {discoverExpectedCard} from './expected-card-discovery.js';
+import {metaFromRacecardUrl} from './index-v1.1.4.js';
+import {officialUrl,jstDay} from './history-collection-v3.37.0.js';
+import {targetInput} from './race-history-assessment-v3.31.0.js';
+
+export async function missingOfficialCards(db,date,stamp=Date.now()){
+ targetInput({date,venue:'東京',raceNo:1});
+ const rows=(await db.prepare(`SELECT p.race_date,p.venue,p.race_no,p.start_time,p.source_url FROM jra_race_program p WHERE p.race_date=? AND NOT EXISTS(SELECT 1 FROM jra_races r WHERE r.race_date=p.race_date AND r.venue=p.venue AND r.race_no=p.race_no AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key)) ORDER BY p.race_no DESC,p.venue LIMIT 120`).bind(date).all()).results||[];
+ const unique=[...new Map(rows.map(r=>[r.venue+':'+r.race_no,r])).values()];
+ let gate=null;try{gate=await db.prepare("SELECT next_batch_at FROM lab_history_collection_budget WHERE name='jra-history'").first();}catch(e){if(!/no such table/.test(String(e)))throw e;}
+ return{ok:true,date,missing:unique.map(r=>({date:r.race_date,venue:r.venue,raceNo:Number(r.race_no),startTime:r.start_time,sourceUrl:r.source_url})),nextBatchAt:Number(gate?.next_batch_at)>0?new Date(Number(gate.next_batch_at)).toISOString():null,externalRequests:0};
+}
+export async function collectMissingOfficialCard(db,input={},deps={}){
+ const stamp=(deps.now||Date.now)(),date=input.date||jstDay(stamp),plan=await missingOfficialCards(db,date,stamp);
+ if(plan.nextBatchAt&&Date.parse(plan.nextBatchAt)>stamp)return{ok:true,status:'cooldown',externalRequests:0,nextBatchAt:plan.nextBatchAt};
+ const specified=input.venue!=null||input.raceNo!=null||input.race_no!=null;
+ if(specified)targetInput({...input,date});
+ const candidates=plan.missing.filter(r=>!specified||(r.venue===input.venue&&r.raceNo===Number(input.raceNo??input.race_no)));
+ // Upcoming cards first. Past cards may be stored, never used to recreate forecasts.
+ candidates.sort((a,b)=>{
+  const future=r=>/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${date}T${r.startTime}:00+09:00`)>stamp;
+  return Number(future(b))-Number(future(a))||Number(b.raceNo===11)-Number(a.raceNo===11)||b.raceNo-a.raceNo;
+ });
+ const r=candidates[0];if(!r)return{ok:true,status:'complete',externalRequests:0};
+ let url;try{url=officialUrl(r.sourceUrl);}catch{return{ok:false,status:'missing-program-source',externalRequests:0};}
+ const meta=metaFromRacecardUrl(url);
+ const source={date,venue:r.venue,raceNo:r.raceNo,snapshotId:`official-card:${date}:${r.venue}:${r.raceNo}`,officialRosterDiscoveryUrl:url};
+ if(meta?.date===date&&meta.venue===r.venue&&meta.raceNo===r.raceNo)source.officialCardUrl=url;
+ return{...await (deps.discover||discoverExpectedCard)(db,source,deps),target:{date,venue:r.venue,raceNo:r.raceNo},predictionRebuilt:false};
+}

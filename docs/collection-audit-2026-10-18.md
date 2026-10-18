@@ -29,3 +29,7 @@ Goal: user marks and independent LABO marks must be persisted before the race, t
 - Trace independent LABO snapshot persistence separately from user marks and frozen validation capture; verify actual records when DB access is available.
 - Identify account-wide read costs from measured query metadata; scheduled meter explicitly excludes manual/user traffic. Do not claim a measured saving from SQL structure alone.
 - Verify production deployment independently of DB, then perform one bounded DB readback after access is restored. Never fabricate past pre-race snapshots.
+
+## Follow-up: prediction preparation boundary
+
+The existing prelock-build called legacy /v1/lab/history-ingest (limit5) before scoring, regardless of stored collection progress, and invoked all later stages even after an earlier failure. It is distinct from the shared one-horse history-collection-batch path. Preparation now checks stored prior history only (two read queries, at most three valid prior starts counted per horse), reports missing horses, and stops all dependent stages on a failure or exception. It never starts history collection. Existing feature audit and immutable seal gates remain in place; thin career histories are reported rather than invented. This does not enable an automatic seal or assert production snapshot availability.

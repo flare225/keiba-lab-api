@@ -1,4 +1,5 @@
 import app from './index-v3.8.1.js';
+import {storedHistoryStage,runPrelockBuildStages} from './prelock-build-stages.js';
 
 export const VERSION='3.8.2';
 const json=(data,status=200)=>new Response(JSON.stringify(data,null,2),{status,headers:{'content-type':'application/json; charset=UTF-8','access-control-allow-origin':'*'}});
@@ -34,7 +35,7 @@ async function prelockBuild(request,env,ctx){
  if(!validDate(date)||!venue||!Number.isInteger(raceNo)||raceNo<1||raceNo>12||!track)throw new Error('date=YYYY-MM-DD, venue, race_no=1-12 and explicit track are required');
  const common={date,venue,race_no:raceNo};
  const calls=[
-  ['history','/v1/lab/history-ingest',{...common,limit:5}],
+  ['history',null,common],
   ['trackBias','/v1/lab/track-bias',{...common,persist:1}],
   ['baseRank','/v1/lab/rank',{...common,track,persist:1}],
   ['paceStyle','/v1/lab/pace-style',{...common,persist:1}],
@@ -42,8 +43,8 @@ async function prelockBuild(request,env,ctx){
   ['provisional100','/v1/lab/provisional-100',{...common,track}],
   ['workoutOverlay','/v1/lab/workout-overlay',{...common,track}],
  ];
- const stages={};
- for(const[name,path,params]of calls){const r=await invoke(u.origin,path,params,env,ctx);stages[name]={httpStatus:r.status,ok:r.status<400&&r.data?.ok!==false,version:r.data?.version||null,stage:r.data?.stage||null,error:r.data?.error||null};}
+ const {stages,blockedBy}=await runPrelockBuildStages(calls,(name,path,params)=>name==='history'?storedHistoryStage(env.DB,{date,venue,raceNo}):invoke(u.origin,path,params,env,ctx));
+ if(blockedBy)return{ok:false,version:VERSION,stage:'prelock-feature-build',target:{date,venue,raceNo,trackAssumption:track},stages,blockedBy,coreFeatureAudit:null,scoreMutation:false,sealWritten:false,next:'Resolve the failed stage; preparation does not collect external history or retry failures.'};
  const audit=await coreFeatureAudit(env.DB,date,venue,raceNo,track);
  return{ok:audit.ready,version:VERSION,stage:'prelock-feature-build',target:{date,venue,raceNo,trackAssumption:track},stages,coreFeatureAudit:audit,scoreMutation:false,sealWritten:false,next:audit.ready?'Run prelock-readiness, then prospective-seal.':'Inspect failed stages/core coverage; do not seal yet.'};
 }

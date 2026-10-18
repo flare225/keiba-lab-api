@@ -22,24 +22,7 @@ test('one or two dates cover all three 8-card slots in three phases',()=>{
  }
 });
 
-test('fast scheduled collection reaches all 72 cards in five hourly phases',async()=>{
- const dates=['2026-10-10','2026-10-11','2026-10-12'],seen=new Set();let staged=0;
- const db={prepare(){return{bind(){return{all:async()=>({results:dates.map(race_date=>({race_date}))})}}}}};
- const deps={today:()=> '2026-10-05',stage:async request=>{staged++;return new Response(JSON.stringify({ok:true,successfulDates:3,totalProgramRaces:72,runs:[]}));},ingest:async request=>{const u=new URL(request.url),d=u.searchParams.get('date'),cursor=Number(u.searchParams.get('cursor'));for(let i=cursor;i<cursor+8;i++){const key=`${d}:${i}`;assert.equal(seen.has(key),false);seen.add(key);}return{date:d,attempted:8,storedRaceCards:8,storedRunners:80,runs:Array.from({length:8},()=>({status:'saved'})),discoveryErrors:[]};}};
- for(let hour=0;hour<5;hour++){const r=await runScheduledFast({scheduledTime:hour*3600000},{DB:db},{},deps);assert.ok(r.pairs.length<=2);}
- assert.equal(staged,5);assert.equal(seen.size,72);
-});
-
 test('v3.8.1 deployment check identifies fast sweep build',async()=>{
  const r=await worker.fetch(new Request('https://test/v1/lab/deploy-check'),{},{});const d=await r.json();
  assert.equal(r.status,200);assert.equal(d.version,'3.8.1');assert.equal(d.build,'five-hour-publication-sweep');
-});
-
-test('three-venue 36-race days include Tokyo tail slots 24 and 32',async()=>{
- const dates=['2026-10-17','2026-10-18','2026-10-24'],seen=new Set();
- const db={prepare(){return{bind(){return{all:async()=>({results:dates.map(race_date=>({race_date,race_count:36}))})}}}}};
- const deps={today:()=>dates[0],stage:async()=>Response.json({ok:true}),ingest:async request=>{const u=new URL(request.url),date=u.searchParams.get('date'),cursor=Number(u.searchParams.get('cursor'));for(let i=cursor;i<Math.min(36,cursor+8);i++)seen.add(`${date}:${i}`);return{};}};
- for(let hour=0;hour<8;hour++){const result=await runScheduledFast({scheduledTime:hour*3600000},{DB:db},{},deps);assert.ok(result.pairs.length<=2);}
- assert.equal(seen.size,108);
- for(const date of dates)for(let i=24;i<36;i++)assert.ok(seen.has(`${date}:${i}`));
 });

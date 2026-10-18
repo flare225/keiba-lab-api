@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';
 import {missingOfficialCards,collectMissingOfficialCard} from '../src/missing-official-cards.js';
-function fixture(){const sql=new DatabaseSync(':memory:');sql.exec("CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,start_time TEXT,source_url TEXT);CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,runner_count INTEGER,source_url TEXT);CREATE TABLE jra_runners(race_key TEXT);CREATE TABLE lab_history_collection_budget(name TEXT,next_batch_at INTEGER);INSERT INTO lab_history_collection_budget VALUES('jra-history',0);");const db={prepare(q){const wrap=(args=[])=>({bind(...a){return wrap(a)},async all(){return{results:sql.prepare(q).all(...args)}},async first(){return sql.prepare(q).get(...args)||null}});return wrap()}};return{sql,db};}
+function fixture(){const sql=new DatabaseSync(':memory:');sql.exec("CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,start_time TEXT,source_url TEXT);CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,runner_count INTEGER,source_url TEXT);CREATE TABLE jra_runners(race_key TEXT);CREATE TABLE lab_history_collection_budget(name TEXT,next_batch_at INTEGER,locked_until INTEGER DEFAULT 0);INSERT INTO lab_history_collection_budget VALUES('jra-history',0,0);");const db={prepare(q){const wrap=(args=[])=>({bind(...a){return wrap(a)},async all(){return{results:sql.prepare(q).all(...args)}},async first(){return sql.prepare(q).get(...args)||null}});return wrap()}};return{sql,db};}
 const now=Date.parse('2026-10-18T05:15:00Z'),date='2026-10-18';
 const card='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0104202604021120261018/AA';
 test('missing cards use stored program links and prioritize upcoming races without refetching complete cards',async()=>{
@@ -24,4 +24,15 @@ test('stored same-day same-venue card navigation is preferred over calendar disc
 test('scheduled upcoming-only cards do not consume a slot for finished races',async()=>{
  const {sql,db}=fixture();sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(date,'新潟',4,'11:05',card);
  const r=await collectMissingOfficialCard(db,{date,upcomingOnly:true},{now:()=>now,discover:async()=>assert.fail('must not fetch past card in urgent slot')});assert.equal(r.externalRequests,0);sql.close();
+});
+
+test('future official cards stay distinct from the same venue/race number today',async()=>{
+ const {sql,db}=fixture();for(const day of [date,'2026-10-24'])sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(day,'東京',11,'15:40','https://www.jra.go.jp/calendar');
+ assert.equal((await missingOfficialCards(db,date,now,'2026-10-25')).missing.length,2);
+ sql.exec("CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER);INSERT INTO lab_expected_card_discovery VALUES('official-card:2026-10-18:東京:11:official-program',9999999999999)");
+ const r=await collectMissingOfficialCard(db,{date,includeFuture:true,upcomingOnly:true},{now:()=>now,discover:async(_,s)=>{assert.equal(s.date,'2026-10-24');return{ok:true,externalRequests:1}}});assert.equal(r.target.date,'2026-10-24');sql.close();
+});
+test('shared cooldown is checked before scanning programs or histories',async()=>{
+ let queries=0;const db={prepare(query){queries++;assert.match(query,/SELECT next_batch_at,locked_until FROM lab_history_collection_budget/);return{async first(){return{next_batch_at:now+3600000,locked_until:0}}}}};
+ assert.equal((await collectMissingOfficialCard(db,{date},{now:()=>now})).status,'cooldown');assert.equal(queries,1);
 });

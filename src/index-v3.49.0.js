@@ -110,7 +110,7 @@ export default {
   return runWithScheduledReadBudget(env.DB,async db=>{
   const budgetEnv={...env,DB:db};
   if(event.cron==='*/3 * * * *'){
-   const card=await collectMissingOfficialCard(db,{upcomingOnly:true}, {now:()=>Number(event.scheduledTime)});
+   const card=await collectMissingOfficialCard(db,{upcomingOnly:true,includeFuture:true}, {now:()=>Number(event.scheduledTime)});
    if(card.externalRequests||card.status==='cooldown'){await runPipelineJob(db,'history','scheduled',async()=>card,{scheduledTime:event.scheduledTime});await collectLockedMarkResults(db);return;}
    const priority=await collectTodayMainHistory(db,{now:()=>Number(event.scheduledTime)});
    if(priority){await runPipelineJob(db,'history','scheduled',async()=>priority,{scheduledTime:event.scheduledTime});await collectLockedMarkResults(db);return;}

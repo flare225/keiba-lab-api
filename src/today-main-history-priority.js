@@ -11,9 +11,9 @@ export async function collectTodayMainHistory(db,{now=Date.now,sources=EXPECTED_
   let official=false;try{const u=new URL(program.source_url);official=u.protocol==='https:'&&['jra.go.jp','www.jra.go.jp','jra.jp','www.jra.jp'].includes(u.hostname)}catch{}
   const cutoff=Date.parse(today+'T'+program.start_time+':00+09:00')-300000;
   if(!official||!Number.isFinite(cutoff)||stamp>=cutoff)continue;
-  const input={date:source.date,venue:source.venue,raceNo:source.raceNo,historyLimit:10,batchSize:1};
+  const input={date:source.date,venue:source.venue,raceNo:source.raceNo,historyLimit:3,batchSize:1};
   const coverage=await status(db,input,stamp);
-  if(!coverage.runners.some(r=>r.storedRows===0&&r.due))continue;
+  if(!coverage.runners.some(r=>r.storedRows<3&&r.due))continue;
   return {...await collect(db,input,{now}),stage:'race-day-missing-history',priorityRaceKey:coverage.race.raceKey};
  }
  return null;

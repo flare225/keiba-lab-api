@@ -10,6 +10,10 @@ test('today missing official history takes one bounded collection slot and prese
 });
 test('completed or cooling-down horses do not reserve a slot, and priority ends before post time',async()=>{
  const collect=async()=>assert.fail('unexpected fetch');
- for(const runners of [[{storedRows:2,due:true}],[{storedRows:0,due:false}]])assert.equal(await collectTodayMainHistory(db,{now:()=>stamp,sources:[source],status:async()=>({runners}),collect}),null);
+ for(const runners of [[{storedRows:3,due:true}],[{storedRows:0,due:false}]])assert.equal(await collectTodayMainHistory(db,{now:()=>stamp,sources:[source],status:async()=>({runners}),collect}),null);
  assert.equal(await collectTodayMainHistory(db,{now:()=>Date.parse('2026-10-17T15:40:00+09:00'),sources:[source],status:async()=>assert.fail('after cutoff'),collect}),null);
 });
+
+ test('one or two stored starts still receive the three-start collection target',async()=>{
+ for(const storedRows of [1,2]){let calls=0;await collectTodayMainHistory(db,{now:()=>stamp,sources:[source],status:async(_,input)=>{assert.equal(input.historyLimit,3);return{race:{raceKey:'fuji'},runners:[{storedRows,due:true}]}},collect:async(_,input)=>{calls++;assert.equal(input.historyLimit,3);assert.equal(input.batchSize,1);return{externalRequests:1}}});assert.equal(calls,1);}
+ });

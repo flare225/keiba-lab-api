@@ -23,7 +23,8 @@ export async function upcomingOfficialHistoryPlan(db,stamp=Date.now(),sources=EX
  .map(r=>({raceKey:r.race_key,date:r.race_date,venue:r.venue,raceNo:r.race_no,raceName:r.race_name,missingHorses:Number(r.missing_horses),targetMain:targets.has(r.race_key)}));
 }
 export async function collectUpcomingOfficialHistory(db,{now=Date.now,plan=upcomingOfficialHistoryPlan,status=collectionStatus,collect=collectHistoryBatch}={}){
- const stamp=now(),queue=await plan(db,stamp);
+ const stamp=now(),all=await plan(db,stamp),today=jstDay(stamp);
+ const current=all.filter(r=>r.date===today),queue=current.length?current:all;
  // Always check the most urgent card; rotate five other cards so unknown
  // profiles in the first few races cannot starve the remainder of the week.
  const rest=queue.slice(1),offset=rest.length?(Math.floor(stamp/360000)*5)%rest.length:0;
@@ -31,8 +32,8 @@ export async function collectUpcomingOfficialHistory(db,{now=Date.now,plan=upcom
  for(const race of window){
   const input={date:race.date,venue:race.venue,raceNo:race.raceNo,historyLimit:10,batchSize:1};
   const coverage=await status(db,input,stamp);
-  if(!coverage.runners.some(r=>r.storedRows===0&&r.due&&r.profileUrl))continue;
+  if(!coverage.runners.some(r=>r.storedRows===0&&r.due))continue;
   return {...await collect(db,input,{now}),stage:'upcoming-official-missing-history',priorityRaceKey:race.raceKey};
  }
- return null;
+ return current.length?{ok:true,status:'awaiting-today-history',externalRequests:0,missingRaces:current.length}:null;
 }

@@ -15,7 +15,7 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  if(plan.nextBatchAt&&Date.parse(plan.nextBatchAt)>stamp)return{ok:true,status:'cooldown',externalRequests:0,nextBatchAt:plan.nextBatchAt};
  const specified=input.venue!=null||input.raceNo!=null||input.race_no!=null;
  if(specified)targetInput({...input,date});
- const candidates=plan.missing.filter(r=>!specified||(r.venue===input.venue&&r.raceNo===Number(input.raceNo??input.race_no)));
+ const candidates=plan.missing.filter(r=>(!input.upcomingOnly||(/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${date}T${r.startTime}:00+09:00`)>stamp))&&(!specified||(r.venue===input.venue&&r.raceNo===Number(input.raceNo??input.race_no))));
  // Upcoming cards first. Past cards may be stored, never used to recreate forecasts.
  candidates.sort((a,b)=>{
   const future=r=>/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${date}T${r.startTime}:00+09:00`)>stamp;

@@ -41,3 +41,11 @@ Confirmed by tracing the active hourly wrapper into fast-rotation-v3.8.1.js: it 
 The replacement stages one calendar day per delivery, records a per-day receipt and rotates the next eight dates with a twelve-hour recheck interval. Card collection uses the existing shared one-page discovery path. Its scheduled plan now includes the coming week, retains date in race identity, skips per-card discovery receipts that are not due, and checks the shared gate before scanning program/history coverage. Global cooldown is never bypassed by selecting a different race.
 
 The deleted tests asserted that hourly delivery swept 72/108 cards via multi-page batches; that behavior conflicts with the bounded shared-source policy. Replacement tests check eight distinct calendar days, one source call per delivery, shared stop/lease enforcement, future-date identity and deferred-card progress. No current production data has been read to claim that next-week cards or histories are complete. Friday deadline capacity and production end-to-end data completion remain open.
+
+## 2026-10-19: result-lane starvation
+
+At 09:08 JST, the two initial production status reads succeeded. History scheduled heartbeat was current (09:06), but the latest scheduled results record remained 2026-10-18 14:13 JST. The shared gate was 2026-10-19 10:00:09.967 JST; no acquisition POST was sent.
+
+The active root source-cron handler ran card/main/upcoming history before the inherited fair coordinator and returned for any such work or cooldown. Thus a persistent card/history queue prevented the result/archive lanes from receiving scheduled dispatches. Move these priorities inside the history job supplied to the existing oldest-job dispatcher. Do not change the shared source gate, user locks, frozen candidate or scoring formula. Real SQLite tests verify archive/results/history each receive turns even with a permanently waiting history queue; per-delivery source work remains one job.
+
+Observed status is not proof of the exact cause of every missing race result. This patch restores dispatch opportunity; production result writes still require gate release and successful source ingestion/readback. Existing fixed expected-source status lists only Fuji/Shuka; it is not a complete inventory of next-week readiness. Generic confirmed pre-draw history handoff still needs review.

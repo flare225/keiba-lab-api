@@ -107,3 +107,11 @@ test('stored three-start target skips collection without taking or extending sha
  assert.equal(deeper.externalRequests,1);assert.equal(deeper.results[0].status,'failed');
  sql.close();
 });
+test('default collector discovers a future ordinary pre-draw roster, saves prior rows, and leaves official card absent',async()=>{
+ const {db,sql}=await fixture(),time=Date.parse('2026-10-19T00:15:00Z');
+ sql.exec('CREATE TABLE lab_confirmed_predraw_rosters(race_key TEXT PRIMARY KEY,source_url TEXT,source_sha256 TEXT,runners_json TEXT,checked_at TEXT)');
+ const key='2026-10-24:東京:9',card='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604040920261024/AA';
+ sql.prepare('INSERT INTO lab_confirmed_predraw_rosters VALUES(?,?,?,?,?)').run(key,card,'a'.repeat(64),JSON.stringify([{horse_name:'HorseA',age:2,horse_no:null,frame_no:null,profile_url:profile}]),new Date(time-1000).toISOString());
+ let requests=0;const r=await collectUpcomingExpectedHistory(db,{now:()=>time,wait:async()=>{},fetcher:async()=>{requests++;return new Response(html,{headers:{'content-type':'text/html;charset=utf-8'}})}});
+ assert.equal(r.stage,'expected-runner-prior-history');assert.equal(r.snapshotId,'confirmed-predraw:'+key);assert.equal(r.attempted,1);assert.equal(requests,1);assert.equal(r.before.runners[0].horseNo,null);assert.ok(sql.prepare('SELECT COUNT(*) n FROM jra_past_performances WHERE horse_name=? AND race_date<?').get('HorseA','2026-10-24').n>0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races WHERE race_date=?').get('2026-10-24').n,0);sql.close();
+});

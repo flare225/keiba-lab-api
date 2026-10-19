@@ -38,3 +38,27 @@ export async function preserveSavedPreRaceAssessment(db,input,now=Date.now()){
  return{...verified,status:verified.record.complete?'pre-race-reference-preserved-awaiting-results':'partial-pre-race-reference-preserved',featureSha256:hash,importedAt:saved.imported_at,idempotent:Number(inserted.meta?.changes)!==1,trainingCreditGranted:false,frozenExperimentModified:false};
  }catch(error){error.saveMayHaveSucceeded=true;throw error;}
 }
+
+// Separate cohort: bind original immutable features to verified result evidence.
+// This never fits or promotes a model or alters the frozen experiment.
+export async function labelSavedPreRaceAssessment(db,input,now=Date.now()){
+ const verified=await readSavedPreRaceAssessment(db,input);
+ if(!verified.available||!verified.record.complete||!verified.preservedFeature)return{ok:true,status:'awaiting-preserved-complete-reference',saved:0};
+ const {readLockedMarkResults}=await import('./locked-mark-result-evidence.js');
+ const records=await readLockedMarkResults(db,verified.record.race.raceKey,input.phase||'final');
+ const source=verified.record.source;
+ const match=records.find(r=>r.revisionId===source.revisionId&&r.lockSha256===source.lockSha256&&r.auditSha256===source.auditSha256);
+ if(!match)return{ok:true,status:'awaiting-verified-locked-results',saved:0};
+ const runners=verified.record.referenceAssessment.allRunners;
+ if(match.guardrails?.savedScoresOnly!==true||match.guardrails.retrospectivePredictionCreated!==false||match.rows.length!==runners.length||new Set(match.rows.map(r=>r.horseNo)).size!==runners.length||match.rows.some(r=>!runners.some(h=>h.horseNo===r.horseNo&&h.horseName===r.horseName&&h.evidenceScore===r.referenceScore&&h.referenceRank===r.referenceRank))||match.rows.some(r=>!(r.finishStatus==='finished'&&Number.isInteger(r.finishPosition)&&r.finishPosition>0&&r.finishPosition<=runners.length||['scratched','excluded','did-not-finish','disqualified'].includes(r.finishStatus)&&r.finishPosition===null)))throw Error('結果と保存済み事前評価の対応が一致しません。');
+ const record={cohort:'saved-pre-race-reference-v1',raceKey:verified.record.race.raceKey,featureSha256:verified.preservedFeature.featureSha256,resultEvidenceSha256:match.evidenceSha256,revisionId:source.revisionId,lockSha256:source.lockSha256,rows:match.rows,guardrails:{scoresRecomputed:false,postRaceReconstruction:false,frozenExperimentModified:false,automaticTraining:false,accuracyCreditGranted:false}};
+ const body=JSON.stringify(record),hash=await sha256(body),table='lab_saved_reference_labels_v1';
+ await db.prepare(`CREATE TABLE IF NOT EXISTS ${table}(label_sha256 TEXT PRIMARY KEY,feature_sha256 TEXT NOT NULL,evidence_json TEXT NOT NULL,created_at TEXT NOT NULL)`).run();
+ for(const action of ['UPDATE','DELETE'])await db.prepare(`CREATE TRIGGER IF NOT EXISTS saved_reference_labels_no_${action.toLowerCase()} BEFORE ${action} ON ${table} BEGIN SELECT RAISE(ABORT,'saved reference labels are immutable'); END`).run();
+ try{
+ const result=await db.prepare(`INSERT OR IGNORE INTO ${table} VALUES(?,?,?,?)`).bind(hash,record.featureSha256,body,new Date(now).toISOString()).run();
+ const saved=await db.prepare(`SELECT evidence_json,created_at FROM ${table} WHERE label_sha256=?`).bind(hash).first();
+ if(!saved||saved.evidence_json!==body||await sha256(saved.evidence_json)!==hash)throw Error('学習候補の結果対応を読み返せません。');
+ return{ok:true,status:'separate-learning-candidate-labeled',saved:Number(result.meta?.changes)||0,labelSha256:hash,createdAt:saved.created_at,record,trainingCreditGranted:false};
+ }catch(error){error.saveMayHaveSucceeded=true;throw error;}
+}

@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';
 import {sha256,runnerFingerprint} from '../src/card-evidence.js';
-import {readSavedPreRaceAssessment,preserveSavedPreRaceAssessment,verifySavedPreRaceAssessment} from '../src/saved-pre-race-assessment.js';
+import {readSavedPreRaceAssessment,preserveSavedPreRaceAssessment,verifySavedPreRaceAssessment,labelSavedPreRaceAssessment} from '../src/saved-pre-race-assessment.js';
 const key='2026-10-18:京都:11',input={date:'2026-10-18',venue:'京都',raceNo:11,phase:'final'};
 async function source(){const runners=[{horse_no:1,horse_name:'A',frame_no:1},{horse_no:2,horse_name:'B',frame_no:2}],entries=runners.map((r,i)=>({horse_no:r.horse_no,horse_name:r.horse_name,mark:i?'○':'◎',note:'',ordinal:i+1}));const audit={race:{raceKey:key},phase:'final',audit:{referenceAssessment:{modelVersion:'saved-model',runnerPool:2,scoredRunners:2,allRunners:runners.map((r,i)=>({horseNo:r.horse_no,horseName:r.horse_name,available:true,evidenceScore:90-i,referenceRank:i+1,components:{basicAbilityResults:90-i}})),guardrails:{allOfficialRunnersIncluded:true,targetResultUsed:false,humanMarksUsedInScore:false}}}};const audit_json=JSON.stringify(audit),audit_sha256=await sha256(audit_json),revision_id=key+'|final|1',locked_at='2026-10-18T02:17:52.157Z',deadline='2026-10-18T06:40:00.000Z';const snapshot_json=JSON.stringify({raceKey:key,phase:'final',revisionId:revision_id,auditSha256:audit_sha256,runnerSha256:await sha256(runnerFingerprint(runners)),runners,entries,lockedAt:locked_at,deadline});return{entries,row:{race_key:key,phase:'final',revision_id,audit_json,audit_sha256,snapshot_json,snapshot_sha256:await sha256(snapshot_json),locked_at,deadline,created_at:'2026-10-18T02:10:44.826Z'}}}
 async function fixture(){const sql=new DatabaseSync(':memory:'),queries=[];sql.exec('CREATE TABLE lab_user_mark_locks(race_key TEXT,phase TEXT,revision_id TEXT,snapshot_json TEXT,snapshot_sha256 TEXT,locked_at TEXT,deadline TEXT);CREATE TABLE lab_user_mark_revisions(revision_id TEXT,race_key TEXT,phase TEXT,audit_json TEXT,audit_sha256 TEXT,created_at TEXT);CREATE TABLE lab_user_mark_entries(revision_id TEXT,horse_no INTEGER,horse_name TEXT,mark TEXT,note TEXT,ordinal INTEGER)');const {row,entries}=await source();sql.prepare('INSERT INTO lab_user_mark_locks VALUES(?,?,?,?,?,?,?)').run(key,'final',row.revision_id,row.snapshot_json,row.snapshot_sha256,row.locked_at,row.deadline);for(const id of [row.revision_id,key+'|final|3'])sql.prepare('INSERT INTO lab_user_mark_revisions VALUES(?,?,?,?,?,?)').run(id,key,'final',id===row.revision_id?row.audit_json:'{}',row.audit_sha256,id===row.revision_id?row.created_at:'2026-10-18T05:18:01Z');for(const e of entries)sql.prepare('INSERT INTO lab_user_mark_entries VALUES(?,?,?,?,?,?)').run(row.revision_id,e.horse_no,e.horse_name,e.mark,e.note,e.ordinal);const db={prepare(q){queries.push(q);const w=(a=[])=>({bind(...b){return w(b)},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}},async run(){const r=sql.prepare(q).run(...a);return{meta:{changes:r.changes}}}});return w()}};return{sql,db,queries,row}}
@@ -11,4 +11,20 @@ test('preserve original locked reference, never substitute latest revision or re
 });
 test('invalid hashes, identity, entries or save-after-lock cannot become preserved evidence',async()=>{
  const {row,entries}=await source();for(const patch of [{audit_sha256:'b'.repeat(64)},{snapshot_sha256:'b'.repeat(64)},{race_key:'wrong'},{created_at:'2026-10-18T07:00:00Z'}])await assert.rejects(verifySavedPreRaceAssessment({...row,...patch},entries,key,'final'));await assert.rejects(verifySavedPreRaceAssessment(row,[...entries].reverse(),key,'final'));
+});
+
+test('separate labels wait for exact locked result evidence and remain immutable/idempotent',async()=>{
+ const {sql,db,row}=await fixture();
+ assert.equal((await labelSavedPreRaceAssessment(db,input)).status,'awaiting-preserved-complete-reference');
+ await preserveSavedPreRaceAssessment(db,input);
+ assert.equal((await labelSavedPreRaceAssessment(db,input)).status,'awaiting-verified-locked-results');
+ sql.exec('CREATE TABLE lab_locked_mark_results(evidence_json TEXT,evidence_sha256 TEXT,created_at TEXT)');
+ const record={revisionId:row.revision_id,lockSha256:row.snapshot_sha256,auditSha256:row.audit_sha256,rows:[{horseNo:1,horseName:'A',referenceScore:90,referenceRank:1,finishStatus:'finished',finishPosition:2},{horseNo:2,horseName:'B',referenceScore:89,referenceRank:2,finishStatus:'finished',finishPosition:1}],guardrails:{savedScoresOnly:true,retrospectivePredictionCreated:false}};
+ // Reader selects by race/phase, so include real lookup columns.
+ sql.exec('ALTER TABLE lab_locked_mark_results ADD COLUMN race_key TEXT;ALTER TABLE lab_locked_mark_results ADD COLUMN phase TEXT');
+ const body=JSON.stringify(record);sql.prepare('INSERT INTO lab_locked_mark_results VALUES(?,?,?,?,?)').run(body,await sha256(body),'2026-10-19',key,'final');
+ const saved=await labelSavedPreRaceAssessment(db,input);assert.equal(saved.saved,1);assert.equal(saved.record.guardrails.automaticTraining,false);
+ assert.equal((await labelSavedPreRaceAssessment(db,input)).saved,0);
+ assert.throws(()=>sql.exec('DELETE FROM lab_saved_reference_labels_v1'),/immutable/);
+ sql.close();
 });

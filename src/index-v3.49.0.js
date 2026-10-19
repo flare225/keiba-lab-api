@@ -1,3 +1,4 @@
+import {readAutomaticPrediction,captureAutomaticPrediction,scheduledAutomaticPrediction} from './automatic-pre-race-prediction.js';
 import {trainSavedReferences,readSavedReferenceTraining} from './saved-reference-learning.js';
 import {importExpectedRosterSeed} from './expected-roster-seeds.js';
 import {saveExpectedRoster} from './expected-roster-registry.js';
@@ -25,6 +26,18 @@ export const VERSION='3.49.38';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/automatic-prediction'){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*','access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'content-type'};
+   if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
+   try{
+    let result;
+    if(request.method==='GET')result=await readAutomaticPrediction(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')});
+    else if(request.method==='POST'){const b=await request.json();if(b.confirm!=='CAPTURE')throw Error('confirm CAPTURE is required');result=await captureAutomaticPrediction(env.DB,b);}
+    else return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
+    return Response.json({...result,version:VERSION},{headers});
+   }catch(e){return Response.json({ok:false,error:String(e.message||e),...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})},{status:e.saveMayHaveSucceeded?503:409,headers})}
+  }
+
   if(u.pathname==='/v1/lab/saved-reference-training'){
    try{
     const result=request.method==='GET'?await readSavedReferenceTraining(env.DB,u.searchParams.get('sha256')):request.method==='POST'?await (async()=>{const b=await request.json();if(b.confirm!=='TRAIN')throw Error('confirm TRAIN が必要です。');return trainSavedReferences(env.DB,b);})():null;
@@ -151,6 +164,7 @@ export default {
   return runWithScheduledReadBudget(env.DB,async db=>{
   const budgetEnv={...env,DB:db};
   if(event.cron==='*/3 * * * *'){
+   try{await scheduledAutomaticPrediction(db);}catch(e){console.error('automatic-prediction',String(e));}
    await dispatchLiveSources(event,budgetEnv);
    await collectLockedMarkResults(db);
    return;

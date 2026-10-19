@@ -1,8 +1,11 @@
+import {storedExpectedSources} from './expected-roster-registry.js';
 import {EXPECTED_SOURCES,expectedAge} from './expected-runner-preview-v3.30.0.js';
 const valid=d=>/^\d{4}-\d{2}-\d{2}$/.test(d||'')&&Number.isFinite(Date.parse(d+'T00:00:00Z'))&&new Date(d+'T00:00:00Z').toISOString().slice(0,10)===d;
 async function rows(db,q,args=[]){try{return(await db.prepare(q).bind(...args).all()).results||[]}catch(e){if(/no such table/.test(String(e)))return [];throw e}}
 export async function weekDataInventory(db,{from,to},sources=EXPECTED_SOURCES){
  if(!valid(from)||!valid(to)||from>to||(Date.parse(to)-Date.parse(from))/86400000>7)throw Error('8日以内の正しい日付範囲を指定してください。');
+ const registered=await storedExpectedSources(db,from,to);
+ sources=[...sources.filter(s=>!registered.some(r=>r.date===s.date&&r.venue===s.venue&&r.raceNo===s.raceNo)),...registered];
  const programs=await rows(db,'SELECT race_date,venue,race_no FROM jra_race_program WHERE race_date BETWEEN ? AND ? ORDER BY race_date,venue,race_no',[from,to]);
  const cards=await rows(db,'SELECT r.race_key,r.race_date,r.venue,r.race_no,r.runner_count,x.horse_name,x.age FROM jra_races r JOIN jra_runners x ON x.race_key=r.race_key WHERE r.race_date BETWEEN ? AND ? ORDER BY r.race_key,x.horse_no',[from,to]);
  const predraw=await rows(db,'SELECT race_key,runners_json FROM lab_confirmed_predraw_rosters WHERE substr(race_key,1,10) BETWEEN ? AND ?',[from,to]);

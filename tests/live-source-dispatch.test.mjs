@@ -9,11 +9,15 @@ test('live dispatcher cannot starve results when card/history queue never emptie
  assert.deepEqual(seen,['archive','results','history','archive','results','history']);assert.equal(sql.prepare("SELECT COUNT(*) n FROM lab_bounded_pipeline_runs WHERE job='results'").get().n,2);sql.close();
 });
 test('history priorities stop at shared cooldown without calling another source',async()=>{
- const r=await collectLiveHistory({}, {scheduledTime:start},{cards:async()=>({status:'cooldown',externalRequests:0}),main:()=>assert.fail('must stop'),upcoming:()=>assert.fail('must stop'),expected:()=>assert.fail('must stop'),details:()=>assert.fail('must stop')});assert.equal(r.status,'cooldown');
+ const r=await collectLiveHistory({}, {scheduledTime:start},{registered:async()=>[],cards:async()=>({status:'cooldown',externalRequests:0}),main:()=>assert.fail('must stop'),upcoming:()=>assert.fail('must stop'),expected:()=>assert.fail('must stop'),details:()=>assert.fail('must stop')});assert.equal(r.status,'cooldown');
 });
 test('ordinary card priority lives inside history lane and requests the coming week',async()=>{
- let called=false;const r=await collectLiveHistory({}, {scheduledTime:start},{cards:async(_,input)=>{assert.equal(input.includeFuture,true);assert.equal(input.upcomingOnly,true);called=true;return{status:'official-card-saved',externalRequests:1}},main:()=>assert.fail('one source batch only')});assert.equal(called,true);assert.equal(r.externalRequests,1);
+ let called=false;const r=await collectLiveHistory({}, {scheduledTime:start},{registered:async()=>[],cards:async(_,input)=>{assert.equal(input.includeFuture,true);assert.equal(input.upcomingOnly,true);called=true;return{status:'official-card-saved',externalRequests:1}},main:()=>assert.fail('one source batch only')});assert.equal(called,true);assert.equal(r.externalRequests,1);
 });
 test('idle history can enrich prior details without running a second source batch',async()=>{
- const r=await collectLiveHistory({}, {scheduledTime:start},{cards:async()=>({status:'complete',externalRequests:0}),main:async()=>null,upcoming:async()=>null,expected:async()=>({status:'idle',externalRequests:0}),details:async(_,deps)=>{assert.equal(typeof deps.now,'function');return{status:'collected',externalRequests:1}}});assert.equal(r.externalRequests,1);
+ const r=await collectLiveHistory({}, {scheduledTime:start},{registered:async()=>[],cards:async()=>({status:'complete',externalRequests:0}),main:async()=>null,upcoming:async()=>null,expected:async()=>({status:'idle',externalRequests:0}),details:async(_,deps)=>{assert.equal(typeof deps.now,'function');return{status:'collected',externalRequests:1}}});assert.equal(r.externalRequests,1);
+});
+
+test('saved upcoming registration history is attempted before unpublished card discovery',async()=>{
+ const r=await collectLiveHistory({}, {scheduledTime:start},{registered:async()=>[{names:['A']}],expected:async()=>({status:'collected',attempted:1,externalRequests:1}),cards:()=>assert.fail('roster history must not wait for a numbered card')});assert.equal(r.externalRequests,1);
 });

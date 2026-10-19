@@ -1,0 +1,10 @@
+import test from 'node:test';import assert from 'node:assert/strict';import{DatabaseSync}from'node:sqlite';import{saveExpectedRoster,storedExpectedSources,validateExpectedRoster}from'../src/expected-roster-registry.js';
+const stamp=Date.parse('2026-10-19T07:00:00Z'),input={date:'2026-10-25',venue:'京都',raceNo:11,raceName:'菊花賞',provider:'JRA',kind:'special-registration',sourceUrl:'https://www.jra.go.jp/keiba/tokubetsu/',observedAt:'2026-10-19T06:00:00Z',sourceText:'2026年10月25日 菊花賞 特別登録の確認用テキスト 馬名A 馬名B',runners:[{horseName:'馬名A',age:3},{horseName:'馬名B',age:3}]};
+test('source-separated immutable expected roster saves/readbacks, deduplicates and becomes a collection source',async()=>{
+ const sql=new DatabaseSync(':memory:'),queries=[];const db={prepare(q){queries.push(q);const f=(a=[])=>({bind(...a){return f(a)},async all(){return{results:sql.prepare(q).all(...a)}},async first(){return sql.prepare(q).get(...a)},async run(){return{meta:{changes:sql.prepare(q).run(...a).changes}}}});return f()}};
+ const saved=await saveExpectedRoster(db,input,stamp);assert.equal(saved.storedRunners,2);assert.equal(saved.formalCardSaved,false);assert.equal(saved.officialIdentityVerified,false);assert.equal((await saveExpectedRoster(db,input,stamp)).idempotent,true);
+ const sources=await storedExpectedSources(db,'2026-10-24','2026-10-25');assert.equal(sources.length,1);assert.deepEqual(sources[0].names,['馬名A','馬名B']);assert.equal(sources[0].ages['馬名A'],3);assert.ok(queries.filter(q=>/^(INSERT|UPDATE|DELETE)/.test(q)).every(q=>q.includes('lab_expected_roster_registry')));assert.throws(()=>sql.exec('DELETE FROM lab_expected_roster_registry'),/immutable/);sql.close();
+});
+test('rejects fabricated numbering, absent text evidence, wrong source and after-race import',()=>{
+ for(const patch of [{runners:[{horseName:'馬名A',age:3,horseNo:1}]},{runners:[{horseName:'未掲載',age:3}]},{sourceUrl:'https://attacker.invalid/'},{observedAt:'2026-10-26T00:00:00Z'},{date:'2026-10-18'}])assert.throws(()=>validateExpectedRoster({...input,...patch},stamp));
+});

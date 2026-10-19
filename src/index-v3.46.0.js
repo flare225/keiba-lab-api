@@ -1,3 +1,5 @@
+import {storedExpectedSources} from './expected-roster-registry.js';
+import {targetInput} from './race-history-assessment-v3.31.0.js';
 import app from './index-v3.45.0.js';
 import {expectedHistoryStatus,scheduledWeekendHistory,collectUpcomingExpectedHistory} from './expected-history-collection-v3.46.0.js';
 import {EXPECTED_SOURCES} from './expected-runner-preview-v3.30.0.js';
@@ -6,6 +8,11 @@ import {collectArchiveBatch} from './archive-collection-v3.39.0.js';
 import {scheduledRichResult} from './rich-result-collection-v3.39.0.js';
 import {runPipelineJob} from './pipeline-runs-v3.40.0.js';
 export const VERSION='3.46.0';
+export async function resolveExpectedCollectionSource(db,input){
+ const t=targetInput(input),registered=await storedExpectedSources(db,t.date,t.date);
+ return [...registered,...EXPECTED_SOURCES].find(s=>s.date===t.date&&s.venue===t.venue&&s.raceNo===t.raceNo)||null;
+}
+
 const json=(d,status=200)=>new Response(JSON.stringify(d,null,2),{status,headers:{'content-type':'application/json; charset=UTF-8','cache-control':'no-store','access-control-allow-origin':'*'}});
 const jobs=env=>({archive:()=>collectArchiveBatch(env.DB),results:()=>scheduledRichResult(env.DB),history:()=>scheduledWeekendHistory(env.DB)});
 export default{async fetch(request,env,ctx){
@@ -13,8 +20,9 @@ export default{async fetch(request,env,ctx){
  if(u.pathname==='/v1/lab/deploy-check')return json({ok:true,version:VERSION,build:'pre-card-expected-jra-history-priority-shared-budget',now:new Date().toISOString()});
  try{
   if(u.pathname==='/v1/lab/expected-history-batch'&&request.method==='POST'){
-   const b=await request.json(),source=EXPECTED_SOURCES.find(s=>s.date===b.date&&s.venue===b.venue&&s.raceNo===Number(b.raceNo));
-   if(b.confirm!=='COLLECT'||!source)return json({ok:false,error:'対象レースとconfirm COLLECTを指定してください。'},400);
+   const b=await request.json();if(b.confirm!=='COLLECT')return json({ok:false,error:'confirm COLLECT is required'},400);
+   const source=await resolveExpectedCollectionSource(env.DB,b);
+   if(!source)return json({ok:false,error:'対象レースとconfirm COLLECTを指定してください。'},400);
    return json({...await runPipelineJob(env.DB,'history','manual',()=>collectUpcomingExpectedHistory(env.DB,{sources:[source]})),version:VERSION});
   }
   if(u.pathname==='/v1/lab/expected-history-status'&&request.method==='GET')return json({ok:true,...await expectedHistoryStatus(env.DB),version:VERSION});

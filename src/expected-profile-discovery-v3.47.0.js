@@ -1,9 +1,12 @@
+import {readExpectedProfilePage,discoverExpectedProfilePage} from './expected-profile-page-discovery.js';
 import {ensureCollectionTables,officialUrl} from './history-collection-v3.37.0.js';
 import {expectedAge} from './expected-runner-preview-v3.30.0.js';
 import {extractProfileLinks} from './collection-profile-parser-v3.32.0.js';
 import {parsePrecardHorsePage} from './precard-context-v3.8.5.js';
 export async function discoverExpectedProfiles(db,source,deps={}){
- if(!source.officialHorsePage)return {ok:true,status:'not-configured',externalRequests:0};
+ const page=await readExpectedProfilePage(db,source);
+ if(!page)return discoverExpectedProfilePage(db,source,deps);
+ source={...source,officialHorsePage:page};
  const now=deps.now||Date.now,stamp=now(),url=officialUrl(source.officialHorsePage);
  await ensureCollectionTables(db);
  await db.prepare('CREATE TABLE IF NOT EXISTS lab_expected_jra_profile_links(snapshot_id TEXT,horse_name TEXT,age INTEGER,profile_url TEXT,source_url TEXT,checked_at INTEGER,PRIMARY KEY(snapshot_id,horse_name))').run();

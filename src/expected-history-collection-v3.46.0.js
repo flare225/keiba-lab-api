@@ -1,3 +1,4 @@
+import {readExpectedProfilePage} from './expected-profile-page-discovery.js';
 import {storedExpectedSources} from './expected-roster-registry.js';
 import {nextConfirmedPredrawSource} from './confirmed-predraw-history-source.js';
 import {EXPECTED_SOURCES,expectedAge} from './expected-runner-preview-v3.30.0.js';
@@ -16,7 +17,8 @@ export async function expectedHistoryContext(db,source){
  if(confirmed)return {race:{race_key:'expected:'+source.snapshotId,race_date:source.date,venue:source.venue,race_no:source.raceNo,race_name:source.raceName,source_url:confirmed.source_url,runner_count:confirmed.runners.length},runners:confirmed.runners,rosterBasis:'confirmed-predraw'};
  const runners=source.names.map(horse_name=>({horse_name,age:expectedAge(source,horse_name),horse_no:null}));
  const links=await rows(db,"SELECT l.horse_name,l.profile_url,l.source_url FROM lab_history_profile_links l JOIN jra_races r ON r.race_key=l.race_key JOIN jra_runners x ON x.race_key=r.race_key AND x.horse_name=l.horse_name AND x.age=l.age JOIN json_each(?) e ON json_extract(e.value,'$.horse_name')=x.horse_name WHERE l.source_url=r.source_url AND r.race_date>=printf('%d-01-01',CAST(substr(?,1,4) AS INTEGER)-CAST(json_extract(e.value,'$.age') AS INTEGER)+2) AND r.race_date<? AND x.age=(CAST(json_extract(e.value,'$.age') AS INTEGER)-(CAST(substr(?,1,4) AS INTEGER)-CAST(substr(r.race_date,1,4) AS INTEGER))) ORDER BY l.checked_at DESC LIMIT 216",[JSON.stringify(runners),source.date,source.date,source.date]);
- if(source.officialHorsePage){const published=await rows(db,'SELECT horse_name,profile_url,source_url,age FROM lab_expected_jra_profile_links WHERE snapshot_id=? AND source_url=?',[source.snapshotId,source.officialHorsePage]);links.push(...published.filter(l=>source.names.includes(l.horse_name)&&Number(l.age)===expectedAge(source,l.horse_name)));}
+ const officialHorsePage=await readExpectedProfilePage(db,source);
+ if(officialHorsePage){const published=await rows(db,'SELECT horse_name,profile_url,source_url,age FROM lab_expected_jra_profile_links WHERE snapshot_id=? AND source_url=?',[source.snapshotId,officialHorsePage]);links.push(...published.filter(l=>source.names.includes(l.horse_name)&&Number(l.age)===expectedAge(source,l.horse_name)));}
 
  const byName=new Map();for(const l of links){try{officialUrl(l.source_url);const url=officialUrl(l.profile_url,true);if(!byName.has(l.horse_name))byName.set(l.horse_name,new Set());byName.get(l.horse_name).add(url);}catch{}}
  return {race:{race_key:'expected:'+source.snapshotId,race_date:source.date,venue:source.venue,race_no:source.raceNo,race_name:source.raceName,source_url:null,runner_count:source.names.length},runners:runners.map(r=>({...r,profile_url:byName.get(r.horse_name)?.size===1?[...byName.get(r.horse_name)][0]:null}))};

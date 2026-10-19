@@ -7,9 +7,11 @@ export function validateExpectedRoster(input,stamp=Date.now()){
  const provider=input.provider;
  if(!(provider==='JRA'&&url.hostname==='www.jra.go.jp'||provider==='netkeiba'&&['race.netkeiba.com','news.netkeiba.com','own.netkeiba.com'].includes(url.hostname)))throw Error('対応する名簿出典を指定してください。');
  if(!['special-registration','expected-runners'].includes(input.kind)||typeof input.sourceText!=='string'||input.sourceText.length<20||input.sourceText.length>200000)throw Error('名簿の根拠本文が必要です。');
+ let officialHorsePage;
+ if(input.officialHorsePage!=null){const p=new URL(input.officialHorsePage);if(p.protocol!=='https:'||p.hostname!=='www.jra.go.jp'||p.username||p.password||p.port||p.search||p.hash||!/^\/keiba\/(?:g1|race)\/[a-z0-9_-]+\/horse\.html$/.test(p.pathname))throw Error('公式プロフィール発見先が不正です。');officialHorsePage=p.href;}
  const runners=input.runners;
  if(!Array.isArray(runners)||!runners.length||runners.length>100||new Set(runners.map(r=>r.horseName)).size!==runners.length||runners.some(r=>typeof r.horseName!=='string'||!r.horseName.trim()||r.horseName!==r.horseName.trim()||r.horseName.length>40||!input.sourceText.includes(r.horseName)||!Number.isInteger(r.age)||r.age<2||r.age>15||r.horseNo!=null||r.frameNo!=null))throw Error('登録馬名・年齢・根拠本文を検証できません。枠番・馬番は保存しません。');
- return{date,venue,raceNo,raceName:String(input.raceName||'登録・想定名簿').slice(0,100),provider,kind:input.kind,sourceUrl:url.href,observedAt:new Date(observed).toISOString(),sourceText:input.sourceText,runners:runners.map(r=>({horseName:r.horseName,age:r.age}))};
+ return{date,venue,raceNo,raceName:String(input.raceName||'登録・想定名簿').slice(0,100),provider,kind:input.kind,sourceUrl:url.href,...(officialHorsePage?{officialHorsePage}:{}),observedAt:new Date(observed).toISOString(),sourceText:input.sourceText,runners:runners.map(r=>({horseName:r.horseName,age:r.age}))};
 }
 export async function saveExpectedRoster(db,input,stamp=Date.now()){
  const record=validateExpectedRoster(input,stamp),body=JSON.stringify(record),hash=await sha256(body),key=`${record.date}:${record.venue}:${record.raceNo}`;

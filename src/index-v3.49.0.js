@@ -1,3 +1,4 @@
+import {capturePostRaceAssessment,readPostRaceAssessments,postRaceAssessmentPage} from './post-race-assessment.js';
 import {missingOfficialCards,collectMissingOfficialCard} from './missing-official-cards.js';
 import {verifyEditorialClaims} from './editorial-claim-verification.js';
 import {seedEditorialReferences,readEditorialReferences,editorialReferencePage} from './editorial-reference-notes.js';
@@ -19,6 +20,16 @@ export const VERSION='3.49.38';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(['/v1/lab/post-race-assessment','/lab/post-race-assessment'].includes(u.pathname)){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*','access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'content-type'};
+   if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
+   try{
+    if(request.method==='POST'&&u.pathname.startsWith('/v1/')){const input=await request.json();if(input.confirm!=='CAPTURE')throw Error('confirm CAPTURE が必要です。');return Response.json({...await capturePostRaceAssessment(env.DB,input),version:VERSION},{headers});}
+    if(request.method!=='GET')return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
+    const records=await readPostRaceAssessments(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')});
+    return u.pathname.startsWith('/lab/')?new Response(postRaceAssessmentPage(records),{headers:{...headers,'content-type':'text/html; charset=utf-8'}}):Response.json({ok:true,records,version:VERSION,eligibleForProspectiveAccuracy:false},{headers});
+   }catch(e){return Response.json({ok:false,error:String(e.message||e),version:VERSION,...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})},{status:e.saveMayHaveSucceeded?503:400,headers});}
+  }
   if(u.pathname==='/v1/lab/missing-official-cards'||u.pathname==='/v1/lab/missing-official-card-batch'){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
    try{

@@ -73,19 +73,19 @@ async function query(db,sql,args,source,warnings){
   throw new Error('過去DBの照会に失敗しました（'+source+'）。履歴ゼロとは判定していません。');
  }
 }
-export async function historyForExpected(db,source,horseName,limit=8){
- const age=expectedAge(source,horseName),beforeDate=source.date,fromDate=String(Number(beforeDate.slice(0,4))-age+2)+'-01-01',warnings=[];
+export async function historyForExpected(db,source,horseName,limit=8,preloaded=null){
+ const age=expectedAge(source,horseName),beforeDate=source.date,fromDate=String(Number(beforeDate.slice(0,4))-age+2)+'-01-01',warnings=[...(preloaded?.warnings||[])];
  const cap=Math.max(1,Math.min(8,Number(limit)||8));
- const rich=await query(db,
+ const rich=preloaded?.rich??await query(db,
   'SELECT r.race_date,r.venue,r.race_name,r.surface,r.distance,r.runner_count AS field_size,COALESCE(d.finish_position,o.finish_position) AS finish_position,d.finish_status,d.time_text,d.time_seconds,d.corner_positions,d.last3f,d.source_url FROM jra_runners x JOIN jra_races r ON r.race_key=x.race_key LEFT JOIN lab_race_outcomes o ON o.race_key=x.race_key AND o.horse_no=x.horse_no LEFT JOIN lab_race_result_details d ON d.race_key=x.race_key AND d.horse_no=x.horse_no WHERE x.horse_name=? AND x.age=(? - (CAST(strftime(\'%Y\',?) AS INTEGER)-CAST(strftime(\'%Y\',r.race_date) AS INTEGER))) AND r.race_date>=? AND r.race_date<? ORDER BY r.race_date DESC,r.race_no DESC LIMIT 20',
   [horseName,age,beforeDate,fromDate,beforeDate],'official-result',warnings);
- const profiles=await query(db,
+ const profiles=preloaded?.profiles??await query(db,
   'SELECT race_date,venue,race_name,surface,distance,finish_position,field_size,time_text,last3f,corner_positions,track_condition,source_url FROM jra_past_performances WHERE horse_name=? AND race_date>=? AND race_date<? ORDER BY race_date DESC LIMIT 20',
   [horseName,fromDate,beforeDate],'stored-profile-history',warnings);
- let detailEvidence=[];
- try{detailEvidence=(await db.prepare("SELECT result_url,detail_json FROM lab_prior_detail_evidence WHERE json_extract(detail_json,'$.horseName')=? AND json_extract(detail_json,'$.date')>=? AND json_extract(detail_json,'$.date')<? ORDER BY fetched_at").bind(horseName,fromDate,beforeDate).all()).results||[]}catch(e){if(!/no such table/.test(String(e)))throw e}
+ let detailEvidence=preloaded?.detailEvidence||[];
+ if(!preloaded)try{detailEvidence=(await db.prepare("SELECT result_url,detail_json FROM lab_prior_detail_evidence WHERE json_extract(detail_json,'$.horseName')=? AND json_extract(detail_json,'$.date')>=? AND json_extract(detail_json,'$.date')<? ORDER BY fetched_at").bind(horseName,fromDate,beforeDate).all()).results||[]}catch(e){if(!/no such table/.test(String(e)))throw e}
  for(const e of detailEvidence.filter(e=>typeof e.detail_json==='string'&&typeof e.result_url==='string')){const d=JSON.parse(e.detail_json);const p=profiles.find(p=>p.race_date===d.date&&p.venue===d.venue&&p.race_name===d.raceName&&Number(p.finish_position)===d.finishPosition&&Number(p.field_size)===d.fieldSize);if(p&&((d.last3f!=null&&Number(p.last3f)===d.last3f)||(d.cornerPositions&&p.corner_positions===d.cornerPositions)))p.detail_source_url=e.result_url;}
- const expectedStored=source.snapshotId==='no-expected-supplement'?[]:await query(db,'SELECT payload_json FROM lab_expected_history_snapshots WHERE snapshot_id=? AND horse_name=? AND race_date>=? AND race_date<? ORDER BY race_date DESC LIMIT 20',[source.snapshotId,horseName,fromDate,beforeDate],'netkeiba-history',warnings);
+ const expectedStored=source.snapshotId==='no-expected-supplement'?[]:(preloaded?.expected??await query(db,'SELECT payload_json FROM lab_expected_history_snapshots WHERE snapshot_id=? AND horse_name=? AND race_date>=? AND race_date<? ORDER BY race_date DESC LIMIT 20',[source.snapshotId,horseName,fromDate,beforeDate],'netkeiba-history',warnings));
  const expected=expectedStored.map(r=>{try{return JSON.parse(r.payload_json)}catch{throw Error('過去DBの保存データを読み込めません。')}});
  const valid=r=>typeof r.race_date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(r.race_date)&&r.race_date>=fromDate&&r.race_date<beforeDate;
  const byRace=new Map();let conflict=false;

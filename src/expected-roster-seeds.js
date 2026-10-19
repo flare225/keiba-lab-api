@@ -113,6 +113,7 @@ export const EXPECTED_ROSTER_SEEDS=[
       "provider": "netkeiba",
       "kind": "special-registration",
       "sourceUrl": "https://news.netkeiba.com/?no=345954&pid=news_view",
+      "officialRacePage": "https://www.jra.go.jp/keiba/race/097.html",
       "observedAt": "2026-10-19T08:22:52.310394Z",
       "sourceText": "netkeiba 2026年10月18日(日)17時30分 アルテミスS登録記事の登録馬部分を転記\n10月24日 東京 芝1600m アルテミスステークス 登録馬\nカナデルペガサス 55.0\nサトノスプレマシー 55.0\nシティオブドリーム 55.0\nシュヴァルツペルレ 55.0\nジーティーキャリー 55.0\nタプティ 55.0\nピコベリー 55.0\nファミーリエ 55.0\nプルヴィナル 55.0\nホウオウプレマ 55.0\nマリアンデール 55.0\nリスグロワール 55.0\nローズサルーテ 55.0\n地方馬\nベストプラージュ 55.0",
       "runners": [

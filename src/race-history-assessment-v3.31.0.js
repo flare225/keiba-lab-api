@@ -22,16 +22,22 @@ export async function raceHistoryAssessment(db,input){
  if(input.track&&!['良','稍重','重','不良'].includes(input.track))throw Error('想定馬場を確認してください。');
  if(!Array.isArray(input.marks)||input.marks.length<1||input.marks.length>18)throw Error('印を1頭以上指定してください。');
  const seen=new Set();const marks=input.marks.map(m=>{const horseName=String(m.horseName||'').trim(),runner=context.runners.find(r=>r.horse_name===horseName);if(!runner||!['◎','○','▲','△','☆','注','消'].includes(m.mark)||seen.has(horseName))throw Error('馬名・初期印・重複を確認してください。');if(m.horseNo!=null&&Number(m.horseNo)!==Number(runner.horse_no))throw Error('馬番と馬名が一致しません。');seen.add(horseName);return{horseName,horseNo:Number(runner.horse_no),mark:m.mark,laboScore:null,laboRank:null}});
- const histories=[];
- for(const runner of context.runners){
-  if(!Number.isInteger(Number(runner.age))||Number(runner.age)<2||Number(runner.age)>20)throw Error('出走馬の年齢データを確認できません。精査を保留します。');
-  const supplement=EXPECTED_SOURCES.find(s=>s.raceKey===context.raceKey&&s.names.includes(runner.horse_name));
-  histories.push(await historyForExpected(db,{...context,age:Number(runner.age),snapshotId:supplement?.snapshotId||'no-expected-supplement'},runner.horse_name));
- }
+ const {histories,all}=await officialHistoryEvidence(db,context,input.track||null);
  const byHistory=new Map(histories.map(h=>[h.horseName,h]));
- const all=rankAssessment(context.runners.map(r=>({horseName:r.horse_name,horseNo:Number(r.horse_no),assessment:assessExpectedHistory(byHistory.get(r.horse_name),context,input.track||null,'recent-three-v1')})));
  const byName=new Map(all.map(x=>[x.horseName,x]));
  return{ok:true,stage:'all-race-history-assessment',phase:'initial',race:{raceKey:context.raceKey,date:context.date,venue:context.venue,raceNo:context.raceNo,raceName:context.raceName,raceNameBasis:context.raceNameBasis,runnerCount:context.runners.length,surface:context.surface,distance:context.distance},source:{provider:context.provider,authoritativeForCard:true},
   audit:{mode:'official-card-history-assessment',marked:marks,historySidecar:marks.map(m=>byHistory.get(m.horseName))},scoreMutation:false,
   assessment:{modelVersion:'existing-safe-core-1.5-recent-three-v1',trackAssumption:input.track||null,trackBasis:input.track?'user-scenario-not-confirmed-race-day-track':'unknown',runnerPool:all.length,scoredRunners:all.filter(r=>r.assessment.available).length,marked:marks.map(m=>({...byName.get(m.horseName),humanMark:m.mark})),allRunners:all,raceShape:buildRaceShapeEvidence(all),guardrails:{fullOfficialRunnerPool:true,humanMarksUsedInScore:false,noExternalFetch:true,lockedPredictionsModified:false,noForcedTieBreak:true,accuracyImprovementValidated:false,automaticMarksAssigned:false,targetResultUsed:false}}};
+}
+
+export async function officialHistoryEvidence(db,context,track=null,preloaded=null){
+ const histories=[];
+ for(const runner of context.runners){
+  if(!Number.isInteger(Number(runner.age))||Number(runner.age)<2||Number(runner.age)>20)throw Error('出走馬の年齢データを確認できません。精査を保留します。');
+  const supplement=EXPECTED_SOURCES.find(s=>s.raceKey===context.raceKey&&s.names.includes(runner.horse_name));
+  histories.push(await historyForExpected(db,{...context,age:Number(runner.age),snapshotId:supplement?.snapshotId||'no-expected-supplement'},runner.horse_name,8,preloaded?.get(runner.horse_name)||null));
+ }
+ const byHistory=new Map(histories.map(h=>[h.horseName,h]));
+ const all=rankAssessment(context.runners.map(r=>({horseName:r.horse_name,horseNo:Number(r.horse_no),assessment:assessExpectedHistory(byHistory.get(r.horse_name),context,track,'recent-three-v1')})));
+ return {histories,all};
 }

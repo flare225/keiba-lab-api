@@ -3,7 +3,7 @@ import {missingPriorHistorySql} from './learning-history-priority.js';
 import {parsePastPerformances,extractProfileLinks,ensureHistoryTable} from './collection-profile-parser-v3.32.0.js';
 import {targetInput} from './race-history-assessment-v3.31.0.js';
 import {storedHistoryResultSource,resultProfileLinks} from './history-result-profile-source.js';
-export const COLLECTION_POLICY={version:'bounded-jra-profile-v1',concurrency:1,maxHorsesPerBatch:2,maxExternalRequestsPerBatch:3,minRequestGapMs:5000,minBatchGapMs:60000,futureRefreshMs:86400000,archiveFromDate:'2016-01-01',scheduledHorsesPerRun:2,sourcePriority:'JRA',targetDateExcluded:true,preserveExistingRichFields:true,profileLinkCache:true,scheduledRunsPerHour:6};
+export const COLLECTION_POLICY={version:'bounded-jra-profile-v1',concurrency:1,maxHorsesPerBatch:2,maxExternalRequestsPerBatch:3,minRequestGapMs:5000,minBatchGapMs:60000,futureRefreshMs:86400000,archiveFromDate:'2016-01-01',scheduledHorsesPerRun:1,sourcePriority:'JRA',targetDateExcluded:true,preserveExistingRichFields:true,profileLinkCache:true,scheduledRunsPerHour:6};
 const integer=(v,defaultValue,min,max)=>Number.isInteger(Number(v))?Math.max(min,Math.min(max,Number(v))):defaultValue;
 const dayOffset=(date,n)=>new Date(Date.parse(date+'T00:00:00Z')+n*86400000).toISOString().slice(0,10);
 export const jstDay=now=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(now));

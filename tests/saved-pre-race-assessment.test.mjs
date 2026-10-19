@@ -25,6 +25,7 @@ test('separate labels wait for exact locked result evidence and remain immutable
  const body=JSON.stringify(record);sql.prepare('INSERT INTO lab_locked_mark_results VALUES(?,?,?,?,?)').run(body,await sha256(body),'2026-10-19',key,'final');
  const saved=await labelSavedPreRaceAssessment(db,input);assert.equal(saved.saved,1);assert.equal(saved.record.guardrails.automaticTraining,false);
  assert.equal((await labelSavedPreRaceAssessment(db,input)).saved,0);
+ const read=await readSavedPreRaceAssessment(db,input);assert.equal(read.learningCandidate.labelSha256,saved.labelSha256);assert.equal(read.learningCandidate.integrityVerified,true);assert.equal(read.learningCandidate.record.rows.length,2);
  assert.throws(()=>sql.exec('DELETE FROM lab_saved_reference_labels_v1'),/immutable/);
  sql.close();
 });

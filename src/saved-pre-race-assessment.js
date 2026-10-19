@@ -24,7 +24,12 @@ export async function readSavedPreRaceAssessment(db,input){
   const sha=await sha256(JSON.stringify(record)),stored=await db.prepare(`SELECT feature_sha256,features_json,imported_at FROM ${TABLE} WHERE feature_sha256=?`).bind(sha).first();
   if(stored){if(await sha256(stored.features_json)!==sha||stored.features_json!==JSON.stringify(record))throw Error('保存した学習用事前記録が一致しません。');preservedFeature={featureSha256:sha,importedAt:stored.imported_at,integrityVerified:true};}
  }catch(e){if(!/no such table/.test(String(e)))throw e;}
- return{ok:true,available:true,status:record.complete?'verified-complete-pre-race-reference':'verified-partial-pre-race-reference',record,preservedFeature};
+ let learningCandidate=null;
+ if(preservedFeature)try{
+  const rows=(await db.prepare('SELECT label_sha256,evidence_json,created_at FROM lab_saved_reference_labels_v1 WHERE feature_sha256=? ORDER BY created_at DESC,rowid DESC LIMIT 1').bind(preservedFeature.featureSha256).all()).results||[];
+  if(rows.length){const row=rows[0],candidate=JSON.parse(row.evidence_json);if(await sha256(row.evidence_json)!==row.label_sha256||candidate.featureSha256!==preservedFeature.featureSha256||candidate.raceKey!==key||candidate.revisionId!==record.source.revisionId||candidate.lockSha256!==record.source.lockSha256)throw Error('学習候補の保存内容を検証できません。');learningCandidate={labelSha256:row.label_sha256,createdAt:row.created_at,integrityVerified:true,record:candidate};}
+ }catch(e){if(!/no such table/.test(String(e)))throw e;}
+ return{ok:true,available:true,status:record.complete?'verified-complete-pre-race-reference':'verified-partial-pre-race-reference',record,preservedFeature,learningCandidate};
 }
 export async function preserveSavedPreRaceAssessment(db,input,now=Date.now()){
  const verified=await readSavedPreRaceAssessment(db,input);if(!verified.available)return verified;

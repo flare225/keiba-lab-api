@@ -12,6 +12,7 @@ export const EXPECTED_ROSTER_SEEDS=[
       "provider": "JRA",
       "kind": "special-registration",
       "sourceUrl": "https://www.jra.go.jp/keiba/tokubetsu/pdf/2026/kikka.pdf",
+      "officialHorsePage": "https://www.jra.go.jp/keiba/g1/kikka/horse.html",
       "observedAt": "2026-10-19T08:10:27.981155Z",
       "sourceText": "JRA 出走馬決定順一覧（特別登録） 2026/10/12 P.0001\n2026年 第4回京都第9日 第11競走 菊花賞(GI) 芝3000m\n登録21頭 出走可能頭数18頭\nPDF目視転記。登録一覧であり正式出走馬・枠番・馬番ではない。\nPDF SHA256 b6fa9f19cecf57e01af0486e9b2c22735c414ba8331fecae18aec25e15cdbc61\nアウダーシア 牡3歳 負担重量57kg\nアルトラムス 牡3歳 負担重量57kg\nジャスティンシカゴ 牡3歳 負担重量57kg\nシートゥサミット 牡3歳 負担重量57kg\nロブチェン 牡3歳 負担重量57kg\nコンジェスタス 牡3歳 負担重量57kg\nゴーイントゥスカイ 牡3歳 負担重量57kg\nバステール 牡3歳 負担重量57kg\nサノノグレーター 牡3歳 負担重量57kg\nアスクエジンバラ 牡3歳 負担重量57kg\nショウナンガルフ 牡3歳 負担重量57kg\nショウナンハヤナミ 牡3歳 負担重量57kg\nラージアンサンブル 牡3歳 負担重量57kg\nキンググローリー 牡3歳 負担重量57kg\nダノンヒストリー 牡3歳 負担重量57kg\nチャリングクロス 牡3歳 負担重量57kg\nナリタエスペランサ 牡3歳 負担重量57kg\nマジョレルブルー 牡3歳 負担重量57kg\nエムズビギン 牡3歳 負担重量57kg\nイブキ 牡3歳 負担重量57kg\nミッキーファルコン 牡3歳 負担重量57kg",
       "runners": [
@@ -98,6 +99,78 @@ export const EXPECTED_ROSTER_SEEDS=[
         {
           "horseName": "ミッキーファルコン",
           "age": 3
+        }
+      ]
+    }
+  },
+  {
+    "snapshotId": "netkeiba-artemis-registration-20261018-reviewed-20261019-v1",
+    "record": {
+      "date": "2026-10-24",
+      "venue": "東京",
+      "raceNo": 11,
+      "raceName": "アルテミスステークス",
+      "provider": "netkeiba",
+      "kind": "special-registration",
+      "sourceUrl": "https://news.netkeiba.com/?no=345954&pid=news_view",
+      "observedAt": "2026-10-19T08:22:52.310394Z",
+      "sourceText": "netkeiba 2026年10月18日(日)17時30分 アルテミスS登録記事の登録馬部分を転記\n10月24日 東京 芝1600m アルテミスステークス 登録馬\nカナデルペガサス 55.0\nサトノスプレマシー 55.0\nシティオブドリーム 55.0\nシュヴァルツペルレ 55.0\nジーティーキャリー 55.0\nタプティ 55.0\nピコベリー 55.0\nファミーリエ 55.0\nプルヴィナル 55.0\nホウオウプレマ 55.0\nマリアンデール 55.0\nリスグロワール 55.0\nローズサルーテ 55.0\n地方馬\nベストプラージュ 55.0",
+      "runners": [
+        {
+          "horseName": "カナデルペガサス",
+          "age": 2
+        },
+        {
+          "horseName": "サトノスプレマシー",
+          "age": 2
+        },
+        {
+          "horseName": "シティオブドリーム",
+          "age": 2
+        },
+        {
+          "horseName": "シュヴァルツペルレ",
+          "age": 2
+        },
+        {
+          "horseName": "ジーティーキャリー",
+          "age": 2
+        },
+        {
+          "horseName": "タプティ",
+          "age": 2
+        },
+        {
+          "horseName": "ピコベリー",
+          "age": 2
+        },
+        {
+          "horseName": "ファミーリエ",
+          "age": 2
+        },
+        {
+          "horseName": "プルヴィナル",
+          "age": 2
+        },
+        {
+          "horseName": "ホウオウプレマ",
+          "age": 2
+        },
+        {
+          "horseName": "マリアンデール",
+          "age": 2
+        },
+        {
+          "horseName": "リスグロワール",
+          "age": 2
+        },
+        {
+          "horseName": "ローズサルーテ",
+          "age": 2
+        },
+        {
+          "horseName": "ベストプラージュ",
+          "age": 2
         }
       ]
     }

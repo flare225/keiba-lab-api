@@ -1,4 +1,4 @@
-import {readSavedPreRaceAssessment,preserveSavedPreRaceAssessment} from './saved-pre-race-assessment.js';
+import {readSavedPreRaceAssessment,preserveSavedPreRaceAssessment,labelSavedPreRaceAssessment} from './saved-pre-race-assessment.js';
 import {capturePostRaceAssessment,readPostRaceAssessments,postRaceAssessmentPage} from './post-race-assessment.js';
 import {missingOfficialCards,collectMissingOfficialCard} from './missing-official-cards.js';
 import {verifyEditorialClaims} from './editorial-claim-verification.js';
@@ -27,7 +27,7 @@ export default {
    try{
     if(request.method==='GET')return Response.json({...await readSavedPreRaceAssessment(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no'),phase:u.searchParams.get('phase')||'final'}),version:VERSION},{headers});
     if(request.method!=='POST')return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
-    const input=await request.json();if(input.confirm!=='PRESERVE')throw Error('confirm PRESERVE が必要です。');return Response.json({...await preserveSavedPreRaceAssessment(env.DB,input),version:VERSION},{headers});
+    const input=await request.json();if(!['PRESERVE','LABEL'].includes(input.confirm))throw Error('confirm PRESERVE または LABEL が必要です。');const result=input.confirm==='LABEL'?await labelSavedPreRaceAssessment(env.DB,input):await preserveSavedPreRaceAssessment(env.DB,input);return Response.json({...result,version:VERSION},{headers});
    }catch(e){return Response.json({ok:false,error:String(e.message||e),version:VERSION,...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})},{status:e.saveMayHaveSucceeded?503:409,headers});}
   }
   if(['/v1/lab/post-race-assessment','/lab/post-race-assessment'].includes(u.pathname)){

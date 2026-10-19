@@ -1,3 +1,4 @@
+import {weekDataInventory} from './week-data-inventory.js';
 import {readSavedPreRaceAssessment,preserveSavedPreRaceAssessment,labelSavedPreRaceAssessment} from './saved-pre-race-assessment.js';
 import {capturePostRaceAssessment,readPostRaceAssessments,postRaceAssessmentPage} from './post-race-assessment.js';
 import {missingOfficialCards,collectMissingOfficialCard} from './missing-official-cards.js';
@@ -21,6 +22,9 @@ export const VERSION='3.49.38';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/week-data-inventory'&&request.method==='GET'){
+   try{return Response.json({...await weekDataInventory(env.DB,{from:u.searchParams.get('from'),to:u.searchParams.get('to')}),version:VERSION},{headers:{'cache-control':'no-store'}})}catch(e){return Response.json({ok:false,error:String(e.message||e)},{status:400})}
+  }
   if(u.pathname==='/v1/lab/saved-pre-race-assessment'){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*','access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'content-type'};
    if(request.method==='OPTIONS')return new Response(null,{status:204,headers});

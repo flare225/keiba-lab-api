@@ -4,14 +4,14 @@ import {seedEditorialReferences,readEditorialReferences,editorialReferencePage} 
 import {scheduledReadStatus,runWithScheduledReadBudget,scheduledBudgetLane} from './scheduled-read-budget.js';
 import {COLLECTION_READ_POLICY,shouldRunScheduled} from './collection-read-policy.js';
 import {runPipelineJob} from './pipeline-runs-v3.40.0.js';
-import {priorDetailStatus,collectPriorDetails,scheduledPriorDetails} from './prior-result-details.js';
+import {priorDetailStatus,collectPriorDetails} from './prior-result-details.js';
 import {collectLockedMarkResults,readLockedMarkResults} from './locked-mark-result-evidence.js';
 import {userMarkLockEndpoint,readUserMarkLock} from './user-mark-lock.js';
 import app from './index-v3.48.2.js';
 import {markRecordProvenance} from './mark-record-provenance.js';
 import {workoutEndpoint} from './workout-evidence-v3.49.0.js';
-import {collectTodayMainHistory} from './today-main-history-priority.js';
-import {collectUpcomingOfficialHistory,upcomingOfficialHistoryPlan} from './upcoming-official-history.js';
+import {dispatchLiveSources} from './live-source-dispatch.js';
+import {upcomingOfficialHistoryPlan} from './upcoming-official-history.js';
 import {captureSourceTrackRace,sourceTrackStatus} from './learning-source-track-v3.49.36.js';
 import {learningSourceTrackPage} from './learning-source-track-page-v3.49.36.js';
 import {statusCacheKey,readStatusCache,writeStatusCache} from './status-read-cache.js';
@@ -110,17 +110,11 @@ export default {
   return runWithScheduledReadBudget(env.DB,async db=>{
   const budgetEnv={...env,DB:db};
   if(event.cron==='*/3 * * * *'){
-   const card=await collectMissingOfficialCard(db,{upcomingOnly:true,includeFuture:true}, {now:()=>Number(event.scheduledTime)});
-   if(card.externalRequests||card.status==='cooldown'){await runPipelineJob(db,'history','scheduled',async()=>card,{scheduledTime:event.scheduledTime});await collectLockedMarkResults(db);return;}
-   const priority=await collectTodayMainHistory(db,{now:()=>Number(event.scheduledTime)});
-   if(priority){await runPipelineJob(db,'history','scheduled',async()=>priority,{scheduledTime:event.scheduledTime});await collectLockedMarkResults(db);return;}
-   const upcoming=await collectUpcomingOfficialHistory(db,{now:()=>Number(event.scheduledTime)});
-   if(upcoming){await runPipelineJob(db,'history','scheduled',async()=>upcoming,{scheduledTime:event.scheduledTime});await collectLockedMarkResults(db);return;}
+   await dispatchLiveSources(event,budgetEnv);
+   await collectLockedMarkResults(db);
+   return;
   }
   try{await seedEditorialReferences(db);await verifyEditorialClaims(db);}catch{console.warn('editorial reference seed unavailable');}
-  if(event.cron==='*/3 * * * *'&&Math.floor(Number(event.scheduledTime)/60000)%12===0){
-   try{await runPipelineJob(db,'prior-details','scheduled',()=>scheduledPriorDetails(db),{scheduledTime:event.scheduledTime});}catch{ /* Failure is recorded; existing collection jobs must still run. */ }
-  }
   await app.scheduled(event,budgetEnv,ctx);
   await collectLockedMarkResults(db);
   },Date.now,scheduledBudgetLane(event));

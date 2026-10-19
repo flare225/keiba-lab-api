@@ -1,0 +1,19 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';
+import {dispatchLiveSources,collectLiveHistory} from '../src/live-source-dispatch.js';
+function fixture(){const sql=new DatabaseSync(':memory:');const db={prepare(q){const w=(a=[])=>({bind(...b){return w(b)},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}},async run(){const r=sql.prepare(q).run(...a);return{meta:{changes:r.changes}}}});return w()}};return{sql,db}}
+const start=Date.parse('2026-10-19T00:12:00Z');
+test('live dispatcher cannot starve results when card/history queue never empties',async()=>{
+ const {sql,db}=fixture();let stamp=start;const seen=[];
+ const deps={now:()=>stamp,archive:async()=>{seen.push('archive');return{ok:true,status:'idle',externalRequests:0}},results:async()=>{seen.push('results');return{ok:true,status:'collected',externalRequests:1}},history:async()=>{seen.push('history');return{ok:true,status:'cooldown',externalRequests:0}}};
+ for(let i=0;i<6;i++){await dispatchLiveSources({cron:'*/3 * * * *',scheduledTime:stamp},{DB:db},deps);stamp+=360000;}
+ assert.deepEqual(seen,['archive','results','history','archive','results','history']);assert.equal(sql.prepare("SELECT COUNT(*) n FROM lab_bounded_pipeline_runs WHERE job='results'").get().n,2);sql.close();
+});
+test('history priorities stop at shared cooldown without calling another source',async()=>{
+ const r=await collectLiveHistory({}, {scheduledTime:start},{cards:async()=>({status:'cooldown',externalRequests:0}),main:()=>assert.fail('must stop'),upcoming:()=>assert.fail('must stop'),expected:()=>assert.fail('must stop'),details:()=>assert.fail('must stop')});assert.equal(r.status,'cooldown');
+});
+test('ordinary card priority lives inside history lane and requests the coming week',async()=>{
+ let called=false;const r=await collectLiveHistory({}, {scheduledTime:start},{cards:async(_,input)=>{assert.equal(input.includeFuture,true);assert.equal(input.upcomingOnly,true);called=true;return{status:'official-card-saved',externalRequests:1}},main:()=>assert.fail('one source batch only')});assert.equal(called,true);assert.equal(r.externalRequests,1);
+});
+test('idle history can enrich prior details without running a second source batch',async()=>{
+ const r=await collectLiveHistory({}, {scheduledTime:start},{cards:async()=>({status:'complete',externalRequests:0}),main:async()=>null,upcoming:async()=>null,expected:async()=>({status:'idle',externalRequests:0}),details:async(_,deps)=>{assert.equal(typeof deps.now,'function');return{status:'collected',externalRequests:1}}});assert.equal(r.externalRequests,1);
+});

@@ -115,3 +115,13 @@ test('default collector discovers a future ordinary pre-draw roster, saves prior
  let requests=0;const r=await collectUpcomingExpectedHistory(db,{now:()=>time,wait:async()=>{},fetcher:async()=>{requests++;return new Response(html,{headers:{'content-type':'text/html;charset=utf-8'}})}});
  assert.equal(r.stage,'expected-runner-prior-history');assert.equal(r.snapshotId,'confirmed-predraw:'+key);assert.equal(r.attempted,1);assert.equal(requests,1);assert.equal(r.before.runners[0].horseNo,null);assert.ok(sql.prepare('SELECT COUNT(*) n FROM jra_past_performances WHERE horse_name=? AND race_date<?').get('HorseA','2026-10-24').n>0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races WHERE race_date=?').get('2026-10-24').n,0);sql.close();
 });
+test('unresolved expected profiles expose waiting reason instead of reporting idle',async()=>{
+ const {db,sql}=await fixture();sql.exec('DELETE FROM lab_history_profile_links');
+ const r=await collectUpcomingExpectedHistory(db,{sources:[source],now:()=>stamp,fetcher:()=>assert.fail('no guessed fetch')});
+ assert.equal(r.status,'awaiting-source-readiness');assert.equal(r.waiting[0].status,'awaiting-profile-links');assert.ok(r.waiting[0].missingProfileLinks.includes('HorseA'));assert.equal(r.waiting.at(-1).profileStatus,'not-configured');sql.close();
+});
+test('registered upcoming roster continues collecting after formal publication regardless of static priority',async()=>{
+ const {db,sql}=await fixture();sql.exec("INSERT INTO jra_races VALUES('future','2026-10-10','東京',11,'試験','https://www.jra.go.jp/card',2);INSERT INTO jra_runners VALUES('future',1,'HorseA',2),('future',2,'HorseB',2)");
+ const r=await collectUpcomingExpectedHistory(db,{sources:[{...source,snapshotId:'registered:abc',priority:50}],now:()=>stamp,wait:async()=>{},fetcher:async url=>new Response(url.includes('accessU')?html:'<a href="'+profile+'">HorseA</a>',{headers:{'content-type':'text/html; charset=utf-8'}})});
+ assert.equal(r.attempted,1);assert.equal(r.before.race.raceKey,'future');assert.equal(r.after.totalStoredRows,1);sql.close();
+});

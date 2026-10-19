@@ -1,3 +1,4 @@
+import {importExpectedRosterSeed} from './expected-roster-seeds.js';
 import {saveExpectedRoster} from './expected-roster-registry.js';
 import {weekDataInventory} from './week-data-inventory.js';
 import {readSavedPreRaceAssessment,preserveSavedPreRaceAssessment,labelSavedPreRaceAssessment} from './saved-pre-race-assessment.js';
@@ -23,6 +24,9 @@ export const VERSION='3.49.38';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/expected-roster-seed-import'&&request.method==='POST'){
+   try{const input=await request.json();if(input.confirm!=='IMPORT_BUNDLED')throw Error('confirm IMPORT_BUNDLED is required');return Response.json({...await importExpectedRosterSeed(env.DB,input.snapshotId),version:VERSION},{headers:{'cache-control':'no-store'}})}catch(e){return Response.json({ok:false,error:String(e.message||e),...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})},{status:e.saveMayHaveSucceeded?503:400})}
+  }
   if(u.pathname==='/v1/lab/expected-roster-ingest'&&request.method==='POST'){
    if(!env.USER_MARK_WRITE_TOKEN||request.headers.get('authorization')!==`Bearer ${env.USER_MARK_WRITE_TOKEN}`)return Response.json({ok:false,error:'write authorization required'},{status:401});
    try{const input=await request.json();if(input.confirm!=='SAVE')throw Error('confirm SAVE is required');return Response.json({...await saveExpectedRoster(env.DB,input),version:VERSION},{headers:{'cache-control':'no-store'}})}catch(e){return Response.json({ok:false,error:String(e.message||e),...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})},{status:e.saveMayHaveSucceeded?503:400})}

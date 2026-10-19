@@ -1,3 +1,4 @@
+import {trainSavedReferences,readSavedReferenceTraining} from './saved-reference-learning.js';
 import {importExpectedRosterSeed} from './expected-roster-seeds.js';
 import {saveExpectedRoster} from './expected-roster-registry.js';
 import {weekDataInventory} from './week-data-inventory.js';
@@ -24,6 +25,12 @@ export const VERSION='3.49.38';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/saved-reference-training'){
+   try{
+    const result=request.method==='GET'?await readSavedReferenceTraining(env.DB,u.searchParams.get('sha256')):request.method==='POST'?await (async()=>{const b=await request.json();if(b.confirm!=='TRAIN')throw Error('confirm TRAIN が必要です。');return trainSavedReferences(env.DB,b);})():null;
+    return Response.json(result?{...result,version:VERSION}:{ok:false,error:'method not allowed'},{status:result?200:405,headers:{'cache-control':'no-store'}});
+   }catch(e){return Response.json({ok:false,error:String(e.message||e),...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})},{status:e.saveMayHaveSucceeded?503:409});}
+  }
   if(u.pathname==='/v1/lab/expected-roster-seed-import'&&request.method==='POST'){
    try{const input=await request.json();if(input.confirm!=='IMPORT_BUNDLED')throw Error('confirm IMPORT_BUNDLED is required');return Response.json({...await importExpectedRosterSeed(env.DB,input.snapshotId),version:VERSION},{headers:{'cache-control':'no-store'}})}catch(e){return Response.json({ok:false,error:String(e.message||e),...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})},{status:e.saveMayHaveSucceeded?503:400})}
   }

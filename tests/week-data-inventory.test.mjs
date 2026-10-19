@@ -1,0 +1,10 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync}from'node:sqlite';import{weekDataInventory}from'../src/week-data-inventory.js';
+test('inventory separates programs, expected names and formal cards; prior history respects age and cutoff',async()=>{
+ const sql=new DatabaseSync(':memory:');sql.exec(`CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER);CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,runner_count INTEGER);CREATE TABLE jra_runners(race_key TEXT,horse_name TEXT,age INTEGER,horse_no INTEGER);CREATE TABLE jra_past_performances(horse_name TEXT,race_date TEXT,finish_position INTEGER,field_size INTEGER);INSERT INTO jra_race_program VALUES('2026-10-24','東京',11),('2026-10-25','京都',11);INSERT INTO jra_past_performances VALUES('A','2026-10-01',1,8),('A','2026-09-01',2,8),('A','2026-10-25',1,8),('A','2020-10-01',1,8);`);
+ const queries=[];const db={prepare(q){queries.push(q);const f=(a=[])=>({bind(...a){return f(a)},async all(){return{results:sql.prepare(q).all(...a)}}});return f()}};
+ const source={date:'2026-10-25',venue:'京都',raceNo:11,names:['A'],age:3};
+ const j=await weekDataInventory(db,{from:'2026-10-24',to:'2026-10-25'},[source]);assert.equal(j.summary.programRaces,2);assert.equal(j.summary.formalCards,0);assert.equal(j.summary.rosterRaces,1);assert.equal(j.races[0].history,null);assert.equal(j.races[1].history[0].storedRecentRows,2);assert.equal(j.races[1].rosterBasis,'expected-snapshot');assert.ok(queries.every(q=>q.startsWith('SELECT')));
+ sql.exec(`INSERT INTO jra_races VALUES('2026-10-25:京都:11','2026-10-25','京都',11,1);INSERT INTO jra_runners VALUES('2026-10-25:京都:11','B',3,1);`);
+ const formal=await weekDataInventory(db,{from:'2026-10-24',to:'2026-10-25'},[source]);assert.equal(formal.summary.formalCards,1);assert.equal(formal.races[1].history[0].horseName,'B');
+ await assert.rejects(weekDataInventory(db,{from:'2026-02-30',to:'2026-10-25'}));await assert.rejects(weekDataInventory(db,{from:'2026-10-01',to:'2026-10-25'}));sql.close();
+});

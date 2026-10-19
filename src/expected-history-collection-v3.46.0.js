@@ -1,3 +1,4 @@
+import {storedExpectedSources} from './expected-roster-registry.js';
 import {nextConfirmedPredrawSource} from './confirmed-predraw-history-source.js';
 import {EXPECTED_SOURCES,expectedAge} from './expected-runner-preview-v3.30.0.js';
 import {discoverExpectedProfiles} from './expected-profile-discovery-v3.47.0.js';
@@ -34,7 +35,9 @@ export async function expectedHistoryStatus(db,now=Date.now(),sources=EXPECTED_S
 }
 export async function collectUpcomingExpectedHistory(db,deps={}){
  const now=deps.now||Date.now,discoverySources=[];
- const fixed=upcomingExpectedSources(now(),deps.sources||EXPECTED_SOURCES);
+ const stamp=now(),day=jstDay(stamp),until=new Date(Date.parse(day+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);
+ const registered=deps.sources?[]:await storedExpectedSources(db,day,until);
+ const fixed=upcomingExpectedSources(stamp,deps.sources||[...registered,...EXPECTED_SOURCES.filter(s=>!registered.some(r=>r.date===s.date&&r.venue===s.venue&&r.raceNo===s.raceNo))]);
  const discovered=deps.sources?null:await (deps.nextPredrawSource||nextConfirmedPredrawSource)(db,now());
  const sources=discovered&&!fixed.some(s=>s.date===discovered.date&&s.venue===discovered.venue&&s.raceNo===discovered.raceNo)?[...fixed,discovered]:fixed;
  // Use verified cached profiles across all target races before requesting a

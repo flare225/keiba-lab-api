@@ -1,3 +1,4 @@
+import {saveExpectedRoster} from './expected-roster-registry.js';
 import {weekDataInventory} from './week-data-inventory.js';
 import {readSavedPreRaceAssessment,preserveSavedPreRaceAssessment,labelSavedPreRaceAssessment} from './saved-pre-race-assessment.js';
 import {capturePostRaceAssessment,readPostRaceAssessments,postRaceAssessmentPage} from './post-race-assessment.js';
@@ -22,6 +23,10 @@ export const VERSION='3.49.38';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/expected-roster-ingest'&&request.method==='POST'){
+   if(!env.USER_MARK_WRITE_TOKEN||request.headers.get('authorization')!==`Bearer ${env.USER_MARK_WRITE_TOKEN}`)return Response.json({ok:false,error:'write authorization required'},{status:401});
+   try{const input=await request.json();if(input.confirm!=='SAVE')throw Error('confirm SAVE is required');return Response.json({...await saveExpectedRoster(env.DB,input),version:VERSION},{headers:{'cache-control':'no-store'}})}catch(e){return Response.json({ok:false,error:String(e.message||e),...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})},{status:e.saveMayHaveSucceeded?503:400})}
+  }
   if(u.pathname==='/v1/lab/week-data-inventory'&&request.method==='GET'){
    try{return Response.json({...await weekDataInventory(env.DB,{from:u.searchParams.get('from'),to:u.searchParams.get('to')}),version:VERSION},{headers:{'cache-control':'no-store'}})}catch(e){return Response.json({ok:false,error:String(e.message||e)},{status:400})}
   }

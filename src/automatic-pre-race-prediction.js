@@ -85,7 +85,7 @@ export async function recoverOldAutomaticPrediction(db,now=Date.now()){
  const selected=page.find(r=>r.status!=='saved'&&Number(r.next_attempt_at||0)<=now),last=selected||page.at(-1);
  const advance=()=>db.prepare(`INSERT INTO ${cursorTable} VALUES('old',?,?) ON CONFLICT(name) DO UPDATE SET race_date=excluded.race_date,race_key=excluded.race_key`).bind(last?.race_date||'0000-01-01',last?.race_key||'').run();
  if(!selected)await advance();
- if(!selected)return{ok:true,status:page.length?'old-page-verified-or-waiting':'no-old-unverified-snapshot',inspectedSnapshots:page.length,saved:0,externalRequests:0};
+ if(!selected)return{ok:true,status:page.length?'old-page-verified-or-waiting':'old-cursor-wrapped',inspectedSnapshots:page.length,saved:0,externalRequests:0};
  const row=await db.prepare(`SELECT race_key,snapshot_json FROM ${TABLE} WHERE race_key=?`).bind(selected.race_key).first();if(!row)return{ok:false,status:'deferred',error:'Historical snapshot disappeared; no regeneration',saved:0,externalRequests:0};
  let status='deferred',error=null,read=null;
  try{const race=JSON.parse(row.snapshot_json).race;if(race?.raceKey!==row.race_key)throw Error('Historical snapshot queue identity mismatch');read=await readAutomaticPrediction(db,race);if(!read.available)throw Error('Saved historical snapshot unavailable; no regeneration');status='reconciled';}

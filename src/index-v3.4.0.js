@@ -6,7 +6,7 @@ function clean(s){return String(s||"").replace(/<script[\s\S]*?<\/script>/gi," "
 function programUrl(date){const[y,m,d]=date.split("-");return `https://www.jra.go.jp/keiba/calendar${y}/${y}/${Number(m)}/${m}${d}.html`}
 async function fetchText(url){const r=await fetch(url,{headers:{"user-agent":"keiba-lab/3.4.0 (+all-race program staging)",accept:"text/html,*/*;q=0.8"},redirect:"follow"});const b=await r.arrayBuffer();let body;try{body=new TextDecoder("utf-8").decode(b)}catch{body=new TextDecoder("shift_jis").decode(b)}return{ok:r.ok,status:r.status,url:r.url,body}}
 
-async function ensureProgramTable(db){
+export async function ensureProgramTable(db){
   await db.prepare(`CREATE TABLE IF NOT EXISTS jra_race_program (
     program_key TEXT PRIMARY KEY,
     race_date TEXT NOT NULL,

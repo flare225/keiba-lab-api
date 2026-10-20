@@ -69,3 +69,19 @@ export async function scheduledAutomaticPrediction(db,now=Date.now()){
  await db.prepare(`INSERT INTO ${RECEIPTS} VALUES(?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET status=excluded.status,next_attempt_at=excluded.next_attempt_at,detail_json=excluded.detail_json`).bind(key,result.available?'saved':result.status,now+3600000,JSON.stringify(result.available?{snapshotSha256:result.snapshotSha256}:{...result})).run();
  return{...result,target:t};
 }
+
+// One old saved snapshot per UTC day. Never rebuild a missing historical forecast.
+export async function recoverOldAutomaticPrediction(db,now=Date.now()){
+ await ensure(db);const clock='lab_automatic_prediction_recovery_clock_v1';
+ await db.prepare(`CREATE TABLE IF NOT EXISTS ${clock}(name TEXT PRIMARY KEY,next_run_at INTEGER NOT NULL)`).run();
+ await db.prepare(`INSERT OR IGNORE INTO ${clock} VALUES('old-snapshot',0)`).run();
+ const claim=await db.prepare(`UPDATE ${clock} SET next_run_at=? WHERE name='old-snapshot' AND next_run_at<=?`).bind(now+86400000,now).run();if(Number(claim.meta?.changes)!==1)return{ok:true,status:'old-recovery-not-due',saved:0,externalRequests:0};
+ const cutoff=new Date(Date.parse(jstDay(now)+'T00:00:00Z')-7*86400000).toISOString().slice(0,10);
+ const row=await db.prepare(`SELECT a.race_key,a.snapshot_json FROM ${TABLE} a LEFT JOIN ${RECEIPTS} c ON c.race_key=a.race_key WHERE a.race_date<? AND COALESCE(c.status,'')<>'saved' AND COALESCE(c.next_attempt_at,0)<=? ORDER BY COALESCE(c.next_attempt_at,0),a.race_date,a.race_key LIMIT 1`).bind(cutoff,now).first();
+ if(!row)return{ok:true,status:'no-old-unverified-snapshot',saved:0,externalRequests:0};
+ let status='deferred',error=null,read=null;
+ try{const race=JSON.parse(row.snapshot_json).race;if(race?.raceKey!==row.race_key)throw Error('Historical snapshot queue identity mismatch');read=await readAutomaticPrediction(db,race);if(!read.available)throw Error('Saved historical snapshot unavailable; no regeneration');status='reconciled';}
+ catch(e){if(e?.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;error=String(e.message||e);}
+ await db.prepare(`INSERT INTO ${RECEIPTS} VALUES(?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET status=excluded.status,next_attempt_at=excluded.next_attempt_at,detail_json=excluded.detail_json`).bind(row.race_key,status==='reconciled'?'saved':'deferred',now+86400000,JSON.stringify({recovery:'older-than-seven-days',status,error,snapshotSha256:read?.snapshotSha256||null,regenerated:false})).run();
+ return{ok:status==='reconciled',status,raceKey:row.race_key,readbackVerified:status==='reconciled'?1:0,saved:0,regenerated:false,externalRequests:0,error};
+}

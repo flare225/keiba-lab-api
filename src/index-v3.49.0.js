@@ -5,7 +5,7 @@ import {PREVIEW_GUARDS} from './expected-runner-preview-v3.30.0.js';
 import {readAutomaticLearningCandidate,labelAutomaticPrediction,scheduledAutomaticCandidates} from './automatic-learning-candidates.js';
 import {readReviewedUpcomingHistory,importReviewedUpcomingHistory} from './reviewed-upcoming-history.js';
 import {resolveExpectedCollectionSource} from './index-v3.46.0.js';
-import {readAutomaticPrediction,captureAutomaticPrediction,scheduledAutomaticPrediction} from './automatic-pre-race-prediction.js';
+import {readAutomaticPrediction,captureAutomaticPrediction,scheduledAutomaticPrediction,recoverOldAutomaticPrediction} from './automatic-pre-race-prediction.js';
 import {trainSavedReferences,readSavedReferenceTraining} from './saved-reference-learning.js';
 import {importExpectedRosterSeed} from './expected-roster-seeds.js';
 import {saveExpectedRoster} from './expected-roster-registry.js';
@@ -29,7 +29,7 @@ import {upcomingOfficialHistoryPlan} from './upcoming-official-history.js';
 import {captureSourceTrackRace,sourceTrackStatus} from './learning-source-track-v3.49.36.js';
 import {learningSourceTrackPage} from './learning-source-track-page-v3.49.36.js';
 import {statusCacheKey,readStatusCache,writeStatusCache} from './status-read-cache.js';
-export const VERSION='3.49.43';
+export const VERSION='3.49.44';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
@@ -235,6 +235,7 @@ export default {
    try{await scheduledAutomaticCandidates(db);}catch(e){console.error('automatic-learning-candidate',String(e));}
    return;
   }
+  if(event.cron==='0 * * * *')await recoverOldAutomaticPrediction(db);
   try{await seedEditorialReferences(db);await verifyEditorialClaims(db);}catch{console.warn('editorial reference seed unavailable');}
   await app.scheduled(event,budgetEnv,ctx);
   await collectLockedMarkResults(db);

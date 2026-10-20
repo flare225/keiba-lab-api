@@ -1,0 +1,24 @@
+name: Bounded upcoming history delivery
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/deliver-upcoming-history.yml
+      - scripts/deliver-upcoming-history.mjs
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: upcoming-history-delivery
+  cancel-in-progress: false
+jobs:
+  deliver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Read gate and deliver at most one external collection batch
+        run: node scripts/deliver-upcoming-history.mjs

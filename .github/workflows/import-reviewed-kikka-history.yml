@@ -1,0 +1,26 @@
+name: Import reviewed Kikka history
+on:
+  workflow_run:
+    workflows: [Publish Cloudflare Worker when authorized]
+    types: [completed]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: import-reviewed-kikka-history
+  cancel-in-progress: false
+jobs:
+  import:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && contains(github.event.workflow_run.head_commit.message, '菊花賞21頭'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Persist reviewed cached source once and independently read back
+        run: node scripts/import-reviewed-kikka-history.mjs

@@ -1,3 +1,5 @@
+import {readReviewedUpcomingHistory,importReviewedUpcomingHistory} from './reviewed-upcoming-history.js';
+import {resolveExpectedCollectionSource} from './index-v3.46.0.js';
 import {readAutomaticPrediction,captureAutomaticPrediction,scheduledAutomaticPrediction} from './automatic-pre-race-prediction.js';
 import {trainSavedReferences,readSavedReferenceTraining} from './saved-reference-learning.js';
 import {importExpectedRosterSeed} from './expected-roster-seeds.js';
@@ -26,6 +28,17 @@ export const VERSION='3.49.38';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/reviewed-upcoming-history'){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
+   try{
+    const b=request.method==='GET'?{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')}:request.method==='POST'?await request.json():null;
+    if(!b)return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
+    if(request.method==='POST'&&b.confirm!=='IMPORT_BUNDLED')throw Error('confirm IMPORT_BUNDLED is required');
+    const source=await resolveExpectedCollectionSource(env.DB,b);if(!source)throw Error('登録名簿がありません');
+    const data=await(request.method==='GET'?readReviewedUpcomingHistory(env.DB,source):importReviewedUpcomingHistory(env.DB,source));return Response.json({...data,version:VERSION},{headers});
+   }catch(e){return Response.json({ok:false,error:String(e.message||e),...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})},{status:e.saveMayHaveSucceeded?503:409,headers})}
+  }
+
   if(u.pathname==='/v1/lab/automatic-prediction'){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*','access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'content-type'};
    if(request.method==='OPTIONS')return new Response(null,{status:204,headers});

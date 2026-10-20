@@ -1,3 +1,4 @@
+import {storedExpectedSources} from './expected-roster-registry.js';
 import {buildRaceShapeEvidence} from './running-style-evidence.js';
 import {EXPECTED_SOURCES,historyForExpected} from './expected-runner-preview-v3.30.0.js';
 import {assessExpectedHistory,rankAssessment,expectedAssessment} from './expected-assessment-v3.31.0.js';
@@ -13,8 +14,9 @@ export async function assessmentContext(db,input){
  const runners=(await db.prepare('SELECT horse_no,horse_name,age FROM jra_runners WHERE race_key=? ORDER BY horse_no').bind(race.race_key).all()).results||[];
  if(!runners.length||runners.length!==Number(race.runner_count)||new Set(runners.map(r=>r.horse_name)).size!==runners.length)throw Error('正式出馬表の保存が不完全です。精査を保留します。');
  if(!['芝','ダート','障害','障害芝','障害ダート','芝・ダート'].includes(race.surface)||!Number.isFinite(Number(race.distance))||Number(race.distance)<=0)throw Error('芝・ダートと距離のデータを確認できません。精査を保留します。');
+ const registered=(await storedExpectedSources(db,t.date,t.date)).find(s=>s.venue===t.venue&&s.raceNo===t.raceNo);
  const labelSource=EXPECTED_SOURCES.find(s=>s.date===t.date&&s.venue===t.venue&&s.raceNo===t.raceNo);
- return{raceKey:race.race_key,...t,raceName:race.race_name||(labelSource?labelSource.raceName+'（参考名称）':'レース名未取得'),raceNameBasis:race.race_name?'stored-official-card':labelSource?'expected-source-label':'unavailable',surface:race.surface,distance:Number(race.distance),names:runners.map(r=>r.horse_name),runners,official:true,provider:'stored-JRA-card',snapshotId:null};
+ return{raceKey:race.race_key,...t,raceName:race.race_name||(labelSource?labelSource.raceName+'（参考名称）':'レース名未取得'),raceNameBasis:race.race_name?'stored-official-card':labelSource?'expected-source-label':'unavailable',surface:race.surface,distance:Number(race.distance),names:runners.map(r=>r.horse_name),runners,official:true,provider:'stored-JRA-card',snapshotId:registered?.snapshotId||null};
 }
 export async function raceHistoryAssessment(db,input){
  const context=await assessmentContext(db,input);
@@ -35,7 +37,7 @@ export async function officialHistoryEvidence(db,context,track=null,preloaded=nu
  for(const runner of context.runners){
   if(!Number.isInteger(Number(runner.age))||Number(runner.age)<2||Number(runner.age)>20)throw Error('出走馬の年齢データを確認できません。精査を保留します。');
   const supplement=EXPECTED_SOURCES.find(s=>s.raceKey===context.raceKey&&s.names.includes(runner.horse_name));
-  histories.push(await historyForExpected(db,{...context,age:Number(runner.age),snapshotId:supplement?.snapshotId||'no-expected-supplement'},runner.horse_name,8,preloaded?.get(runner.horse_name)||null));
+  histories.push(await historyForExpected(db,{...context,age:Number(runner.age),snapshotId:supplement?.snapshotId||context.snapshotId||'no-expected-supplement'},runner.horse_name,8,preloaded?.get(runner.horse_name)||null));
  }
  const byHistory=new Map(histories.map(h=>[h.horseName,h]));
  const all=rankAssessment(context.runners.map(r=>({horseName:r.horse_name,horseNo:Number(r.horse_no),assessment:assessExpectedHistory(byHistory.get(r.horse_name),context,track,'recent-three-v1')})));

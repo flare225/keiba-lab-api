@@ -1,0 +1,33 @@
+name: Verify live expected roster browser
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/verify-live-expected-rosters.mjs
+      - .github/workflows/verify-live-expected-rosters.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: live-expected-roster-browser
+  cancel-in-progress: false
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --no-save --package-lock=false playwright@1.56.1
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/verify-live-expected-rosters.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-expected-roster-browser
+          path: browser-evidence/
+          retention-days: 7

@@ -1,3 +1,4 @@
+import {readAutomaticLearningCandidate,labelAutomaticPrediction,scheduledAutomaticCandidates} from './automatic-learning-candidates.js';
 import {readReviewedUpcomingHistory,importReviewedUpcomingHistory} from './reviewed-upcoming-history.js';
 import {resolveExpectedCollectionSource} from './index-v3.46.0.js';
 import {readAutomaticPrediction,captureAutomaticPrediction,scheduledAutomaticPrediction} from './automatic-pre-race-prediction.js';
@@ -28,6 +29,16 @@ export const VERSION='3.49.38';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/automatic-learning-candidate'){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
+   try{
+    const b=request.method==='GET'?{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')}:request.method==='POST'?await request.json():null;
+    if(!b)return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
+    if(request.method==='POST'&&b.confirm!=='LABEL')throw Error('confirm LABEL is required');
+    const data=await(request.method==='GET'?readAutomaticLearningCandidate(env.DB,b):labelAutomaticPrediction(env.DB,b));return Response.json({...data,version:VERSION},{headers});
+   }catch(e){return Response.json({ok:false,error:String(e.message||e),...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})},{status:e.saveMayHaveSucceeded?503:409,headers})}
+  }
+
   if(u.pathname==='/v1/lab/reviewed-upcoming-history'){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
    try{
@@ -180,6 +191,7 @@ export default {
    try{await scheduledAutomaticPrediction(db);}catch(e){console.error('automatic-prediction',String(e));}
    await dispatchLiveSources(event,budgetEnv);
    await collectLockedMarkResults(db);
+   try{await scheduledAutomaticCandidates(db);}catch(e){console.error('automatic-learning-candidate',String(e));}
    return;
   }
   try{await seedEditorialReferences(db);await verifyEditorialClaims(db);}catch{console.warn('editorial reference seed unavailable');}

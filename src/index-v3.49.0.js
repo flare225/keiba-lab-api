@@ -30,7 +30,8 @@ export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
   if(u.pathname==='/v1/lab/automatic-learning-candidate'){
-   const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*','access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'content-type'};
+   if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
    try{
     const b=request.method==='GET'?{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')}:request.method==='POST'?await request.json():null;
     if(!b)return Response.json({ok:false,error:'method not allowed'},{status:405,headers});

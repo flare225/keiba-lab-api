@@ -10,3 +10,8 @@ for(const target of [{date:'2026-10-25',venue:'京都',raceNo:11,rows:63},{date:
 }
 // Continue the bounded data task while preserving the live shared gate.
 await import('./deliver-upcoming-history.mjs');
+
+const app=await fetch('https://keiba-lab-apl.vercel.app/',{headers:{'cache-control':'no-cache'},signal:AbortSignal.timeout(20000)}),html=await app.text();
+const script=[...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m=>m[1]).find(s=>s.includes('function renderReady('));
+const frontend={httpStatus:app.status,currentTargetRequest:!!script?.includes("get('/v1/lab/race-readiness'+t.query)"),staleResponseGuard:!!script?.includes('!sameRaceTarget(window,t)'),targetChangeListener:!!script?.includes("addEventListener('labo-target-change',loadReady)")};
+console.log('FRONTEND_RELEASE',JSON.stringify(frontend));if(!app.ok||!frontend.currentTargetRequest||!frontend.staleResponseGuard||!frontend.targetChangeListener)throw Error('Selected-race frontend release was not confirmed');

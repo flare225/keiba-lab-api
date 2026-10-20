@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   delivery:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && contains(github.event.workflow_run.head_commit.message, '新潟22頭')
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && (contains(github.event.workflow_run.head_commit.message, '新潟22頭') || contains(github.event.workflow_run.head_commit.message, '新潟過去走111行'))
     runs-on: ubuntu-latest
     timeout-minutes: 7
     steps:
@@ -27,7 +27,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Verify Niigata all runners visible in live app
         env:
-          ROSTER_TARGETS: '[{"date":"2026-10-25","venue":"新潟","raceNo":11,"count":22},{"date":"2026-10-25","venue":"新潟","raceNo":9,"count":23},{"date":"2026-10-25","venue":"新潟","raceNo":10,"count":14}]'
+          ROSTER_TARGETS: '[{"date":"2026-10-25","venue":"新潟","raceNo":11,"count":22,"rows":65},{"date":"2026-10-25","venue":"新潟","raceNo":9,"count":23,"rows":69},{"date":"2026-10-25","venue":"新潟","raceNo":10,"count":14,"rows":42}]'
         run: node scripts/verify-live-expected-rosters.mjs
       - uses: actions/upload-artifact@v4
         if: always()

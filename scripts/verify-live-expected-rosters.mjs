@@ -22,8 +22,19 @@ try{
   const visible=await panel.locator('select[data-horse-name]').evaluateAll(xs=>xs.map(x=>x.dataset.horseName));
   if(response.status()!==200||visible.length!==t.count||JSON.stringify([...visible].sort())!==JSON.stringify(db.runners.map(x=>x.horseName).sort()))throw Error('Rendered roster differs from saved source');
   const title=await panel.locator('h3').innerText();if(!title.includes(t.date)||!title.includes(t.venue))throw Error('Stale roster title');
-  await panel.screenshot({path:'browser-evidence/'+t.date+'-'+t.venue+'.png'});
-  const result={target:t,title,renderedNames:visible,snapshotId:db.source.snapshotId,readbackMatches:true};results.push(result);console.log('BROWSER_ROSTER_VERIFIED',JSON.stringify(result));
+  let historyRowsRendered=null;
+  if(t.rows){
+   const q=new URLSearchParams({date:t.date,venue:t.venue,race_no:String(t.raceNo)}),rr=await page.request.get('https://keiba-lab-api.sekai-no-bancyou.workers.dev/v1/lab/reviewed-upcoming-history?'+q),history=await rr.json();
+   if(!rr.ok()||!history.integrityVerified||history.rows?.length!==t.rows)throw Error('History DB readback unavailable');
+   await page.waitForFunction(n=>document.querySelectorAll('#reviewedHistory [data-history-row]').length===n,t.rows,{timeout:45000});
+   const rendered=await page.locator('#reviewedHistory [data-history-row]').evaluateAll(xs=>xs.map(x=>({horse:x.closest('[data-history-horse]').dataset.historyHorse,text:x.textContent})));
+   for(const fact of history.rows){const row=rendered.find(r=>r.horse===fact.horse_name&&r.text.includes(fact.race_date)&&r.text.includes(fact.venue));if(!row||![fact.time_text,'上がり3F '+fact.last3f,'通過 '+fact.corner_positions,fact.surface+fact.distance+'m'].every(s=>row.text.includes(s)))throw Error('Displayed history differs from DB '+fact.horse_name);}
+   await page.locator('#reviewedHistory details').first().locator('summary').click();await page.locator('#reviewedHistory [data-history-row]').first().waitFor({state:'visible'});
+   await page.locator('#reviewedHistory').screenshot({path:'browser-evidence/'+t.date+'-'+t.venue+'-'+t.raceNo+'R-history.png'});
+   historyRowsRendered=rendered.length;console.log('BROWSER_HISTORY_VERIFIED',JSON.stringify({target:t,historyRowsRendered,allFieldsMatch:true,sha256:history.sha256,userMarksRequired:false}));
+  }
+  await panel.screenshot({path:'browser-evidence/'+t.date+'-'+t.venue+'-'+t.raceNo+'R.png'});
+  const result={target:t,title,renderedNames:visible,snapshotId:db.source.snapshotId,readbackMatches:true,historyRowsRendered};results.push(result);console.log('BROWSER_ROSTER_VERIFIED',JSON.stringify(result));
  }
 }finally{
  await page.screenshot({path:'browser-evidence/final-page.png',fullPage:true}).catch(()=>{});

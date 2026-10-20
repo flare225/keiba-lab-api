@@ -7,6 +7,7 @@ const TABLE='lab_automatic_predictions_v1',RECEIPTS='lab_automatic_prediction_re
 export const AUTOMATIC_MODEL='existing-safe-core-1.5-recent-three-v1';
 async function ensure(db){
  await db.prepare(`CREATE TABLE IF NOT EXISTS ${TABLE}(race_key TEXT PRIMARY KEY,race_date TEXT NOT NULL,snapshot_json TEXT NOT NULL,snapshot_sha256 TEXT NOT NULL,saved_at TEXT NOT NULL)`).run();
+ await db.prepare(`CREATE INDEX IF NOT EXISTS automatic_prediction_date ON ${TABLE}(race_date,race_key)`).run();
  await db.prepare(`CREATE TABLE IF NOT EXISTS ${RECEIPTS}(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_attempt_at INTEGER NOT NULL,detail_json TEXT NOT NULL)`).run();
  for(const action of ['UPDATE','DELETE'])await db.prepare(`CREATE TRIGGER IF NOT EXISTS automatic_prediction_no_${action.toLowerCase()} BEFORE ${action} ON ${TABLE} BEGIN SELECT RAISE(ABORT,'automatic prediction is immutable'); END`).run();
 }

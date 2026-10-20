@@ -53,3 +53,21 @@ test('a due card starting within twelve hours takes priority over an untried lat
  sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?)').run('official-card:2026-10-18:新潟:11:official-program',now-1);
  const result=await collectMissingOfficialCard(db,{date,includeFuture:true,upcomingOnly:true},{now:()=>now,discover:async(_,s)=>{assert.equal(s.date,date);assert.equal(s.venue,'新潟');return{ok:true,externalRequests:1}}});assert.equal(result.target.date,date);sql.close();
 });
+
+test('explicit target restricts SQL and receipt discovery to one race even with includeFuture',async()=>{
+ const {sql,db}=fixture();sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER)');
+ for(const day of ['2026-10-24','2026-10-25'])for(const venue of ['東京','京都','新潟'])for(let raceNo=1;raceNo<=12;raceNo++)sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(day,venue,raceNo,'10:00','https://www.jra.go.jp/calendar');
+ const observed=[];const tracked={prepare(q){const statement=db.prepare(q);return{...statement,bind(...args){observed.push({q,args});return statement.bind(...args)}}}};
+ const result=await collectMissingOfficialCard(tracked,{date:'2026-10-24',venue:'新潟',race_no:3,includeFuture:true},{now:()=>now,discover:async(_,s)=>{assert.deepEqual([s.date,s.venue,s.raceNo],['2026-10-24','新潟',3]);return{ok:true,externalRequests:1}}});
+ assert.equal(result.target.raceNo,3);const program=observed.find(x=>x.q.includes('FROM jra_race_program p'));assert.match(program.q,/WHERE p.race_date=\? AND p.venue=\? AND p.race_no=\? AND NOT EXISTS/);assert.deepEqual(program.args,['2026-10-24','新潟',3]);const receipts=observed.find(x=>x.q.includes('SELECT snapshot_id'));assert.equal(JSON.parse(receipts.args[0]).length,1);sql.close();
+});
+test('invalid explicit target fails before any DB read, including cooldown lookup',async()=>{
+ let reads=0;const db={prepare(){reads++;throw Error('unexpected query')}};
+ for(const input of [{date,venue:'新潟'},{date,venue:'新潟',raceNo:13},{date:'bad',venue:'東京',raceNo:1}])await assert.rejects(collectMissingOfficialCard(db,input,{now:()=>now}));assert.equal(reads,0);
+});
+test('targeted requests reuse complete cards and obey receipt cooldown without external fetch',async()=>{
+ const {sql,db}=fixture();sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(date,'新潟',11,'15:20',card);
+ sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER)');sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?)').run('official-card:'+date+':新潟:11:official-program',now+3600000);
+ const deps={now:()=>now,discover:async()=>assert.fail('must not fetch')},input={date,venue:'新潟',raceNo:11};assert.equal((await collectMissingOfficialCard(db,input,deps)).status,'card-discovery-not-due');
+ sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?,?)').run('saved',date,'新潟',11,1,card);sql.prepare('INSERT INTO jra_runners VALUES(?)').run('saved');assert.equal((await collectMissingOfficialCard(db,input,deps)).status,'complete');sql.close();
+});

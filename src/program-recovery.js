@@ -23,7 +23,7 @@ export async function recoverMissingPrograms(db,{now=Date.now,fetcher=fetch,pars
  let requests=0,pause=60000,uncertain=false,quotaStopped=false;
  try{
   const [y,m,d]=row.date.split('-'),url=`https://www.jra.go.jp/keiba/calendar${y}/${y}/${Number(m)}/${m}${d}.html`;let evidence;
-  if(row.source_json&&Number(row.checked_at)>stamp-86400000){if(await sha256(row.source_json)!==row.source_sha256)throw Error('Program source receipt hash mismatch');evidence=JSON.parse(row.source_json);}
+  if(row.status!=='partial-published-program'&&row.source_json&&Number(row.checked_at)>stamp-86400000){if(await sha256(row.source_json)!==row.source_sha256)throw Error('Program source receipt hash mismatch');evidence=JSON.parse(row.source_json);}
   else{
    const request=jraPageRequest(url);requests=1;const response=await fetcher(request.url,request.options);if(!response.ok){if([403,429,503].includes(response.status))pause=3600000;throw Error('JRA program HTTP '+response.status);}
    if(response.url&&response.url!==url)throw Error('Unexpected JRA program redirect');const bytes=await response.arrayBuffer();if(bytes.byteLength>1500000)throw Error('Program page too large');const html=new TextDecoder(/charset\s*=\s*["']?utf-?8/i.test(response.headers.get('content-type')||'')?'utf-8':'shift_jis').decode(bytes);

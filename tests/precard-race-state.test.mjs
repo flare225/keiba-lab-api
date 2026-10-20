@@ -11,3 +11,20 @@ test('program-only races are pending, unknown identities remain missing and stor
  const {db,sql}=fixture();sql.exec("INSERT INTO jra_race_program VALUES('2026-10-24','新潟',1)");const t={date:'2026-10-24',venue:'新潟',raceNo:1};const p=await readPrecardRaceState(db,t);assert.equal(p.status,200);assert.equal(p.data.precard.available,false);assert.equal((await readPrecardRaceState(db,{...t,raceNo:2})).status,404);sql.exec("INSERT INTO jra_races VALUES('card','2026-10-24','新潟',1)");assert.equal(await readPrecardRaceState(db,t),null);sql.close();
 });
 test('DB failure cannot become a successful pending state',async()=>{await assert.rejects(readPrecardRaceState({prepare(){throw Error('DB unavailable')}},{date:'2026-10-24',venue:'新潟',raceNo:11}),/DB unavailable/);});
+test('six concurrent race panels share one state read; later reads remain fresh',async context=>{
+ const {db,sql}=fixture();sql.exec("INSERT INTO jra_race_program VALUES('2026-10-24','新潟',1)");
+ let reads=0;const counted={prepare(q){reads++;return db.prepare(q);}},t={date:'2026-10-24',venue:'新潟',raceNo:1};
+ const single=await readPrecardRaceState(counted,t),baseline=reads;reads=0;for(let i=0;i<6;i++)await readPrecardRaceState(counted,t);const separateCalls=reads;assert.equal(separateCalls,baseline*6);reads=0;
+ const responses=await Promise.all([...PRECARD_STATE_PATHS].map(path=>app.fetch(new Request('https://api.test'+path+'?'+new URLSearchParams({date:t.date,venue:t.venue,race_no:'1'})),{DB:counted},{})));
+ const bodies=await Promise.all(responses.map(r=>r.json()));assert.equal(bodies.length,6);assert.equal(reads,baseline);context.diagnostic(JSON.stringify({panels:6,separateCalls,sharedCalls:reads,unit:'prepare calls in SQLite fixture; not production D1 rows'}));assert.ok(baseline>0);assert.ok(bodies.every(x=>x.status==='awaiting-official-card'&&x.prediction.locked===false));
+ // Separate copies: no panel can accidentally change another panel's state.
+ const [a,b]=await Promise.all([readPrecardRaceState(counted,t),readPrecardRaceState(counted,t)]);a.data.audit.passed=true;assert.equal(b.data.audit.passed,false);
+ sql.exec("INSERT INTO jra_races VALUES('new-card','2026-10-24','新潟',1)");assert.equal(await readPrecardRaceState(counted,t),null);assert.equal(single.data.precard.available,false);sql.close();
+});
+test('sharing never crosses race or DB identity, and failures are not retained',async()=>{
+ const {db,sql}=fixture();sql.exec("INSERT INTO jra_race_program VALUES('2026-10-24','新潟',1)");const t={date:'2026-10-24',venue:'新潟',raceNo:1};
+ const states=await Promise.all([readPrecardRaceState(db,t),readPrecardRaceState(db,{...t,raceNo:2})]);assert.deepEqual(states.map(x=>x.status),[200,404]);
+ let failed=true,calls=0;const changing={prepare(q){calls++;if(failed)throw Error('D1 daily read limit');return db.prepare(q);}};
+ const rejected=await Promise.allSettled([readPrecardRaceState(changing,t),readPrecardRaceState(changing,t)]);assert.ok(rejected.every(x=>x.status==='rejected'));assert.equal(calls,1);
+ failed=false;assert.equal((await readPrecardRaceState(changing,t)).status,200);const other=fixture();assert.equal((await readPrecardRaceState(other.db,t)).status,404);other.sql.close();sql.close();
+});

@@ -1,3 +1,4 @@
+import {readPrecardRaceState,PRECARD_STATE_PATHS} from './precard-race-state.js';
 import {PREVIEW_GUARDS} from './expected-runner-preview-v3.30.0.js';
 import {readAutomaticLearningCandidate,labelAutomaticPrediction,scheduledAutomaticCandidates} from './automatic-learning-candidates.js';
 import {readReviewedUpcomingHistory,importReviewedUpcomingHistory} from './reviewed-upcoming-history.js';
@@ -30,6 +31,11 @@ export const VERSION='3.49.38';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(request.method==='GET'&&u.searchParams.has('date')&&PRECARD_STATE_PATHS.has(u.pathname)){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
+   try{const pending=await readPrecardRaceState(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')||u.searchParams.get('raceNo')});if(pending)return Response.json({...pending.data,version:VERSION},{status:pending.status,headers});}
+   catch(e){console.error('precard state read failed',String(e.message||e));return Response.json({ok:false,status:'state-unavailable',error:'対象レースの保存状態を確認できません。'},{status:503,headers});}
+  }
   if(u.pathname==='/v1/lab/expected-runners'&&request.method==='GET'&&u.searchParams.has('date')){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
    try{

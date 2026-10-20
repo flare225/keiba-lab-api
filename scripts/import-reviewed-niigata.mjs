@@ -10,3 +10,10 @@ const imported=old.available?{...old,savedRows:0}:await call('/v1/lab/reviewed-u
 const history=await call('/v1/lab/reviewed-upcoming-history?'+query);
 if(!history.integrityVerified||history.sha256!==imported.sha256||history.storedRows!==65||history.horses.length!==22||history.horses.some(h=>h.last3fRows!==h.storedRows))throw Error('History readback failed');
 console.log('NIIGATA_HISTORY_SAVED',JSON.stringify({target,newRows:imported.savedRows,verifiedRows:history.storedRows,verifiedHorses:history.horses.length,newHistoryHorses:old.available?0:22,sha256:history.sha256,officialTablesModified:history.officialTablesModified,externalRequests:0}));
+
+for(const [raceNo,count] of [[9,23],[10,14]]){
+ const q=new URLSearchParams({date:target.date,venue:target.venue,race_no:String(raceNo)}),old=await call('/v1/lab/expected-runners?'+q,null,true);
+ const imported=old?null:await call('/v1/lab/expected-roster-seed-import',{snapshotId:'netkeiba-niigata-'+raceNo+'-registration-reviewed-20261020-v1',confirm:'IMPORT_BUNDLED'});
+ const read=await call('/v1/lab/expected-runners?'+q);if(read.runners.length!==count||!read.source.snapshotId.startsWith('registered:')||imported&&read.source.snapshotId!=='registered:'+imported.snapshotId)throw Error('Additional roster readback failed');
+ console.log('NIIGATA_ROSTER_SAVED',JSON.stringify({target:{...target,raceNo},newRaces:old?0:1,registeredHorses:count,snapshotId:read.source.snapshotId,readbackMatches:true,historySupplemented:false}));
+}

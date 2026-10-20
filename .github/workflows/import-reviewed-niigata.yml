@@ -27,7 +27,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Verify Niigata all runners visible in live app
         env:
-          ROSTER_TARGETS: '[{"date":"2026-10-25","venue":"新潟","raceNo":11,"count":22}]'
+          ROSTER_TARGETS: '[{"date":"2026-10-25","venue":"新潟","raceNo":11,"count":22},{"date":"2026-10-25","venue":"新潟","raceNo":9,"count":23},{"date":"2026-10-25","venue":"新潟","raceNo":10,"count":14}]'
         run: node scripts/verify-live-expected-rosters.mjs
       - uses: actions/upload-artifact@v4
         if: always()

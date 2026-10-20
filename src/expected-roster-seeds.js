@@ -1,3 +1,4 @@
+import {REMAINING_SPECIAL_REVIEWED} from './remaining-special-reviewed-history.js';
 import {ADDITIONAL_WEEK_REVIEWED} from './additional-week-reviewed-history.js';
 import {NIIGATA_ADDITIONAL_ROSTER_SEEDS} from './niigata-additional-rosters.js';
 import {LUMIERE_ROSTER_SEED} from './lumiere-reviewed-history.js';
@@ -179,7 +180,7 @@ export const EXPECTED_ROSTER_SEEDS=[
       ]
     }
   }
-, LUMIERE_ROSTER_SEED, ...NIIGATA_ADDITIONAL_ROSTER_SEEDS, ...ADDITIONAL_WEEK_REVIEWED.map(c=>c.seed)
+, LUMIERE_ROSTER_SEED, ...NIIGATA_ADDITIONAL_ROSTER_SEEDS, ...ADDITIONAL_WEEK_REVIEWED.map(c=>c.seed), ...REMAINING_SPECIAL_REVIEWED.map(c=>c.seed)
 ];
 export async function importExpectedRosterSeed(db,snapshotId,stamp=Date.now(),seeds=EXPECTED_ROSTER_SEEDS){
  if(typeof snapshotId!=='string'||!snapshotId||snapshotId.length>150)throw Error('公開コードに登録した名簿IDが必要です。');

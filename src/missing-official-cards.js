@@ -27,9 +27,13 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
   return Number(future(b))-Number(future(a))||a.date.localeCompare(b.date)||Number(b.raceNo===11)-Number(a.raceNo===11)||b.raceNo-a.raceNo;
  });
  const identity=r=>`official-card:${r.date}:${r.venue}:${r.raceNo}:${r.sourceBasis}`;
- let waiting=[];try{waiting=(await db.prepare('SELECT snapshot_id FROM lab_expected_card_discovery WHERE snapshot_id IN (SELECT value FROM json_each(?)) AND next_attempt_at>?').bind(JSON.stringify(candidates.map(identity)),stamp).all()).results||[]}catch(e){if(!/no such table/.test(String(e)))throw e;}
- const deferred=new Set(waiting.map(r=>r.snapshot_id));
- const r=candidates.find(r=>!deferred.has(identity(r)));if(!r)return{ok:true,status:candidates.length?'card-discovery-not-due':'complete',externalRequests:0};
+ let waiting=[];try{waiting=(await db.prepare('SELECT snapshot_id,next_attempt_at FROM lab_expected_card_discovery WHERE snapshot_id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(candidates.map(identity))).all()).results||[]}catch(e){if(!/no such table/.test(String(e)))throw e;}
+ const receipts=new Map(waiting.map(r=>[r.snapshot_id,Number(r.next_attempt_at)||0]));
+ // A short retry time must not let the first few cards monopolize every
+ // history-lane slot. Visit untried cards first, then the oldest due receipt.
+ const pick=pool=>pool.find(r=>!receipts.has(identity(r)))||pool.filter(r=>receipts.get(identity(r))<=stamp).sort((a,b)=>receipts.get(identity(a))-receipts.get(identity(b)))[0];
+ const urgent=candidates.filter(r=>{const start=Date.parse(`${r.date}T${r.startTime}:00+09:00`);return start>stamp&&start-stamp<=12*3600000});
+ const r=pick(urgent)||pick(candidates);if(!r)return{ok:true,status:candidates.length?'card-discovery-not-due':'complete',externalRequests:0};
  let url;try{url=officialUrl(r.sourceUrl);}catch{return{ok:false,status:'missing-program-source',externalRequests:0};}
  const meta=metaFromRacecardUrl(url),targetDate=r.date;
  const source={date:targetDate,venue:r.venue,raceNo:r.raceNo,snapshotId:`official-card:${targetDate}:${r.venue}:${r.raceNo}:${r.sourceBasis}`,officialRosterDiscoveryUrl:url};

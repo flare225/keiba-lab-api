@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';
-import {dispatchLiveSources,collectLiveHistory} from '../src/live-source-dispatch.js';
+import {dispatchLiveSources,collectLiveHistory,preferOfficialCards} from '../src/live-source-dispatch.js';
 function fixture(){const sql=new DatabaseSync(':memory:');const db={prepare(q){const w=(a=[])=>({bind(...b){return w(b)},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}},async run(){const r=sql.prepare(q).run(...a);return{meta:{changes:r.changes}}}});return w()}};return{sql,db}}
 const start=Date.parse('2026-10-19T00:12:00Z');
 test('live dispatcher cannot starve results when card/history queue never empties',async()=>{
@@ -20,4 +20,13 @@ test('idle history can enrich prior details without running a second source batc
 
 test('saved upcoming registration history is attempted before unpublished card discovery',async()=>{
  const r=await collectLiveHistory({}, {scheduledTime:start},{registered:async()=>[{names:['A']}],expected:async()=>({status:'collected',attempted:1,externalRequests:1}),cards:()=>assert.fail('roster history must not wait for a numbered card')});assert.equal(r.externalRequests,1);
+});
+
+test('published-card priority cannot be starved by a busy registered history queue',async()=>{
+ const rosters=[{date:'2026-10-24',venue:'東京',raceNo:9},{date:'2026-10-25',venue:'京都',raceNo:11}];
+ assert.equal(preferOfficialCards(rosters,Date.parse('2026-10-20T04:00:00Z')),false);assert.equal(preferOfficialCards(rosters,Date.parse('2026-10-22T04:59:59Z')),false);assert.equal(preferOfficialCards(rosters,Date.parse('2026-10-22T05:00:00Z')),true);
+ const r=await collectLiveHistory({}, {scheduledTime:Date.parse('2026-10-22T05:00:00Z')},{now:()=>Date.parse('2026-10-22T05:00:00Z'),registered:async()=>rosters,cards:async()=>({status:'official-card-saved',externalRequests:1}),expected:()=>assert.fail('ready cards take priority over pending histories'),main:()=>assert.fail('one external batch only')});assert.equal(r.externalRequests,1);
+});
+test('card cooldown in publication window cannot fall through to a second source request',async()=>{
+ const r=await collectLiveHistory({}, {scheduledTime:0},{now:()=>Date.parse('2026-10-23T04:00:00Z'),registered:async()=>[{date:'2026-10-24'}],cards:async()=>({status:'cooldown',externalRequests:0}),expected:()=>assert.fail('respect shared gate')});assert.equal(r.status,'cooldown');
 });

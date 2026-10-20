@@ -1,3 +1,4 @@
+import {validateAutomaticReferences,readAutomaticValidation,validateAutomaticValidationInput} from './automatic-reference-validation.js';
 import {trainAutomaticReferences,readAutomaticTraining,validateAutomaticTrainingInput} from './automatic-reference-training.js';
 import {readPrecardRaceState,PRECARD_STATE_PATHS} from './precard-race-state.js';
 import {PREVIEW_GUARDS} from './expected-runner-preview-v3.30.0.js';
@@ -28,7 +29,7 @@ import {upcomingOfficialHistoryPlan} from './upcoming-official-history.js';
 import {captureSourceTrackRace,sourceTrackStatus} from './learning-source-track-v3.49.36.js';
 import {learningSourceTrackPage} from './learning-source-track-page-v3.49.36.js';
 import {statusCacheKey,readStatusCache,writeStatusCache} from './status-read-cache.js';
-export const VERSION='3.49.40';
+export const VERSION='3.49.41';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
@@ -88,6 +89,17 @@ export default {
     if(request.method==='GET')return Response.json({...await readAutomaticTraining(env.DB,u.searchParams.get('sha256')),version:VERSION},{headers});
     const text=await request.text();if(text.length>16384)throw Error('入力サイズ上限です。');const input=JSON.parse(text);if(input.confirm!=='TRAIN')throw Error('confirm TRAIN が必要です。');validateAutomaticTrainingInput(input);
     const result=await runWithScheduledReadBudget(env.DB,db=>trainAutomaticReferences(db,input),Date.now,'learning');
+    return Response.json({...result,version:VERSION},{headers,status:result.status==='paused'?503:200});
+   }catch(e){return Response.json({ok:false,error:String(e.message||e),...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})},{status:e.saveMayHaveSucceeded?503:409,headers});}
+  }
+  if(u.pathname==='/v1/lab/automatic-shadow-validation'){
+   const headers={'cache-control':'no-store'};
+   if(!['GET','POST'].includes(request.method))return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
+   if(typeof env.USER_MARK_WRITE_TOKEN!=='string'||env.USER_MARK_WRITE_TOKEN.length<24||request.headers.get('authorization')!=='Bearer '+env.USER_MARK_WRITE_TOKEN)return Response.json({ok:false,error:'authorized operator required'},{status:401,headers});
+   try{
+    if(request.method==='GET')return Response.json({...await readAutomaticValidation(env.DB,u.searchParams.get('sha256')),version:VERSION},{headers});
+    const text=await request.text();if(text.length>16384)throw Error('入力サイズ上限です。');const input=JSON.parse(text);if(input.confirm!=='VALIDATE')throw Error('confirm VALIDATE が必要です。');validateAutomaticValidationInput(input);
+    const result=await runWithScheduledReadBudget(env.DB,db=>validateAutomaticReferences(db,input),Date.now,'learning');
     return Response.json({...result,version:VERSION},{headers,status:result.status==='paused'?503:200});
    }catch(e){return Response.json({ok:false,error:String(e.message||e),...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})},{status:e.saveMayHaveSucceeded?503:409,headers});}
   }

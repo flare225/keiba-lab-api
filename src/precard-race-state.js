@@ -2,8 +2,19 @@ import {targetInput} from './race-history-assessment-v3.31.0.js';
 import {resolveExpectedCollectionSource} from './index-v3.46.0.js';
 import {deriveRaceReadiness} from './readiness-v3.13.0.js';
 export const PRECARD_STATE_PATHS=new Set(['/v1/lab/race-ops','/v1/lab/race-readiness','/v1/lab/prelock-audit','/v1/lab/decision-lab','/v1/lab/labo-prediction','/v1/lab/race-alerts']);
+// Share only concurrent reads of the same public state. Nothing survives the
+// request burst; later reads (including after an import) always revisit D1.
+const pendingReads=new WeakMap();
 export async function readPrecardRaceState(db,input){
- let t;try{t=targetInput(input)}catch{return{status:400,data:{ok:false,error:'対象レースの日付・競馬場・レース番号を確認してください。'}};}const args=[t.date,t.venue,t.raceNo];
+ let t;try{t=targetInput(input)}catch{return{status:400,data:{ok:false,error:'対象レースの日付・競馬場・レース番号を確認してください。'}};}
+ let reads=pendingReads.get(db);if(!reads){reads=new Map();pendingReads.set(db,reads);}
+ const key=JSON.stringify([t.date,t.venue,t.raceNo]);
+ let pending=reads.get(key);
+ if(!pending){pending=Promise.resolve().then(()=>readState(db,t)).finally(()=>reads.delete(key));reads.set(key,pending);}
+ return structuredClone(await pending);
+}
+async function readState(db,t){
+ const args=[t.date,t.venue,t.raceNo];
  const official=await db.prepare('SELECT race_key FROM jra_races WHERE race_date=? AND venue=? AND race_no=?').bind(...args).first();if(official)return null;
  const source=await resolveExpectedCollectionSource(db,t);
  const program=await db.prepare('SELECT race_date,venue,race_no FROM jra_race_program WHERE race_date=? AND venue=? AND race_no=?').bind(...args).first();

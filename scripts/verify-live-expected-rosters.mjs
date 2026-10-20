@@ -1,9 +1,10 @@
 import {chromium} from 'playwright';
 import {mkdir,writeFile} from 'node:fs/promises';
+const targets=JSON.parse(process.env.ROSTER_TARGETS||'null')||[{date:'2026-10-24',venue:'東京',raceNo:11,count:14},{date:'2026-10-25',venue:'京都',raceNo:11,count:21}];
 await mkdir('browser-evidence',{recursive:true});
 const browser=await chromium.launch({headless:true});
 const context=await browser.newContext({viewport:{width:412,height:915},timezoneId:'Asia/Tokyo'});
-await context.addInitScript(()=>localStorage.setItem('keiba-labo:active-race:v1',JSON.stringify({date:'2026-10-25',venue:'京都',raceNo:11})));
+await context.addInitScript(t=>localStorage.setItem('keiba-labo:active-race:v1',JSON.stringify(t)),targets[0]);
 const page=await context.newPage(),errors=[],writes=[];
 page.on('pageerror',e=>errors.push(String(e)));
 await page.route('**/*',async route=>{const req=route.request();if(!['GET','HEAD','OPTIONS'].includes(req.method())){writes.push({method:req.method(),url:req.url()});return route.abort();}return route.continue();});
@@ -11,11 +12,10 @@ const results=[];
 try{
  await page.goto('https://keiba-lab-apl.vercel.app/',{waitUntil:'domcontentloaded',timeout:45000});
  await page.waitForFunction(()=>typeof window.selectLaboRace==='function',null,{timeout:45000});
- await page.waitForFunction(()=>document.querySelectorAll('#expectedInlineRoster select[data-horse-name]').length===21,null,{timeout:45000});
- for(const t of [{date:'2026-10-24',venue:'東京',raceNo:11,count:14},{date:'2026-10-25',venue:'京都',raceNo:11,count:21}]){
-  const responsePromise=page.waitForResponse(r=>{const u=new URL(r.url());return u.pathname==='/v1/lab/expected-runners'&&u.searchParams.get('date')===t.date&&u.searchParams.get('venue')===t.venue},{timeout:45000});
+ await page.waitForFunction(n=>document.querySelectorAll('#expectedInlineRoster select[data-horse-name]').length===n,targets[0].count,{timeout:45000});
+ for(const t of targets){
   await page.evaluate(t=>window.selectLaboRace(t.date,t.venue,t.raceNo),t);
-  const response=await responsePromise,db=await response.json();
+  const response=await page.request.get('https://keiba-lab-api.sekai-no-bancyou.workers.dev/v1/lab/expected-runners?'+new URLSearchParams({date:t.date,venue:t.venue,race_no:String(t.raceNo)}));const db=await response.json();
   await page.locator('.tab[data-id="marks"]').click();
   await page.waitForFunction(t=>window.getLaboTarget?.().date===t.date&&window.getLaboTarget?.().venue===t.venue&&document.querySelectorAll('#expectedInlineRoster select[data-horse-name]').length===t.count,t,{timeout:45000});
   const panel=page.locator('#expectedInlineRoster');await panel.waitFor({state:'visible'});
@@ -31,4 +31,4 @@ try{
  console.log('BROWSER_SUMMARY',JSON.stringify({verified:results.length,pageErrors:errors,blockedWrites:writes}));
  await browser.close();
 }
-if(results.length!==2)throw Error('Both live rosters must render');
+if(results.length!==targets.length)throw Error('All live rosters must render');

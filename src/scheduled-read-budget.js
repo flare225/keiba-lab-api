@@ -1,5 +1,5 @@
-// This is a Worker-scheduled-job budget, not Cloudflare account quota telemetry.
-export const SCHEDULED_READ_BUDGET=Object.freeze({scope:'worker-scheduled-jobs',dailyRowsReadLimit:2000000,learningDailyRowsReadLimit:250000,resetTimezone:'UTC',accountUsageMeasured:false,manualAndUserRequestsIncluded:false,bookkeepingIncluded:false,inFlightOvershootPossible:true});
+// This meters scheduled jobs and authorized automatic-shadow training, not account quota.
+export const SCHEDULED_READ_BUDGET=Object.freeze({scope:'worker-scheduled-and-authorized-learning-jobs',authorizedAutomaticTrainingIncluded:true,dailyRowsReadLimit:2000000,learningDailyRowsReadLimit:250000,resetTimezone:'UTC',accountUsageMeasured:false,manualAndUserRequestsIncluded:false,bookkeepingIncluded:false,inFlightOvershootPossible:true});
 const TABLE='lab_scheduled_read_usage',LANES='lab_scheduled_read_lanes';
 export const scheduledBudgetLane=event=>['0,10,20,30,40,50 * * * *','15 * * * *'].includes(event.cron)?'learning':'collection';
 const dayOf=now=>new Date(now).toISOString().slice(0,10);
@@ -41,5 +41,5 @@ export async function runWithScheduledReadBudget(db,job,clock=Date.now,lane='col
   const meter=meterScheduledDb(db,clock,lane);let result;
   try{result=await job(meter.db);}finally{await meter.flush();}
   return observedQuotaPause(db,clock())||result;
- }catch(e){if(!isQuotaError(e))throw e;rememberQuotaStop(db,clock());return observedQuotaPause(db,clock());}
+ }catch(e){if(!isQuotaError(e))throw e;rememberQuotaStop(db,clock());return{...observedQuotaPause(db,clock()),...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})};}
 }

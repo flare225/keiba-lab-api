@@ -11,14 +11,14 @@ async function ensure(db){
  await db.prepare(`CREATE TABLE IF NOT EXISTS ${CHECKS}(race_key TEXT PRIMARY KEY,next_check_at INTEGER NOT NULL,status TEXT NOT NULL,detail_json TEXT NOT NULL)`).run();
  for(const action of ['UPDATE','DELETE'])await db.prepare(`CREATE TRIGGER IF NOT EXISTS automatic_candidate_no_${action.toLowerCase()} BEFORE ${action} ON ${TABLE} BEGIN SELECT RAISE(ABORT,'automatic learning candidate is immutable'); END`).run();
 }
-export async function readAutomaticLearningCandidate(db,input){
+export async function readAutomaticLearningCandidate(db,input,{includeOriginal=false}={}){
  const t=targetInput(input),key=`${t.date}:${t.venue}:${t.raceNo}`;let row;
  try{row=await db.prepare(`SELECT * FROM ${TABLE} WHERE race_key=?`).bind(key).first()}catch(e){if(/no such table/.test(String(e)))return{ok:true,available:false};throw e}
  if(!row)return{ok:true,available:false};
  if(await sha256(row.record_json)!==row.record_sha256)throw Error('自動学習候補のハッシュが一致しません。');
  const prediction=await readAutomaticPrediction(db,t),record=JSON.parse(row.record_json);
  if(!prediction.integrityVerified||prediction.snapshotSha256!==row.prediction_sha256||record.predictionSha256!==row.prediction_sha256||record.raceKey!==key||record.modelVersion!==prediction.snapshot.modelVersion||record.createdAt!==row.created_at||record.cohort!==AUTOMATIC_COHORT)throw Error('自動事前予想と学習候補の対応が一致しません。');
- return{ok:true,available:true,integrityVerified:true,labelSha256:row.record_sha256,record};
+ return{ok:true,available:true,integrityVerified:true,labelSha256:row.record_sha256,record,...(includeOriginal?{originalPrediction:prediction.snapshot}:{})};
 }
 export async function labelAutomaticPrediction(db,input,now=Date.now()){
  const t=targetInput(input),old=await readAutomaticLearningCandidate(db,t);if(old.available)return{...old,saved:0,externalRequests:0};

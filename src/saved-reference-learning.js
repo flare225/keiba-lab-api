@@ -36,14 +36,7 @@ export async function trainSavedReferences(db,input){
  }
  if(models.size!==1)throw Error('異なるモデルの特徴量は混合できません。');
  examples.sort((a,b)=>a.key.localeCompare(b.key));evidence.sort((a,b)=>a.raceKey.localeCompare(b.raceKey));
- const days=new Set(examples.map(x=>x.date)).size,ready=examples.length>=SAVED_REFERENCE_PROTOCOL.minimumRaces&&days>=SAVED_REFERENCE_PROTOCOL.minimumDays;
- let candidate=null;
- if(ready){
-  const mean=w=>examples.reduce((n,x)=>n+pairwiseConcordance(x.rows,w),0)/examples.length;
-  const baseline=mean(BASE_WEIGHTS);let best={weights:{...BASE_WEIGHTS},concordance:baseline,objective:baseline};
-  for(const weights of candidateWeights().slice(1)){const concordance=mean(weights),distance=Object.keys(BASE_WEIGHTS).reduce((n,k)=>n+Math.abs(weights[k]-BASE_WEIGHTS[k]),0)/10,objective=concordance-SAVED_REFERENCE_PROTOCOL.regularization*distance;if(objective>best.objective+1e-9)best={weights,concordance,objective};}
-  candidate={weights:best.weights,trainingConcordance:best.concordance,baselineTrainingConcordance:baseline};
- }
+ const {ready,days,candidate}=fitReferenceShadowExamples(examples,SAVED_REFERENCE_PROTOCOL);
  const record={protocol:SAVED_REFERENCE_PROTOCOL,sourceModel:[...models][0],status:ready?'fitted-shadow-only':'awaiting-training-data',trainingRaces:examples.length,trainingDays:days,remainingRaces:Math.max(0,SAVED_REFERENCE_PROTOCOL.minimumRaces-examples.length),evidence,candidate,guardrails:{originalScoresPreserved:true,targetResultsUsedOnlyAsLabels:true,frozenExperimentModified:false,userLocksModified:false,automaticPromotion:false,accuracyImprovementValidated:false,futureValidationRequired:true}};
  const body=JSON.stringify(record),hash=await sha256(body);
  await db.prepare(`CREATE TABLE IF NOT EXISTS ${table}(run_sha256 TEXT PRIMARY KEY,record_json TEXT NOT NULL)`).run();
@@ -54,4 +47,16 @@ export async function trainSavedReferences(db,input){
   if(!read.available||JSON.stringify(read.record)!==body)throw Error('学習記録の読み返しが一致しません。');
   return{...read,saved:Number(result.meta?.changes)||0};
  }catch(e){e.saveMayHaveSucceeded=true;throw e;}
+}
+
+export function fitReferenceShadowExamples(examples,protocol){
+ const days=new Set(examples.map(x=>x.date)).size,ready=examples.length>=protocol.minimumRaces&&days>=protocol.minimumDays;
+ let candidate=null;
+ if(ready){
+  const mean=w=>examples.reduce((n,x)=>n+pairwiseConcordance(x.rows,w),0)/examples.length;
+  const baseline=mean(BASE_WEIGHTS);let best={weights:{...BASE_WEIGHTS},concordance:baseline,objective:baseline};
+  for(const weights of candidateWeights().slice(1)){const concordance=mean(weights),distance=Object.keys(BASE_WEIGHTS).reduce((n,k)=>n+Math.abs(weights[k]-BASE_WEIGHTS[k]),0)/10,objective=concordance-protocol.regularization*distance;if(objective>best.objective+1e-9)best={weights,concordance,objective};}
+  candidate={weights:best.weights,trainingConcordance:best.concordance,baselineTrainingConcordance:baseline};
+ }
+ return{ready,days,candidate};
 }

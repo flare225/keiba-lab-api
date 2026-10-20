@@ -4,7 +4,7 @@ function fixture(){const sql=new DatabaseSync(':memory:');sql.exec('CREATE TABLE
 const today=Date.parse('2026-10-15T00:20:00Z');
 test('actual metadata counts scanned rows rather than returned rows; first and batch preserve values and statements',async()=>{
  const {db,sql}=fixture();await runWithScheduledReadBudget(db,async measured=>{assert.equal((await measured.prepare('SELECT n FROM data').first()).n,7);assert.equal(await measured.prepare('SELECT n FROM data WHERE n=?').bind(9).first('n'),9);assert.equal(await measured.prepare('SELECT n FROM data WHERE n=0').first(),null);await assert.rejects(measured.prepare('SELECT n FROM data').first('absent'),/Column not found/);const rows=await measured.batch([measured.prepare('SELECT n FROM data WHERE n=?').bind(7),measured.prepare('INSERT INTO data VALUES(?)').bind(11)]);assert.equal(rows[0].results[0].n,7);assert.equal(rows[1].meta.changes,1);},()=>today);
- const s=await scheduledReadStatus(db,today);assert.equal(s.observedRowsRead,101);assert.equal(s.queries,6);assert.equal(s.unknownQueries,0);assert.equal(s.accountUsageMeasured,false);assert.equal(s.manualAndUserRequestsIncluded,false);assert.equal(s.nextResetAt,'2026-10-16T00:00:00.000Z');sql.close();
+ const s=await scheduledReadStatus(db,today);assert.equal(s.observedRowsRead,101);assert.equal(s.queries,6);assert.equal(s.unknownQueries,0);assert.equal(s.accountUsageMeasured,false);assert.equal(s.manualAndUserRequestsIncluded,false);assert.equal(s.authorizedAutomaticTrainingIncluded,true);assert.equal(s.nextResetAt,'2026-10-16T00:00:00.000Z');sql.close();
 });
 test('atomic accumulation from concurrent invocations; threshold skips next job; UTC rollover resumes',async()=>{
  const {db,sql}=fixture();await runWithScheduledReadBudget(db,async()=>{},()=>today);const a=meterScheduledDb(db,()=>today),b=meterScheduledDb(db,()=>today);await a.db.prepare('SELECT n FROM data').all();await b.db.prepare('SELECT n FROM data').all();await Promise.all([a.flush(),b.flush()]);assert.equal((await scheduledReadStatus(db,today)).observedRowsRead,40);
@@ -54,4 +54,7 @@ test('a swallowed job quota error cannot continue DB work or bookkeeping and is 
 test('ordinary DB failures do not acquire a false daily quota pause',async()=>{
  let calls=0;const db={prepare(){calls++;throw Error('schema incompatible');}};
  await assert.rejects(runWithScheduledReadBudget(db,async()=>{},()=>today),/schema/);await assert.rejects(runWithScheduledReadBudget(db,async()=>{},()=>today),/schema/);assert.equal(calls,2);assert.equal(observedQuotaPause(db,today),null);
+});
+test('quota pause preserves an uncertain-write flag instead of inviting a replay',async()=>{
+ const {db,sql}=fixture();const result=await runWithScheduledReadBudget(db,async()=>{throw Object.assign(Error("D1_ERROR: Your account has exceeded D1's free tier daily row read limit."),{saveMayHaveSucceeded:true});},()=>today);assert.equal(result.status,'paused');assert.equal(result.saveMayHaveSucceeded,true);assert.equal(result.retryWrite,false);sql.close();
 });

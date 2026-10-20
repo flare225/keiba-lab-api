@@ -16,4 +16,8 @@ for(const [raceNo,count] of [[9,23],[10,14]]){
  const imported=old?null:await call('/v1/lab/expected-roster-seed-import',{snapshotId:'netkeiba-niigata-'+raceNo+'-registration-reviewed-20261020-v1',confirm:'IMPORT_BUNDLED'});
  const read=await call('/v1/lab/expected-runners?'+q);if(read.runners.length!==count||!read.source.snapshotId.startsWith('registered:')||imported&&read.source.snapshotId!=='registered:'+imported.snapshotId)throw Error('Additional roster readback failed');
  console.log('NIIGATA_ROSTER_SAVED',JSON.stringify({target:{...target,raceNo},newRaces:old?0:1,registeredHorses:count,snapshotId:read.source.snapshotId,readbackMatches:true,historySupplemented:false}));
+ const prior=await call('/v1/lab/reviewed-upcoming-history?'+q),saved=prior.available?{...prior,savedRows:0}:await call('/v1/lab/reviewed-upcoming-history',{...target,raceNo,confirm:'IMPORT_BUNDLED'});
+ const history=await call('/v1/lab/reviewed-upcoming-history?'+q);if(!history.integrityVerified||history.sha256!==saved.sha256||history.storedRows!==count*3||history.rows.length!==count*3||history.horses.length!==count||history.horses.some(h=>h.storedRows!==3||h.last3fRows!==3))throw Error('Additional history readback failed');
+ console.log('NIIGATA_HISTORY_SAVED',JSON.stringify({target:{...target,raceNo},newRows:saved.savedRows,verifiedRows:history.storedRows,verifiedHorses:count,newHistoryHorses:prior.available?0:count,sha256:history.sha256,externalRequests:0}));
+
 }

@@ -21,3 +21,7 @@ test('Niigata 22-horse roster and 65 supported domestic starts persist and feed 
  const h=await historyForExpected(db,{...source,surface:'芝',distance:1000},'ロードトレイル');assert.equal(h.recent.length,3);assert.equal(h.recent[0].last3f,32);assert.equal(h.recent[0].date,'2026-08-02');
  await assert.rejects(importReviewedUpcomingHistory(db,{...source,ages:{...source.ages,'クムシラコ':3}}),/一致/);sql.close();
 });
+
+test('Niigata 9R and 10R verified latest histories persist 69 and 42 rows and expose exact readback facts',async()=>{
+ for(const [raceNo,count,total] of [[9,23,69],[10,14,42]]){const {db,sql}=fixture(),seed=EXPECTED_ROSTER_SEEDS.find(s=>s.record.venue==='新潟'&&s.record.raceNo===raceNo);await saveExpectedRoster(db,seed.record,Date.parse('2026-10-20T03:00:00Z'));const [source]=await storedExpectedSources(db,'2026-10-25','2026-10-25');const saved=await importReviewedUpcomingHistory(db,source);assert.equal(saved.savedRows,total);assert.equal(saved.horses.length,count);assert.equal(saved.rows.length,total);assert.ok(saved.horses.every(h=>h.storedRows===3&&h.last3fRows===3));assert.ok(saved.rows.every(r=>r.race_date<source.date&&r.corner_positions&&r.last3f>0));assert.equal((await readReviewedUpcomingHistory(db,source)).sha256,saved.sha256);assert.equal((await importReviewedUpcomingHistory(db,source)).savedRows,0);sql.close();}
+});

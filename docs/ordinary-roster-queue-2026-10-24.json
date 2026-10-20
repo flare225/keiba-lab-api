@@ -1,0 +1,1741 @@
+{
+  "schema": "ordinary-roster-offline-queue-v1",
+  "scope": {
+    "dates": [
+      "2026-10-24",
+      "2026-10-25"
+    ],
+    "venues": [
+      "東京",
+      "京都",
+      "新潟"
+    ],
+    "racesPerMeeting": 12
+  },
+  "evidence": {
+    "basis": "committed-reviewed-rosters-and-prior-production-report",
+    "reportUrl": "https://github.com/flare225/keiba-lab-api/issues/178#issuecomment-6283373947",
+    "productionRechecked": false,
+    "receiptsLoaded": false
+  },
+  "summary": {
+    "programSlots": 72,
+    "previouslyVerifiedRosterRaces": 20,
+    "previouslyVerifiedRosterEntries": 353,
+    "pendingRosterCandidates": 52,
+    "newRacesSaved": 0
+  },
+  "knownRosters": [
+    {
+      "raceKey": "2026-10-25:京都:11",
+      "raceName": "菊花賞",
+      "snapshotId": "jra-kikka-registration-20261012-reviewed-20261019-v1",
+      "runnerCount": 21,
+      "sourceUrl": "https://www.jra.go.jp/keiba/tokubetsu/pdf/2026/kikka.pdf"
+    },
+    {
+      "raceKey": "2026-10-24:東京:11",
+      "raceName": "アルテミスステークス",
+      "snapshotId": "netkeiba-artemis-registration-20261018-reviewed-20261019-v1",
+      "runnerCount": 14,
+      "sourceUrl": "https://news.netkeiba.com/?no=345954&pid=news_view"
+    },
+    {
+      "raceKey": "2026-10-25:新潟:11",
+      "raceName": "ルミエールオータムダッシュ",
+      "snapshotId": "netkeiba-lumiere-registration-reviewed-20261020-v1",
+      "runnerCount": 22,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040411"
+    },
+    {
+      "raceKey": "2026-10-25:新潟:9",
+      "raceName": "柏崎特別",
+      "snapshotId": "netkeiba-niigata-9-registration-reviewed-20261020-v1",
+      "runnerCount": 23,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040409"
+    },
+    {
+      "raceKey": "2026-10-25:新潟:10",
+      "raceName": "村上特別",
+      "snapshotId": "netkeiba-niigata-10-registration-reviewed-20261020-v1",
+      "runnerCount": 14,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040410"
+    },
+    {
+      "raceKey": "2026-10-24:新潟:11",
+      "raceName": "魚沼ステークス",
+      "snapshotId": "netkeiba-uonuma-registration-reviewed-20261020-v1",
+      "runnerCount": 12,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040311"
+    },
+    {
+      "raceKey": "2026-10-24:京都:11",
+      "raceName": "カシオペアステークス",
+      "snapshotId": "netkeiba-cassiopeia-registration-reviewed-20261020-v1",
+      "runnerCount": 17,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040811&rf=shutuba_submenu"
+    },
+    {
+      "raceKey": "2026-10-25:東京:11",
+      "raceName": "神無月ステークス",
+      "snapshotId": "netkeiba-kannazuki-registration-reviewed-20261020-v1",
+      "runnerCount": 20,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040911&rf=shutuba_submenu"
+    },
+    {
+      "raceKey": "2026-10-24:東京:9",
+      "raceName": "精進湖特別",
+      "snapshotId": "netkeiba-tokyo-sat9-registration-reviewed-20261020-v1",
+      "runnerCount": 18,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040809"
+    },
+    {
+      "raceKey": "2026-10-24:東京:10",
+      "raceName": "日本農業新聞杯",
+      "snapshotId": "netkeiba-tokyo-sat10-registration-reviewed-20261020-v1",
+      "runnerCount": 24,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040810"
+    },
+    {
+      "raceKey": "2026-10-25:東京:9",
+      "raceName": "三鷹特別",
+      "snapshotId": "netkeiba-tokyo-sun9-registration-reviewed-20261020-v1",
+      "runnerCount": 18,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040909"
+    },
+    {
+      "raceKey": "2026-10-25:東京:10",
+      "raceName": "山中湖特別",
+      "snapshotId": "netkeiba-tokyo-sun10-registration-reviewed-20261020-v1",
+      "runnerCount": 12,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040910"
+    },
+    {
+      "raceKey": "2026-10-24:新潟:9",
+      "raceName": "稲光特別",
+      "snapshotId": "netkeiba-niigata-sat9-registration-reviewed-20261020-v1",
+      "runnerCount": 19,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040309"
+    },
+    {
+      "raceKey": "2026-10-24:新潟:10",
+      "raceName": "菅名岳特別",
+      "snapshotId": "netkeiba-niigata-sat10-registration-reviewed-20261020-v1",
+      "runnerCount": 25,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040310"
+    },
+    {
+      "raceKey": "2026-10-24:京都:9",
+      "raceName": "なでしこ賞",
+      "snapshotId": "netkeiba-kyoto-sat9-registration-reviewed-20261020-v1",
+      "runnerCount": 13,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040809"
+    },
+    {
+      "raceKey": "2026-10-24:京都:10",
+      "raceName": "長岡京ステークス",
+      "snapshotId": "netkeiba-kyoto-sat10-registration-reviewed-20261020-v1",
+      "runnerCount": 15,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040810"
+    },
+    {
+      "raceKey": "2026-10-25:京都:8",
+      "raceName": "壬生特別",
+      "snapshotId": "netkeiba-kyoto-sun8-registration-reviewed-20261020-v1",
+      "runnerCount": 24,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040908"
+    },
+    {
+      "raceKey": "2026-10-25:京都:9",
+      "raceName": "萩S",
+      "snapshotId": "netkeiba-kyoto-sun9-registration-reviewed-20261020-v1",
+      "runnerCount": 10,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040909"
+    },
+    {
+      "raceKey": "2026-10-25:京都:10",
+      "raceName": "カノープスステークス",
+      "snapshotId": "netkeiba-kyoto-sun10-registration-reviewed-20261020-v1",
+      "runnerCount": 17,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040910"
+    },
+    {
+      "raceKey": "2026-10-25:京都:12",
+      "raceName": "嵯峨野特別",
+      "snapshotId": "netkeiba-kyoto-sun12-registration-reviewed-20261020-v1",
+      "runnerCount": 15,
+      "sourceUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040912"
+    }
+  ],
+  "pending": [
+    {
+      "date": "2026-10-24",
+      "venue": "東京",
+      "raceNo": 1,
+      "raceKey": "2026-10-24:東京:1",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040801",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040810",
+        "witnessRaceKey": "2026-10-24:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "東京",
+          "raceNo": 1,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "京都",
+      "raceNo": 1,
+      "raceKey": "2026-10-24:京都:1",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040801",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040810",
+        "witnessRaceKey": "2026-10-24:京都:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "京都",
+          "raceNo": 1,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "新潟",
+      "raceNo": 1,
+      "raceKey": "2026-10-24:新潟:1",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040301",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040310",
+        "witnessRaceKey": "2026-10-24:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "新潟",
+          "raceNo": 1,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "東京",
+      "raceNo": 2,
+      "raceKey": "2026-10-24:東京:2",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040802",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040810",
+        "witnessRaceKey": "2026-10-24:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "東京",
+          "raceNo": 2,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "京都",
+      "raceNo": 2,
+      "raceKey": "2026-10-24:京都:2",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040802",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040810",
+        "witnessRaceKey": "2026-10-24:京都:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "京都",
+          "raceNo": 2,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "新潟",
+      "raceNo": 2,
+      "raceKey": "2026-10-24:新潟:2",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040302",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040310",
+        "witnessRaceKey": "2026-10-24:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "新潟",
+          "raceNo": 2,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "東京",
+      "raceNo": 3,
+      "raceKey": "2026-10-24:東京:3",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040803",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040810",
+        "witnessRaceKey": "2026-10-24:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "東京",
+          "raceNo": 3,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "京都",
+      "raceNo": 3,
+      "raceKey": "2026-10-24:京都:3",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040803",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040810",
+        "witnessRaceKey": "2026-10-24:京都:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "京都",
+          "raceNo": 3,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "新潟",
+      "raceNo": 3,
+      "raceKey": "2026-10-24:新潟:3",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040303",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040310",
+        "witnessRaceKey": "2026-10-24:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "新潟",
+          "raceNo": 3,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "東京",
+      "raceNo": 4,
+      "raceKey": "2026-10-24:東京:4",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040804",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040810",
+        "witnessRaceKey": "2026-10-24:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "東京",
+          "raceNo": 4,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "京都",
+      "raceNo": 4,
+      "raceKey": "2026-10-24:京都:4",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040804",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040810",
+        "witnessRaceKey": "2026-10-24:京都:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "京都",
+          "raceNo": 4,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "新潟",
+      "raceNo": 4,
+      "raceKey": "2026-10-24:新潟:4",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040304",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040310",
+        "witnessRaceKey": "2026-10-24:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "新潟",
+          "raceNo": 4,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "東京",
+      "raceNo": 5,
+      "raceKey": "2026-10-24:東京:5",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040805",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040810",
+        "witnessRaceKey": "2026-10-24:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "東京",
+          "raceNo": 5,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "京都",
+      "raceNo": 5,
+      "raceKey": "2026-10-24:京都:5",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040805",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040810",
+        "witnessRaceKey": "2026-10-24:京都:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "京都",
+          "raceNo": 5,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "新潟",
+      "raceNo": 5,
+      "raceKey": "2026-10-24:新潟:5",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040305",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040310",
+        "witnessRaceKey": "2026-10-24:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "新潟",
+          "raceNo": 5,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "東京",
+      "raceNo": 6,
+      "raceKey": "2026-10-24:東京:6",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040806",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040810",
+        "witnessRaceKey": "2026-10-24:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "東京",
+          "raceNo": 6,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "京都",
+      "raceNo": 6,
+      "raceKey": "2026-10-24:京都:6",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040806",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040810",
+        "witnessRaceKey": "2026-10-24:京都:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "京都",
+          "raceNo": 6,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "新潟",
+      "raceNo": 6,
+      "raceKey": "2026-10-24:新潟:6",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040306",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040310",
+        "witnessRaceKey": "2026-10-24:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "新潟",
+          "raceNo": 6,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "東京",
+      "raceNo": 7,
+      "raceKey": "2026-10-24:東京:7",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040807",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040810",
+        "witnessRaceKey": "2026-10-24:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "東京",
+          "raceNo": 7,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "京都",
+      "raceNo": 7,
+      "raceKey": "2026-10-24:京都:7",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040807",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040810",
+        "witnessRaceKey": "2026-10-24:京都:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "京都",
+          "raceNo": 7,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "新潟",
+      "raceNo": 7,
+      "raceKey": "2026-10-24:新潟:7",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040307",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040310",
+        "witnessRaceKey": "2026-10-24:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "新潟",
+          "raceNo": 7,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "東京",
+      "raceNo": 8,
+      "raceKey": "2026-10-24:東京:8",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040808",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040810",
+        "witnessRaceKey": "2026-10-24:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "東京",
+          "raceNo": 8,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "京都",
+      "raceNo": 8,
+      "raceKey": "2026-10-24:京都:8",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040808",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040810",
+        "witnessRaceKey": "2026-10-24:京都:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "京都",
+          "raceNo": 8,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "新潟",
+      "raceNo": 8,
+      "raceKey": "2026-10-24:新潟:8",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040308",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040310",
+        "witnessRaceKey": "2026-10-24:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "新潟",
+          "raceNo": 8,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "東京",
+      "raceNo": 12,
+      "raceKey": "2026-10-24:東京:12",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040812",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040810",
+        "witnessRaceKey": "2026-10-24:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "東京",
+          "raceNo": 12,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "京都",
+      "raceNo": 12,
+      "raceKey": "2026-10-24:京都:12",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040812",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040810",
+        "witnessRaceKey": "2026-10-24:京都:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "京都",
+          "raceNo": 12,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-24",
+      "venue": "新潟",
+      "raceNo": 12,
+      "raceKey": "2026-10-24:新潟:12",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040312",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040310",
+        "witnessRaceKey": "2026-10-24:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-24",
+          "venue": "新潟",
+          "raceNo": 12,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "東京",
+      "raceNo": 1,
+      "raceKey": "2026-10-25:東京:1",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040901",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040910",
+        "witnessRaceKey": "2026-10-25:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "東京",
+          "raceNo": 1,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "京都",
+      "raceNo": 1,
+      "raceKey": "2026-10-25:京都:1",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040901",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040912",
+        "witnessRaceKey": "2026-10-25:京都:12",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "京都",
+          "raceNo": 1,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "新潟",
+      "raceNo": 1,
+      "raceKey": "2026-10-25:新潟:1",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040401",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040410",
+        "witnessRaceKey": "2026-10-25:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "新潟",
+          "raceNo": 1,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "東京",
+      "raceNo": 2,
+      "raceKey": "2026-10-25:東京:2",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040902",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040910",
+        "witnessRaceKey": "2026-10-25:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "東京",
+          "raceNo": 2,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "京都",
+      "raceNo": 2,
+      "raceKey": "2026-10-25:京都:2",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040902",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040912",
+        "witnessRaceKey": "2026-10-25:京都:12",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "京都",
+          "raceNo": 2,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "新潟",
+      "raceNo": 2,
+      "raceKey": "2026-10-25:新潟:2",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040402",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040410",
+        "witnessRaceKey": "2026-10-25:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "新潟",
+          "raceNo": 2,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "東京",
+      "raceNo": 3,
+      "raceKey": "2026-10-25:東京:3",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040903",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040910",
+        "witnessRaceKey": "2026-10-25:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "東京",
+          "raceNo": 3,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "京都",
+      "raceNo": 3,
+      "raceKey": "2026-10-25:京都:3",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040903",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040912",
+        "witnessRaceKey": "2026-10-25:京都:12",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "京都",
+          "raceNo": 3,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "新潟",
+      "raceNo": 3,
+      "raceKey": "2026-10-25:新潟:3",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040403",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040410",
+        "witnessRaceKey": "2026-10-25:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "新潟",
+          "raceNo": 3,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "東京",
+      "raceNo": 4,
+      "raceKey": "2026-10-25:東京:4",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040904",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040910",
+        "witnessRaceKey": "2026-10-25:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "東京",
+          "raceNo": 4,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "京都",
+      "raceNo": 4,
+      "raceKey": "2026-10-25:京都:4",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040904",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040912",
+        "witnessRaceKey": "2026-10-25:京都:12",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "京都",
+          "raceNo": 4,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "新潟",
+      "raceNo": 4,
+      "raceKey": "2026-10-25:新潟:4",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040404",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040410",
+        "witnessRaceKey": "2026-10-25:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "新潟",
+          "raceNo": 4,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "東京",
+      "raceNo": 5,
+      "raceKey": "2026-10-25:東京:5",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040905",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040910",
+        "witnessRaceKey": "2026-10-25:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "東京",
+          "raceNo": 5,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "京都",
+      "raceNo": 5,
+      "raceKey": "2026-10-25:京都:5",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040905",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040912",
+        "witnessRaceKey": "2026-10-25:京都:12",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "京都",
+          "raceNo": 5,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "新潟",
+      "raceNo": 5,
+      "raceKey": "2026-10-25:新潟:5",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040405",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040410",
+        "witnessRaceKey": "2026-10-25:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "新潟",
+          "raceNo": 5,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "東京",
+      "raceNo": 6,
+      "raceKey": "2026-10-25:東京:6",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040906",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040910",
+        "witnessRaceKey": "2026-10-25:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "東京",
+          "raceNo": 6,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "京都",
+      "raceNo": 6,
+      "raceKey": "2026-10-25:京都:6",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040906",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040912",
+        "witnessRaceKey": "2026-10-25:京都:12",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "京都",
+          "raceNo": 6,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "新潟",
+      "raceNo": 6,
+      "raceKey": "2026-10-25:新潟:6",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040406",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040410",
+        "witnessRaceKey": "2026-10-25:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "新潟",
+          "raceNo": 6,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "東京",
+      "raceNo": 7,
+      "raceKey": "2026-10-25:東京:7",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040907",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040910",
+        "witnessRaceKey": "2026-10-25:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "東京",
+          "raceNo": 7,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "京都",
+      "raceNo": 7,
+      "raceKey": "2026-10-25:京都:7",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040907",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202608040912",
+        "witnessRaceKey": "2026-10-25:京都:12",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "京都",
+          "raceNo": 7,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "新潟",
+      "raceNo": 7,
+      "raceKey": "2026-10-25:新潟:7",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040407",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040410",
+        "witnessRaceKey": "2026-10-25:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "新潟",
+          "raceNo": 7,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "東京",
+      "raceNo": 8,
+      "raceKey": "2026-10-25:東京:8",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040908",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040910",
+        "witnessRaceKey": "2026-10-25:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "東京",
+          "raceNo": 8,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "新潟",
+      "raceNo": 8,
+      "raceKey": "2026-10-25:新潟:8",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040408",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040410",
+        "witnessRaceKey": "2026-10-25:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "新潟",
+          "raceNo": 8,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "東京",
+      "raceNo": 12,
+      "raceKey": "2026-10-25:東京:12",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040912",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202605040910",
+        "witnessRaceKey": "2026-10-25:東京:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "東京",
+          "raceNo": 12,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "venue": "新潟",
+      "raceNo": 12,
+      "raceKey": "2026-10-25:新潟:12",
+      "rosterStatus": "not-in-last-verified-rosters",
+      "publicationStatus": "not-checked",
+      "runners": null,
+      "sourceCandidate": {
+        "url": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040412",
+        "identityBasis": "derived-from-reviewed-sibling-not-a-witnessed-link",
+        "witnessUrl": "https://race.netkeiba.com/race/shutuba_past.html?race_id=202604040410",
+        "witnessRaceKey": "2026-10-25:新潟:10",
+        "fetchAuthorized": false
+      },
+      "officialCollector": {
+        "path": "/v1/lab/missing-official-card-batch",
+        "body": {
+          "date": "2026-10-25",
+          "venue": "新潟",
+          "raceNo": 12,
+          "confirm": "COLLECT"
+        },
+        "requires": [
+          "quota-recovery-confirmed",
+          "current-shared-gate-and-lease",
+          "existing-discovery-receipt"
+        ]
+      }
+    }
+  ],
+  "guardrails": {
+    "offlineOnly": true,
+    "externalRequests": 0,
+    "databaseCalls": 0,
+    "publicationNotInferred": true,
+    "formalCardNotInferred": true,
+    "queueIsNotAcquiredData": true
+  },
+  "sha256": "6ab27ac6da6cd797668a023881ab4ecb1caae2542c3802cee68cf1963b769067"
+}

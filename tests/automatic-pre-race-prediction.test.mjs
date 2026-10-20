@@ -29,3 +29,20 @@ test('uncertain readback never reports successful save',async()=>{
  const {sql,db}=await fixture();let reads=0;const wrapped={prepare(q){if(q.startsWith('SELECT * FROM lab_automatic_predictions_v1')&&++reads>1)return{bind(){return{async first(){return null}}}};return db.prepare(q)}};
  await assert.rejects(captureAutomaticPrediction(wrapped,target,now),e=>e.saveMayHaveSucceeded===true);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_automatic_predictions_v1').get().n,1);sql.close();
 });
+
+test('uncertain persisted predictions re-enter a read-only reconciliation queue even after start or next day',async()=>{
+ for(const later of [now+8*3600000,now+24*3600000]){
+ const {sql,db,queries}=await fixture();let reads=0;const broken={prepare(q){if(q.startsWith('SELECT * FROM lab_automatic_predictions_v1')&&++reads>1)return{bind(){return{async first(){return null}}}};return db.prepare(q)}};
+ await assert.rejects(scheduledAutomaticPrediction(broken,now),e=>e.saveMayHaveSucceeded===true);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_automatic_predictions_v1').get().n,1);const before=sql.prepare('SELECT snapshot_json FROM lab_automatic_predictions_v1').get().snapshot_json;queries.length=0;
+ const recovered=await scheduledAutomaticPrediction(db,later);assert.equal(recovered.verificationOnly,true);assert.equal(recovered.integrityVerified,true);assert.equal(recovered.saved,0);assert.equal(recovered.externalRequests,0);assert.ok(!queries.some(q=>q.startsWith('INSERT OR IGNORE INTO lab_automatic_predictions_v1')));assert.equal(sql.prepare('SELECT snapshot_json FROM lab_automatic_predictions_v1').get().snapshot_json,before);assert.equal(sql.prepare('SELECT status FROM lab_automatic_prediction_receipts_v1').get().status,'saved');assert.equal((await scheduledAutomaticPrediction(db,later+3600001)).status,'no-due-race');sql.close();
+ }
+});
+test('multiple venues advance through the same queue without user marks, duplicate writes or post-start regeneration',async()=>{
+ const {sql,db}=await fixture();for(const venue of ['東京','新潟']){const key=target.date+':'+venue+':1';sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?,?,?,?)').run(key,target.date,venue,1,'合成共通処理試験','芝',2000,2);for(const [no,name] of [[1,'HorseA'],[2,'HorseB']])sql.prepare('INSERT INTO jra_runners VALUES(?,?,?,?,?)').run(key,no,name,3,no);sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(target.date,venue,1,'15:40','https://www.jra.go.jp/program');}
+ const venues=[];for(let i=0;i<3;i++){const result=await scheduledAutomaticPrediction(db,now+i*1000);assert.equal(result.saved,1);assert.equal(result.integrityVerified,true);venues.push(result.target.venue);assert.equal(result.snapshot.guardrails.humanMarksUsed,false);assert.ok(result.snapshot.runners.every(r=>Number.isFinite(r.score)&&r.mark));}
+ assert.deepEqual(venues.sort(),['京都','新潟','東京'].sort());assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_automatic_predictions_v1').get().n,3);assert.equal((await scheduledAutomaticPrediction(db,now+24*3600000)).status,'no-due-race');sql.close();
+});
+test('failed saved-snapshot reconciliation retains cooldown and never regenerates a forecast',async()=>{
+ const {sql,db,queries}=await fixture();await captureAutomaticPrediction(db,target,now);sql.exec('DROP TRIGGER automatic_prediction_no_update');sql.exec("UPDATE lab_automatic_predictions_v1 SET snapshot_sha256='broken'");queries.length=0;
+ const later=now+8*3600000,result=await scheduledAutomaticPrediction(db,later);assert.equal(result.ok,false);assert.equal(result.status,'deferred');assert.equal(result.saved,0);assert.match(result.error,/ハッシュ/);assert.ok(!queries.some(q=>q.startsWith('INSERT OR IGNORE INTO lab_automatic_predictions_v1')));assert.equal(sql.prepare('SELECT status FROM lab_automatic_prediction_receipts_v1').get().status,'deferred');assert.equal((await scheduledAutomaticPrediction(db,later+60000)).status,'no-due-race');assert.equal((await scheduledAutomaticPrediction(db,later+3600001)).status,'deferred');sql.close();
+});

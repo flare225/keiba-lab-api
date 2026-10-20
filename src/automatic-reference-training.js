@@ -29,18 +29,8 @@ export async function trainAutomaticReferences(db,input,now=Date.now()){
  const {protocol,normalized,keys}=validateAutomaticTrainingInput(input,now);
  const examples=[],evidence=[],models=new Set();
  for(let i=0;i<normalized.length;i++){
-  const t=normalized[i],saved=await readAutomaticLearningCandidate(db,t,{includeOriginal:true});
-  if(!saved.integrityVerified||!saved.originalPrediction)throw Error('独立事前予想と公式結果の検証済み学習候補が必要です。');
-  const label=saved.record,original=saved.originalPrediction,runners=original.runners,rows=label.rows;
-  if(label.cohort!==protocol.cohort||label.predictionSavedAt!==original.savedAt||label.guardrails?.originalScoresPreserved!==true||label.guardrails?.postRaceReconstruction!==false||original.guardrails?.humanMarksUsed!==false||original.guardrails?.targetResultUsed!==false||original.guardrails?.immutable!==true||typeof label.modelVersion!=='string'||!label.modelVersion.trim()||original.race.runnerCount!==runners?.length||original.card?.length!==runners?.length||rows?.length!==runners?.length||new Set(runners.map(h=>h.horseNo)).size!==runners.length||new Set(rows.map(x=>x.horseNo)).size!==rows.length)throw Error('独立事前評価の由来・全馬対応が一致しません。');
-  const training=runners.map(h=>{
-   const row=rows.find(r=>r.horseNo===h.horseNo&&r.horseName===h.horseName),components=h.assessment?.components;
-   if(!row||!Number.isFinite(h.score)||h.score<0||h.score>100||!Number.isInteger(h.rank)||h.rank<1||h.rank>rows.length||row.referenceScore!==h.score||row.referenceRank!==h.rank||row.referenceMark!==h.mark||!original.card.some(c=>Number(c.horse_no)===h.horseNo&&c.horse_name===h.horseName)||JSON.stringify(row.components)!==JSON.stringify(components)||Object.keys(BASE_WEIGHTS).some(k=>!Number.isFinite(components?.[k])||components[k]<0||components[k]>100))throw Error('保存時の特徴量・順位・スコアが一致しません。');
-   if(!(row.finishStatus==='finished'&&Number.isInteger(row.finishPosition)&&row.finishPosition>=1&&row.finishPosition<=rows.length||['scratched','excluded','did-not-finish','disqualified'].includes(row.finishStatus)&&row.finishPosition===null))throw Error('公式結果ラベルの形式が不正です。');
-   return{components,finish:row.finishPosition};
-  });
-  if(!training.some(r=>r.finish===1)||pairwiseConcordance(training,BASE_WEIGHTS)===null)throw Error('勝馬を含む比較可能な結果が必要です。');
-  models.add(label.modelVersion);examples.push({key:keys[i],date:t.date,rows:training});evidence.push({raceKey:keys[i],predictionSha256:label.predictionSha256,labelSha256:saved.labelSha256});
+  const t=normalized[i],example=await readVerifiedAutomaticExample(db,t);
+  models.add(example.label.modelVersion);examples.push({key:keys[i],date:t.date,rows:example.rows});evidence.push(example.evidence);
  }
  if(models.size!==1)throw Error('異なるモデルは同じ学習へ混合できません。');
  examples.sort((a,b)=>a.key.localeCompare(b.key));evidence.sort((a,b)=>a.raceKey.localeCompare(b.raceKey));
@@ -54,4 +44,19 @@ export async function trainAutomaticReferences(db,input,now=Date.now()){
   const read=await readAutomaticTraining(db,hash);if(!read.integrityVerified||JSON.stringify(read.record)!==body)throw Error('自動予想学習記録の読み返しが一致しません。');
   return{...read,saved:Number(result.meta?.changes)||0,externalRequests:0};
  }catch(e){e.saveMayHaveSucceeded=true;throw e;}
+}
+
+export async function readVerifiedAutomaticExample(db,t){
+ const saved=await readAutomaticLearningCandidate(db,t,{includeOriginal:true});
+  if(!saved.integrityVerified||!saved.originalPrediction)throw Error('独立事前予想と公式結果の検証済み学習候補が必要です。');
+  const label=saved.record,original=saved.originalPrediction,runners=original.runners,rows=label.rows;
+  if(label.cohort!==AUTOMATIC_COHORT||label.predictionSavedAt!==original.savedAt||label.guardrails?.originalScoresPreserved!==true||label.guardrails?.postRaceReconstruction!==false||original.guardrails?.humanMarksUsed!==false||original.guardrails?.targetResultUsed!==false||original.guardrails?.immutable!==true||typeof label.modelVersion!=='string'||!label.modelVersion.trim()||original.race.runnerCount!==runners?.length||original.card?.length!==runners?.length||rows?.length!==runners?.length||new Set(runners.map(h=>h.horseNo)).size!==runners.length||new Set(rows.map(x=>x.horseNo)).size!==rows.length)throw Error('独立事前評価の由来・全馬対応が一致しません。');
+  const training=runners.map(h=>{
+   const row=rows.find(r=>r.horseNo===h.horseNo&&r.horseName===h.horseName),components=h.assessment?.components;
+   if(!row||!Number.isFinite(h.score)||h.score<0||h.score>100||!Number.isInteger(h.rank)||h.rank<1||h.rank>rows.length||row.referenceScore!==h.score||row.referenceRank!==h.rank||row.referenceMark!==h.mark||!original.card.some(c=>Number(c.horse_no)===h.horseNo&&c.horse_name===h.horseName)||JSON.stringify(row.components)!==JSON.stringify(components)||Object.keys(BASE_WEIGHTS).some(k=>!Number.isFinite(components?.[k])||components[k]<0||components[k]>100))throw Error('保存時の特徴量・順位・スコアが一致しません。');
+   if(!(row.finishStatus==='finished'&&Number.isInteger(row.finishPosition)&&row.finishPosition>=1&&row.finishPosition<=rows.length||['scratched','excluded','did-not-finish','disqualified'].includes(row.finishStatus)&&row.finishPosition===null))throw Error('公式結果ラベルの形式が不正です。');
+   return{components,finish:row.finishPosition};
+  });
+  if(!training.some(r=>r.finish===1)||pairwiseConcordance(training,BASE_WEIGHTS)===null)throw Error('勝馬を含む比較可能な結果が必要です。');
+ return{label,original,rows:training,evidence:{raceKey:`${t.date}:${t.venue}:${t.raceNo}`,predictionSha256:label.predictionSha256,labelSha256:saved.labelSha256}};
 }

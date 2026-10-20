@@ -1,0 +1,37 @@
+name: Persist and display additional week rosters
+on:
+  workflow_run:
+    workflows: [Publish Cloudflare Worker when authorized]
+    types: [completed]
+permissions:
+  contents: read
+concurrency:
+  group: additional-week-reviewed-delivery
+  cancel-in-progress: false
+jobs:
+  delivery:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && contains(github.event.workflow_run.head_commit.message, '追加3R146行')
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Persist only missing reviewed rosters and independently verify saved facts
+        run: node scripts/deliver-additional-week-rosters.mjs
+      - run: npm install --no-save --package-lock=false playwright@1.56.1
+      - run: npx playwright install --with-deps chromium
+      - name: Verify all runners and history facts in production browser
+        env:
+          ROSTER_TARGETS: '[{"date":"2026-10-24","venue":"新潟","raceNo":11,"count":12,"rows":35},{"date":"2026-10-24","venue":"京都","raceNo":11,"count":17,"rows":51},{"date":"2026-10-25","venue":"東京","raceNo":11,"count":20,"rows":60}]'
+        run: node scripts/verify-live-expected-rosters.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: additional-week-live-browser
+          path: browser-evidence/
+          retention-days: 7

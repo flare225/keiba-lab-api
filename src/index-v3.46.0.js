@@ -25,7 +25,17 @@ export default{async fetch(request,env,ctx){
    if(!source)return json({ok:false,error:'対象レースとconfirm COLLECTを指定してください。'},400);
    return json({...await runPipelineJob(env.DB,'history','manual',()=>collectUpcomingExpectedHistory(env.DB,{sources:[source]})),version:VERSION});
   }
-  if(u.pathname==='/v1/lab/expected-history-status'&&request.method==='GET')return json({ok:true,...await expectedHistoryStatus(env.DB),version:VERSION});
+  if(u.pathname==='/v1/lab/expected-history-status'&&request.method==='GET'){
+   const targeted=['date','venue','race_no'].some(k=>u.searchParams.has(k));
+   const source=targeted?await resolveExpectedCollectionSource(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')}):null;
+   if(targeted&&!source)return json({ok:false,error:'登録名簿がありません'},404);
+   const state=await expectedHistoryStatus(env.DB,Date.now(),source?[source]:EXPECTED_SOURCES,!targeted);
+   if(targeted)state.races=state.races.filter(r=>r.date===source.date&&r.venue===source.venue&&r.raceNo===source.raceNo);
+   const read=async(q,a=[])=>{try{return(await env.DB.prepare(q).bind(...a).all()).results||[]}catch(e){if(/no such table/.test(String(e)))return[];throw e}};
+   const gate=await read("SELECT next_batch_at,locked_until FROM lab_history_collection_budget WHERE name='jra-history'");
+   const discoveries=source?await read('SELECT * FROM lab_expected_profile_discovery WHERE snapshot_id=?',[source.snapshotId]):[];
+   return json({ok:true,...state,gate:gate[0]||null,profileDiscovery:discoveries[0]||null,version:VERSION});
+  }
   if(['/v1/lab/source-coordinator-batch','/v1/lab/history-priority-batch'].includes(u.pathname)&&request.method==='POST'){
    const b=await request.json();if(b.confirm!=='COLLECT')return json({ok:false,error:'確認指定が必要です。',version:VERSION},400);
    const r=u.pathname.endsWith('source-coordinator-batch')?await runSourceCoordinator({cron:'manual',scheduledTime:Date.now()},env,{trigger:'manual',jobs:jobs(env)}):await runPipelineJob(env.DB,'history','manual',()=>scheduledWeekendHistory(env.DB));return json({...r,version:VERSION});

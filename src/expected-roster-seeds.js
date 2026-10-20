@@ -1,3 +1,5 @@
+import {NIIGATA_ADDITIONAL_ROSTER_SEEDS} from './niigata-additional-rosters.js';
+import {LUMIERE_ROSTER_SEED} from './lumiere-reviewed-history.js';
 import {saveExpectedRoster} from './expected-roster-registry.js';
 // Only source-reviewed records committed with the application may be imported
 // without an owner write token. Request payloads never supply names or evidence.
@@ -176,6 +178,7 @@ export const EXPECTED_ROSTER_SEEDS=[
       ]
     }
   }
+, LUMIERE_ROSTER_SEED, ...NIIGATA_ADDITIONAL_ROSTER_SEEDS
 ];
 export async function importExpectedRosterSeed(db,snapshotId,stamp=Date.now(),seeds=EXPECTED_ROSTER_SEEDS){
  if(typeof snapshotId!=='string'||!snapshotId||snapshotId.length>150)throw Error('公開コードに登録した名簿IDが必要です。');

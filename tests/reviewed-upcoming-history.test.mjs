@@ -14,3 +14,10 @@ test('reviewed public facts for all 21 registered horses persist 63 rows and ind
 test('Artemis 14 horses retain actual one-to-three starts and provincial turf provenance',async()=>{
  const {db,sql}=fixture();await saveExpectedRoster(db,EXPECTED_ROSTER_SEEDS[1].record,Date.parse('2026-10-20T00:00:00Z'));const [source]=await storedExpectedSources(db,'2026-10-24','2026-10-24');const saved=await importReviewedUpcomingHistory(db,source);assert.equal(saved.savedRows,22);assert.equal(saved.horses.length,14);assert.equal(saved.horses.find(h=>h.horseName==='カナデルペガサス').storedRows,1);assert.equal(saved.horses.find(h=>h.horseName==='ベストプラージュ').storedRows,3);assert.equal((await readReviewedUpcomingHistory(db,source)).sha256,saved.sha256);const r=sql.prepare("SELECT payload_json FROM lab_expected_history_snapshots WHERE horse_name='ベストプラージュ' ORDER BY race_date DESC").all();assert.ok(r.every(x=>JSON.parse(x.payload_json).venue==='盛岡'));sql.close();
 });
+
+test('Niigata 22-horse roster and 65 supported domestic starts persist and feed DB history',async()=>{
+ const {db,sql}=fixture(),seed=EXPECTED_ROSTER_SEEDS.find(s=>s.record.venue==='新潟');await saveExpectedRoster(db,seed.record,Date.parse('2026-10-20T02:00:00Z'));const [source]=await storedExpectedSources(db,'2026-10-25','2026-10-25');
+ const saved=await importReviewedUpcomingHistory(db,source);assert.equal(saved.savedRows,65);assert.equal(saved.horses.length,22);assert.equal(saved.horses.find(h=>h.horseName==='アメリカンステージ').storedRows,2);assert.ok(saved.horses.every(h=>h.last3fRows===h.storedRows));assert.equal((await readReviewedUpcomingHistory(db,source)).sha256,saved.sha256);assert.equal((await importReviewedUpcomingHistory(db,source)).savedRows,0);
+ const h=await historyForExpected(db,{...source,surface:'芝',distance:1000},'ロードトレイル');assert.equal(h.recent.length,3);assert.equal(h.recent[0].last3f,32);assert.equal(h.recent[0].date,'2026-08-02');
+ await assert.rejects(importReviewedUpcomingHistory(db,{...source,ages:{...source.ages,'クムシラコ':3}}),/一致/);sql.close();
+});

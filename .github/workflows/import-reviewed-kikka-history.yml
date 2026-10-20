@@ -38,3 +38,17 @@ jobs:
           node-version: '24'
       - name: Verify sealed-only labels and continue bounded history collection
         run: node scripts/verify-automatic-candidate-release.mjs
+  verify-expected-roster:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && contains(github.event.workflow_run.head_commit.message, '想定名簿表示')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify registered expected rosters from browser API
+        run: node scripts/verify-expected-roster-release.mjs

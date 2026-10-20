@@ -1,3 +1,4 @@
+import {PREVIEW_GUARDS} from './expected-runner-preview-v3.30.0.js';
 import {readAutomaticLearningCandidate,labelAutomaticPrediction,scheduledAutomaticCandidates} from './automatic-learning-candidates.js';
 import {readReviewedUpcomingHistory,importReviewedUpcomingHistory} from './reviewed-upcoming-history.js';
 import {resolveExpectedCollectionSource} from './index-v3.46.0.js';
@@ -29,6 +30,15 @@ export const VERSION='3.49.38';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/expected-runners'&&request.method==='GET'&&u.searchParams.has('date')){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
+   try{
+    const source=await resolveExpectedCollectionSource(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')});
+    if(!source)return Response.json({ok:false,version:VERSION,error:'対象レースの想定名簿は未保存です。'},{status:404,headers});
+    return Response.json({ok:true,version:VERSION,source:{...source,names:undefined},runners:source.names.map(horseName=>({horseName,horseNo:null,frameNo:null,age:source.ages?.[horseName]??source.age??null})),guardrails:PREVIEW_GUARDS},{headers});
+   }catch(e){return Response.json({ok:false,version:VERSION,error:String(e.message||e)},{status:409,headers})}
+  }
+
   if(u.pathname==='/v1/lab/automatic-learning-candidate'){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*','access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'content-type'};
    if(request.method==='OPTIONS')return new Response(null,{status:204,headers});

@@ -1,3 +1,4 @@
+import {REMAINING_SPECIAL_HISTORY_CONFIGS} from './remaining-special-reviewed-history.js';
 import {ADDITIONAL_WEEK_HISTORY_CONFIGS} from './additional-week-reviewed-history.js';
 import {NIIGATA_HISTORY_CONFIGS} from './niigata-additional-history.js';
 import {LUMIERE_HISTORY_ROWS,LUMIERE_HISTORY_URL,LUMIERE_OBSERVED_AT,LUMIERE_AGES} from './lumiere-reviewed-history.js';
@@ -5,7 +6,7 @@ import {ARTEMIS_HISTORY_ROWS,ARTEMIS_HISTORY_URL,ARTEMIS_OBSERVED_AT} from './ar
 import {KIKKA_HISTORY_ROWS,KIKKA_HISTORY_URL,KIKKA_OBSERVED_AT} from './kikka-reviewed-history.js';
 import {sha256} from './card-evidence.js';
 function reviewed(source){
- const config=ADDITIONAL_WEEK_HISTORY_CONFIGS[`${source.date}:${source.venue}:${source.raceNo}`]|| (source.date==='2026-10-25'&&source.venue==='新潟'&&NIIGATA_HISTORY_CONFIGS[source.raceNo]?NIIGATA_HISTORY_CONFIGS[source.raceNo]:source.date==='2026-10-25'&&source.venue==='新潟'&&source.raceNo===11?{rows:LUMIERE_HISTORY_ROWS,url:LUMIERE_HISTORY_URL,observed:LUMIERE_OBSERVED_AT,ages:LUMIERE_AGES,count:22,from:'2025-01-01'}:source.date==='2026-10-25'&&source.venue==='京都'&&source.raceNo===11?{rows:KIKKA_HISTORY_ROWS,url:KIKKA_HISTORY_URL,observed:KIKKA_OBSERVED_AT,age:3,count:21,from:'2025-01-01'}:source.date==='2026-10-24'&&source.venue==='東京'&&source.raceNo===11?{rows:ARTEMIS_HISTORY_ROWS,url:ARTEMIS_HISTORY_URL,observed:ARTEMIS_OBSERVED_AT,age:2,count:14,from:'2026-01-01'}:null);
+ const config=REMAINING_SPECIAL_HISTORY_CONFIGS[`${source.date}:${source.venue}:${source.raceNo}`]|| ADDITIONAL_WEEK_HISTORY_CONFIGS[`${source.date}:${source.venue}:${source.raceNo}`]|| (source.date==='2026-10-25'&&source.venue==='新潟'&&NIIGATA_HISTORY_CONFIGS[source.raceNo]?NIIGATA_HISTORY_CONFIGS[source.raceNo]:source.date==='2026-10-25'&&source.venue==='新潟'&&source.raceNo===11?{rows:LUMIERE_HISTORY_ROWS,url:LUMIERE_HISTORY_URL,observed:LUMIERE_OBSERVED_AT,ages:LUMIERE_AGES,count:22,from:'2025-01-01'}:source.date==='2026-10-25'&&source.venue==='京都'&&source.raceNo===11?{rows:KIKKA_HISTORY_ROWS,url:KIKKA_HISTORY_URL,observed:KIKKA_OBSERVED_AT,age:3,count:21,from:'2025-01-01'}:source.date==='2026-10-24'&&source.venue==='東京'&&source.raceNo===11?{rows:ARTEMIS_HISTORY_ROWS,url:ARTEMIS_HISTORY_URL,observed:ARTEMIS_OBSERVED_AT,age:2,count:14,from:'2026-01-01'}:null);
  if(!config||!source.snapshotId.startsWith('registered:')||source.names.length!==config.count||new Set(config.rows.map(r=>r.horse_name)).size!==config.count||config.rows.some(r=>!source.names.includes(r.horse_name)||source.ages[r.horse_name]!== (config.ages?.[r.horse_name]??config.age)||r.race_date>=source.date||r.race_date<config.from||r.finish_position<1||r.finish_position>r.field_size||r.last3f<=0))throw Error('確認済み登録名簿に一致しません。');
  return config;
 }

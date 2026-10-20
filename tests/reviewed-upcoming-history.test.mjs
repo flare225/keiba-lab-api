@@ -31,3 +31,11 @@ test('three additional races persist 146 supported starts while retaining one no
  if(t.raceName==='魚沼ステークス'){assert.equal(saved.omittedStarts.length,1);assert.equal(saved.horses.find(h=>h.horseName==='フクノブルーレイク').storedRows,2);assert.ok(!saved.rows.some(r=>r.horse_name==='フクノブルーレイク'&&r.race_date==='2026-08-22'));}else assert.equal(saved.omittedStarts.length,0);
  sql.close();}
 });
+
+test('remaining 12 special races persist 210 entries and 605 actual supported starts without padding or non-starters',async()=>{
+ const {REMAINING_SPECIAL_REVIEWED:cards}=await import('../src/remaining-special-reviewed-history.js');assert.equal(cards.length,12);assert.equal(cards.reduce((n,c)=>n+c.seed.record.runners.length,0),210);assert.equal(cards.reduce((n,c)=>n+c.rows.length,0),605);
+ for(const c of cards){const {db,sql}=fixture(),t=c.seed.record;await saveExpectedRoster(db,t,Date.parse('2026-10-20T05:00:00Z'));const [source]=await storedExpectedSources(db,t.date,t.date);const saved=await importReviewedUpcomingHistory(db,source);assert.equal(saved.savedRows,c.rows.length);assert.equal(saved.horses.length,t.runners.length);assert.equal((await readReviewedUpcomingHistory(db,source)).sha256,saved.sha256);assert.equal((await importReviewedUpcomingHistory(db,source)).savedRows,0);assert.ok(saved.horses.every(h=>h.storedRows>=1&&h.storedRows<=3&&h.last3fRows===h.storedRows));assert.ok(saved.rows.every(r=>r.race_date<t.date&&r.race_date>=`${Number(t.date.slice(0,4))-source.ages[r.horse_name]+2}-01-01`));
+ for(const x of saved.omittedStarts){const date=x.raw.match(/^\d{4}\.\d{2}\.\d{2}/)?.[0].replaceAll('.','-');assert.ok(!saved.rows.some(r=>r.horse_name===x.horseName&&r.race_date===date));}
+ if(t.raceName==='なでしこ賞'||t.raceName==='萩S')assert.ok(saved.horses.some(h=>h.storedRows<3));
+ sql.close();}
+});

@@ -1,3 +1,4 @@
+import {recoverMissingPrograms} from './program-recovery.js';
 import {storedExpectedSources} from './expected-roster-registry.js';
 import {jstDay} from './history-collection-v3.37.0.js';
 import {runSourceCoordinator} from './source-coordinator-v3.40.0.js';
@@ -26,7 +27,8 @@ export function preferOfficialCards(rosters,stamp){
 
 // Priorities belong inside the history lane, never ahead of the common fair
 // dispatcher: a nonempty card/history queue must not suppress result collection.
-export async function collectLiveHistory(db,event,{now=Date.now,cards=collectMissingOfficialCard,main=collectTodayMainHistory,upcoming=collectUpcomingOfficialHistory,expected=scheduledWeekendHistory,details=scheduledPriorDetails,registered=storedExpectedSources}={}){
+export async function collectLiveHistory(db,event,{now=Date.now,cards=collectMissingOfficialCard,main=collectTodayMainHistory,upcoming=collectUpcomingOfficialHistory,expected=scheduledWeekendHistory,details=scheduledPriorDetails,registered=storedExpectedSources,programs=recoverMissingPrograms}={}){
+ const recovery=await programs(db,{now});if(recovery&&(recovery.externalRequests||recovery.status==='cooldown'||recovery.saveMayHaveSucceeded))return recovery;
  const deps={now},today=jstDay(now()),until=new Date(Date.parse(today+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);
  const rosters=await registered(db,today,until);
  let early=null;

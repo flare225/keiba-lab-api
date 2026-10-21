@@ -25,7 +25,7 @@ test('missing data remains unknown; query failures never become zero starts',asy
 test('conflicting identity suppresses comparison',async()=>{
  const row={race_date:'2026-09-01',venue:'東京',finish_position:1};
  const history=await historyForExpected(db([row],[{...row,finish_position:9}]),source,'デミアン');
- assert.equal(history.available,false);assert.equal(history.summary,null);assert.deepEqual(history.recent,[]);
+ assert.equal(history.available,false);assert.equal(history.summary,null);assert.deepEqual(history.recent,[]);assert.equal(history.conflictDetails[0].field,'finish');assert.equal(history.conflictDetails[0].date,'2026-09-01');assert.deepEqual(history.conflictDetails[0].observations.map(o=>o.value),[9,1]);
 });
 test('preview is read-only and keeps source provenance and marks',async()=>{
  const result=await expectedRunnerPreview(db(),input);

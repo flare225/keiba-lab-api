@@ -1,0 +1,23 @@
+name: Verify bounded stored history inventory
+on:
+  workflow_run:
+    workflows: [Publish Cloudflare Worker when authorized]
+    types: [completed]
+permissions:
+  contents: read
+jobs:
+  verify:
+    if: github.event.workflow_run.conclusion == 'success' && contains(github.event.workflow_run.head_commit.message, '履歴充足の実読返し')
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node scripts/verify-roster-history-inventory.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: history-inventory-evidence
+          path: history-inventory-evidence

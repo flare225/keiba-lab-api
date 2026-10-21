@@ -1,4 +1,5 @@
 import {measureD1Operation} from './d1-operation-metrics.js';
+import {rosterHistoryInventory} from './roster-history-inventory.js';
 import {provisionalCoverage} from './provisional-coverage.js';
 import {scheduledProvisionalPrediction} from './provisional-prediction-queue.js';
 import {readProvisionalPrediction,saveProvisionalPrediction} from './provisional-prediction-snapshots.js';
@@ -34,10 +35,19 @@ import {upcomingOfficialHistoryPlan} from './upcoming-official-history.js';
 import {captureSourceTrackRace,sourceTrackStatus} from './learning-source-track-v3.49.36.js';
 import {learningSourceTrackPage} from './learning-source-track-page-v3.49.36.js';
 import {statusCacheKey,readStatusCache,writeStatusCache} from './status-read-cache.js';
-export const VERSION='3.49.57';
+export const VERSION='3.49.58';
+const historyInventories=new WeakMap();
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/roster-history-inventory'&&request.method==='GET'){
+   const headers={'cache-control':'no-store'};
+   if(u.searchParams.get('confirm')!=='READ_STORED_HISTORY')return Response.json({ok:false,error:'explicit read confirmation required'},{status:400,headers});
+   const input={from:u.searchParams.get('from'),to:u.searchParams.get('to'),asOf:u.searchParams.get('asOf')},key=JSON.stringify(input),cached=historyInventories.get(env.DB);
+   if(cached?.key===key&&cached.expires>Date.now())return Response.json({...await cached.promise,version:VERSION,reused:true},{headers});
+   try{const promise=measureD1Operation(env.DB,db=>rosterHistoryInventory(db,input));historyInventories.set(env.DB,{key,promise,expires:Date.now()+3600000});const result=await promise;return Response.json({...result,version:VERSION},{headers});}
+   catch(e){historyInventories.delete(env.DB);return Response.json({ok:false,error:String(e.message||e)},{status:503,headers});}
+  }
   if(request.method==='GET'&&u.searchParams.has('date')&&PRECARD_STATE_PATHS.has(u.pathname)){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
    try{const pending=await readPrecardRaceState(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')||u.searchParams.get('raceNo')});if(pending)return Response.json({...pending.data,version:VERSION},{status:pending.status,headers});}

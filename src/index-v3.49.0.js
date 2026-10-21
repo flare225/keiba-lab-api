@@ -3,6 +3,7 @@ import {readEvidenceEvaluation,saveEvidenceEvaluation} from './evidence-evaluati
 import {rosterHistoryInventory} from './roster-history-inventory.js';
 import {provisionalCoverage} from './provisional-coverage.js';
 import {scheduledProvisionalPrediction} from './provisional-prediction-queue.js';
+import {scheduledEvidenceEvaluation} from './evidence-evaluation-queue.js';
 import {readProvisionalPrediction,saveProvisionalPrediction} from './provisional-prediction-snapshots.js';
 import {provisionalExpectedPrediction,repairStoredProgramConditions} from './provisional-expected-prediction.js';
 import {validateAutomaticReferences,readAutomaticValidation,validateAutomaticValidationInput} from './automatic-reference-validation.js';
@@ -36,7 +37,7 @@ import {upcomingOfficialHistoryPlan} from './upcoming-official-history.js';
 import {captureSourceTrackRace,sourceTrackStatus} from './learning-source-track-v3.49.36.js';
 import {learningSourceTrackPage} from './learning-source-track-page-v3.49.36.js';
 import {statusCacheKey,readStatusCache,writeStatusCache} from './status-read-cache.js';
-export const VERSION='3.49.60';
+export const VERSION='3.49.61';
 const historyInventories=new WeakMap();
 export default {
  async fetch(request,env,ctx){
@@ -282,7 +283,7 @@ export default {
    try{await scheduledAutomaticCandidates(db);}catch(e){console.error('automatic-learning-candidate',String(e));}
    return;
   }
-  if(event.cron==='0 * * * *'){await runPipelineJob(db,'provisional-prediction','scheduled',()=>measureD1Operation(db,m=>scheduledProvisionalPrediction(m)),{scheduledTime:event.scheduledTime});await recoverOldAutomaticPrediction(db);}
+  if(event.cron==='0 * * * *'){await runPipelineJob(db,'provisional-prediction','scheduled',()=>measureD1Operation(db,m=>scheduledProvisionalPrediction(m)),{scheduledTime:event.scheduledTime});await runPipelineJob(db,'evidence-evaluation','scheduled',()=>measureD1Operation(db,m=>scheduledEvidenceEvaluation(m)),{scheduledTime:event.scheduledTime});await recoverOldAutomaticPrediction(db);}
   try{await seedEditorialReferences(db);await verifyEditorialClaims(db);}catch{console.warn('editorial reference seed unavailable');}
   await app.scheduled(event,budgetEnv,ctx);
   await collectLockedMarkResults(db);

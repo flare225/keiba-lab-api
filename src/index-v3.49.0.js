@@ -1,3 +1,4 @@
+import {scheduledProvisionalPrediction} from './provisional-prediction-queue.js';
 import {readProvisionalPrediction,saveProvisionalPrediction} from './provisional-prediction-snapshots.js';
 import {provisionalExpectedPrediction,repairStoredProgramConditions} from './provisional-expected-prediction.js';
 import {validateAutomaticReferences,readAutomaticValidation,validateAutomaticValidationInput} from './automatic-reference-validation.js';
@@ -31,7 +32,7 @@ import {upcomingOfficialHistoryPlan} from './upcoming-official-history.js';
 import {captureSourceTrackRace,sourceTrackStatus} from './learning-source-track-v3.49.36.js';
 import {learningSourceTrackPage} from './learning-source-track-page-v3.49.36.js';
 import {statusCacheKey,readStatusCache,writeStatusCache} from './status-read-cache.js';
-export const VERSION='3.49.48';
+export const VERSION='3.49.49';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
@@ -71,6 +72,9 @@ export default {
    }catch(e){return Response.json({ok:false,error:String(e.message||e),...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})},{status:e.saveMayHaveSucceeded?503:409,headers})}
   }
 
+  if(u.pathname==='/v1/lab/provisional-prediction-queue'&&request.method==='POST'){
+   try{const b=await request.json();if(b.confirm!=='RUN_PROVISIONAL_QUEUE')throw Error('confirm RUN_PROVISIONAL_QUEUE is required');return Response.json({...await scheduledProvisionalPrediction(env.DB),ok:true,version:VERSION},{headers:{'cache-control':'no-store'}});}catch(e){return Response.json({ok:false,error:String(e.message||e)},{status:409});}
+  }
   if(u.pathname==='/v1/lab/provisional-prediction-snapshot'){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*','access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'content-type'};
    if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
@@ -254,7 +258,7 @@ export default {
    try{await scheduledAutomaticCandidates(db);}catch(e){console.error('automatic-learning-candidate',String(e));}
    return;
   }
-  if(event.cron==='0 * * * *')await recoverOldAutomaticPrediction(db);
+  if(event.cron==='0 * * * *'){await recoverOldAutomaticPrediction(db);await scheduledProvisionalPrediction(db);}
   try{await seedEditorialReferences(db);await verifyEditorialClaims(db);}catch{console.warn('editorial reference seed unavailable');}
   await app.scheduled(event,budgetEnv,ctx);
   await collectLockedMarkResults(db);

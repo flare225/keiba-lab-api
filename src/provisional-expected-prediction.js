@@ -1,3 +1,4 @@
+import {parseProgramLabel} from './archive-program-parser-v3.38.0.js';
 import {assessExpectedHistory,rankAssessment} from './expected-assessment-v3.31.0.js';
 import {historyForExpected,expectedAge} from './expected-runner-preview-v3.30.0.js';
 import {postRaceHistoryBatch} from './post-race-history-batch.js';
@@ -24,4 +25,19 @@ export async function provisionalExpectedPrediction(db,source,now=Date.now()){
  const batch=await postRaceHistoryBatch(db,context),histories=new Map();
  for(const name of source.names)histories.set(name,await historyForExpected(db,source,name,8,batch.get(name)));
  return buildProvisionalPrediction(source,conditions,histories,now);
+}
+
+// Repair only absent conditions, using the stored official program label.
+export async function repairStoredProgramConditions(db,source){
+ const args=[source.date,source.venue,source.raceNo];
+ const row=await db.prepare('SELECT race_label,surface,distance,source_url FROM jra_race_program WHERE race_date=? AND venue=? AND race_no=?').bind(...args).first();
+ if(!row||row.surface&&row.distance)return{repaired:0};
+ let url;try{url=new URL(row.source_url)}catch{return{repaired:0,reason:'official-source-unconfirmed'}};
+ if(url.protocol!=='https:'||url.hostname!=='www.jra.go.jp')return{repaired:0,reason:'official-source-unconfirmed'};
+ const parsed=parseProgramLabel(row.race_label);
+ if(!parsed.surface||!parsed.distance||row.surface&&row.surface!==parsed.surface||row.distance&&Number(row.distance)!==parsed.distance)return{repaired:0,reason:'stored-label-insufficient-or-conflicting'};
+ const result=await db.prepare("UPDATE jra_race_program SET surface=COALESCE(NULLIF(surface,''),?),distance=COALESCE(distance,?) WHERE race_date=? AND venue=? AND race_no=? AND (surface IS NULL OR surface='' OR distance IS NULL)").bind(parsed.surface,parsed.distance,...args).run();
+ const read=await db.prepare('SELECT surface,distance FROM jra_race_program WHERE race_date=? AND venue=? AND race_no=?').bind(...args).first();
+ if(read?.surface!==parsed.surface||Number(read.distance)!==parsed.distance)throw Error('番組条件の補完後読返しが一致しません。');
+ return{repaired:Number(result.meta?.changes)||0,sourceUrl:row.source_url,sourceLabel:row.race_label,readbackVerified:true};
 }

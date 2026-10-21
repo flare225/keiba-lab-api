@@ -1,3 +1,4 @@
+import {collectMissingRoster} from './missing-roster-acquisition.js';
 import {provisionalCoverage} from './provisional-coverage.js';
 import {scheduledProvisionalPrediction} from './provisional-prediction-queue.js';
 import {readProvisionalPrediction,saveProvisionalPrediction} from './provisional-prediction-snapshots.js';
@@ -33,7 +34,7 @@ import {upcomingOfficialHistoryPlan} from './upcoming-official-history.js';
 import {captureSourceTrackRace,sourceTrackStatus} from './learning-source-track-v3.49.36.js';
 import {learningSourceTrackPage} from './learning-source-track-page-v3.49.36.js';
 import {statusCacheKey,readStatusCache,writeStatusCache} from './status-read-cache.js';
-export const VERSION='3.49.51';
+export const VERSION='3.49.52';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
@@ -262,7 +263,7 @@ export default {
    try{await scheduledAutomaticCandidates(db);}catch(e){console.error('automatic-learning-candidate',String(e));}
    return;
   }
-  if(event.cron==='0 * * * *'){await runPipelineJob(db,'provisional-prediction','scheduled',()=>scheduledProvisionalPrediction(db),{scheduledTime:event.scheduledTime});await recoverOldAutomaticPrediction(db);}
+  if(event.cron==='0 * * * *'){await runPipelineJob(db,'provisional-prediction','scheduled',()=>scheduledProvisionalPrediction(db),{scheduledTime:event.scheduledTime});await runPipelineJob(db,'missing-roster','scheduled',()=>collectMissingRoster(db),{scheduledTime:event.scheduledTime});await recoverOldAutomaticPrediction(db);}
   try{await seedEditorialReferences(db);await verifyEditorialClaims(db);}catch{console.warn('editorial reference seed unavailable');}
   await app.scheduled(event,budgetEnv,ctx);
   await collectLockedMarkResults(db);

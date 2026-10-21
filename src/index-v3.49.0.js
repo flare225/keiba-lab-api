@@ -1,4 +1,5 @@
 import {measureD1Operation} from './d1-operation-metrics.js';
+import {readEvidenceEvaluation,saveEvidenceEvaluation} from './evidence-evaluation-snapshots.js';
 import {rosterHistoryInventory} from './roster-history-inventory.js';
 import {provisionalCoverage} from './provisional-coverage.js';
 import {scheduledProvisionalPrediction} from './provisional-prediction-queue.js';
@@ -35,11 +36,19 @@ import {upcomingOfficialHistoryPlan} from './upcoming-official-history.js';
 import {captureSourceTrackRace,sourceTrackStatus} from './learning-source-track-v3.49.36.js';
 import {learningSourceTrackPage} from './learning-source-track-page-v3.49.36.js';
 import {statusCacheKey,readStatusCache,writeStatusCache} from './status-read-cache.js';
-export const VERSION='3.49.59';
+export const VERSION='3.49.60';
 const historyInventories=new WeakMap();
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/evidence-evaluation'){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*','access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'content-type'};
+   if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
+   try{let data;if(request.method==='GET')data=await measureD1Operation(env.DB,db=>readEvidenceEvaluation(db,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no'),sha256:u.searchParams.get('sha256')}));
+    else if(request.method==='POST'){const text=await request.text();if(text.length>4096)throw Error('入力サイズ上限です。');const b=JSON.parse(text);if(b.confirm!=='SAVE_SHADOW_COMPARISON')throw Error('検証評価版の保存確認が必要です。');data=await measureD1Operation(env.DB,db=>saveEvidenceEvaluation(db,b));}
+    else return Response.json({ok:false,error:'method not allowed'},{status:405,headers});return Response.json({...data,version:VERSION},{headers});
+   }catch(e){return Response.json({ok:false,error:String(e.message||e),...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})},{status:e.saveMayHaveSucceeded?503:409,headers});}
+  }
   if(u.pathname==='/v1/lab/roster-history-inventory'&&request.method==='GET'){
    const headers={'cache-control':'no-store'};
    if(u.searchParams.get('confirm')!=='READ_STORED_HISTORY')return Response.json({ok:false,error:'explicit read confirmation required'},{status:400,headers});

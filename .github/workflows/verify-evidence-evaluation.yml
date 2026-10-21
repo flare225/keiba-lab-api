@@ -1,0 +1,24 @@
+name: Verify saved shadow evaluation comparison
+on:
+  workflow_run:
+    workflows: [Publish Cloudflare Worker when authorized]
+    types: [completed]
+permissions:
+  contents: read
+jobs:
+  verify:
+    if: github.event.workflow_run.conclusion == 'success' && contains(github.event.workflow_run.head_commit.message, '検証評価版の保存照合')
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --no-save --package-lock=false playwright@1.56.1 && npx playwright install --with-deps chromium
+      - run: node scripts/verify-evidence-evaluation.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-evaluation-evidence
+          path: evidence-evaluation-evidence

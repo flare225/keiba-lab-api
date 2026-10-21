@@ -49,7 +49,7 @@ test('partial secondary coverage is recorded but cannot be treated as a full-fie
 test('production API exposes readback and requires explicit capture intent',async()=>{
  const {sql,db}=fixture();const get=await worker.fetch(new Request('https://api.test/v1/lab/learning-source-track'),{DB:db},{});assert.equal(get.status,200);const status=await get.json();assert.equal(status.version,VERSION);assert.equal(status.track.id,SOURCE_TRACK.id);assert.equal(status.featuresModifyCurrentPrediction,false);
  const before=sql.prepare("SELECT COUNT(*) n FROM lab_learning_source_features").get().n;
- const post=await worker.fetch(new Request('https://api.test/v1/lab/learning-source-track-capture',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({date:'2026-10-17',venue:'東京',raceNo:11})}),{DB:db},{});assert.equal(post.status,400);assert.equal((await post.json()).error,'confirm CAPTURE が必要です。');assert.equal(sql.prepare("SELECT COUNT(*) n FROM lab_learning_source_features").get().n,before);assert.equal(VERSION,'3.49.56');sql.close();
+ const post=await worker.fetch(new Request('https://api.test/v1/lab/learning-source-track-capture',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({date:'2026-10-17',venue:'東京',raceNo:11})}),{DB:db},{});assert.equal(post.status,400);assert.equal((await post.json()).error,'confirm CAPTURE が必要です。');assert.equal(sql.prepare("SELECT COUNT(*) n FROM lab_learning_source_features").get().n,before);assert.equal(VERSION,'3.49.57');sql.close();
 });
 
 test('repeated source-track status reads are served from edge cache without another D1 query',async()=>{

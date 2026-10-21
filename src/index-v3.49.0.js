@@ -35,7 +35,7 @@ import {upcomingOfficialHistoryPlan} from './upcoming-official-history.js';
 import {captureSourceTrackRace,sourceTrackStatus} from './learning-source-track-v3.49.36.js';
 import {learningSourceTrackPage} from './learning-source-track-page-v3.49.36.js';
 import {statusCacheKey,readStatusCache,writeStatusCache} from './status-read-cache.js';
-export const VERSION='3.49.58';
+export const VERSION='3.49.59';
 const historyInventories=new WeakMap();
 export default {
  async fetch(request,env,ctx){
@@ -43,7 +43,7 @@ export default {
   if(u.pathname==='/v1/lab/roster-history-inventory'&&request.method==='GET'){
    const headers={'cache-control':'no-store'};
    if(u.searchParams.get('confirm')!=='READ_STORED_HISTORY')return Response.json({ok:false,error:'explicit read confirmation required'},{status:400,headers});
-   const input={from:u.searchParams.get('from'),to:u.searchParams.get('to'),asOf:u.searchParams.get('asOf')},key=JSON.stringify(input),cached=historyInventories.get(env.DB);
+   const input={from:u.searchParams.get('from'),to:u.searchParams.get('to'),asOf:u.searchParams.get('asOf'),raceKey:u.searchParams.get('raceKey')},key=JSON.stringify(input),cached=historyInventories.get(env.DB);
    if(cached?.key===key&&cached.expires>Date.now())return Response.json({...await cached.promise,version:VERSION,reused:true},{headers});
    try{const promise=measureD1Operation(env.DB,db=>rosterHistoryInventory(db,input));historyInventories.set(env.DB,{key,promise,expires:Date.now()+3600000});const result=await promise;return Response.json({...result,version:VERSION},{headers});}
    catch(e){historyInventories.delete(env.DB);return Response.json({ok:false,error:String(e.message||e)},{status:503,headers});}

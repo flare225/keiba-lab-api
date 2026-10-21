@@ -1,3 +1,4 @@
+import {provisionalExpectedPrediction} from './provisional-expected-prediction.js';
 import {validateAutomaticReferences,readAutomaticValidation,validateAutomaticValidationInput} from './automatic-reference-validation.js';
 import {trainAutomaticReferences,readAutomaticTraining,validateAutomaticTrainingInput} from './automatic-reference-training.js';
 import {readPrecardRaceState,PRECARD_STATE_PATHS} from './precard-race-state.js';
@@ -29,7 +30,7 @@ import {upcomingOfficialHistoryPlan} from './upcoming-official-history.js';
 import {captureSourceTrackRace,sourceTrackStatus} from './learning-source-track-v3.49.36.js';
 import {learningSourceTrackPage} from './learning-source-track-page-v3.49.36.js';
 import {statusCacheKey,readStatusCache,writeStatusCache} from './status-read-cache.js';
-export const VERSION='3.49.45';
+export const VERSION='3.49.46';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
@@ -67,6 +68,12 @@ export default {
     const source=await resolveExpectedCollectionSource(env.DB,b);if(!source)throw Error('登録名簿がありません');
     const data=await(request.method==='GET'?readReviewedUpcomingHistory(env.DB,source):importReviewedUpcomingHistory(env.DB,source));return Response.json({...data,version:VERSION},{headers});
    }catch(e){return Response.json({ok:false,error:String(e.message||e),...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})},{status:e.saveMayHaveSucceeded?503:409,headers})}
+  }
+
+  if(u.pathname==='/v1/lab/provisional-prediction'&&request.method==='GET'){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
+   try{const source=await resolveExpectedCollectionSource(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')});return Response.json({...await provisionalExpectedPrediction(env.DB,source),version:VERSION},{headers});}
+   catch(e){return Response.json({ok:false,status:'provisional-unavailable',error:String(e.message||e)},{status:409,headers});}
   }
 
   if(u.pathname==='/v1/lab/automatic-prediction'){

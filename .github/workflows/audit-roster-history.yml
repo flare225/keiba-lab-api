@@ -1,0 +1,25 @@
+name: Read stored roster history inventory
+on:
+  push:
+    branches: [main]
+    paths: ['scripts/audit-roster-history.mjs', '.github/workflows/audit-roster-history.yml']
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node scripts/audit-roster-history.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: roster-history-evidence
+          path: roster-history-evidence

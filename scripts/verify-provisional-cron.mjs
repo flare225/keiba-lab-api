@@ -1,3 +1,4 @@
+// Read-only follow-up after the 2026-10-21 12:00 JST natural cron.
 import {mkdir,writeFile} from 'node:fs/promises';import {createHash} from 'node:crypto';
 const base='https://keiba-lab-api.sekai-no-bancyou.workers.dev',out='provisional-cron-evidence';await mkdir(out,{recursive:true});const report={readOnly:true,manualQueueInvoked:false,newSavesByThisVerification:0};
 try{

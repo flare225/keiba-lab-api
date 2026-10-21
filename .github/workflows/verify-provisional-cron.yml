@@ -2,7 +2,7 @@ name: Read provisional cron evidence
 on:
   push:
     branches: [main]
-    paths: ['scripts/verify-provisional-cron.mjs']
+    paths: ['scripts/verify-provisional-cron.mjs', 'scripts/analyze-provisional-artifact.mjs']
   workflow_run:
     workflows: [Publish Cloudflare Worker when authorized]
     types: [completed]
@@ -33,3 +33,20 @@ jobs:
         with:
           name: provisional-cron-evidence
           path: provisional-cron-evidence
+
+  artifact-only:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '保存済み証拠解析だけ')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          name: provisional-cron-evidence
+          path: artifact-input
+          run-id: '39561087781'
+          github-token: ${{ github.token }}
+      - run: node scripts/analyze-provisional-artifact.mjs

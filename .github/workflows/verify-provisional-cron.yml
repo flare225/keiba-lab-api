@@ -1,0 +1,28 @@
+name: Read provisional cron evidence
+on:
+  push:
+    branches: [main]
+    paths: ['scripts/verify-provisional-cron.mjs']
+  workflow_run:
+    workflows: [Publish Cloudflare Worker when authorized]
+    types: [completed]
+permissions:
+  contents: read
+jobs:
+  verify:
+    if: (github.event_name == 'push' && contains(github.event.head_commit.message, 'cron読返しだけ')) || (github.event.workflow_run.conclusion == 'success' && contains(github.event.workflow_run.head_commit.message, 'cron自動実行の証拠'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node scripts/verify-provisional-cron.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: provisional-cron-evidence
+          path: provisional-cron-evidence

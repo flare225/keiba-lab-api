@@ -1,0 +1,41 @@
+name: Summarize saved history artifacts offline
+on:
+  push:
+    branches: [main]
+    paths: ['scripts/summarize-saved-history-artifacts.mjs']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        run: ['39525799732','39526622581','39527000815','39537163577','39543260283','39548626984','39554150889','39561087781']
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: saved-artifacts
+          run-id: ${{ matrix.run }}
+          github-token: ${{ github.token }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cached-${{ matrix.run }}
+          path: saved-artifacts
+  summarize:
+    needs: collect
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cached-*
+          path: saved-artifacts
+      - run: node scripts/summarize-saved-history-artifacts.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: offline-history-evidence
+          path: offline-history-evidence

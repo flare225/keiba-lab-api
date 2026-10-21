@@ -12,7 +12,7 @@ export async function provisionalCoverage(db,{from,to,venues=['東京','京都',
  const predraw=await rows(db,"SELECT race_key,json_array_length(runners_json) runner_count FROM lab_confirmed_predraw_rosters WHERE substr(race_key,1,10) BETWEEN ? AND ? LIMIT 120",[from,to]);
  const formal=await rows(db,"SELECT r.race_key,r.runner_count FROM jra_races r WHERE r.race_date BETWEEN ? AND ? AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key)",[from,to]);
  const supplementary=await rows(db,"SELECT race_key,status,next_at,source_url,http_status,error FROM lab_missing_roster_sources_v1 WHERE substr(race_key,1,10) BETWEEN ? AND ? LIMIT 120",[from,to]);
- const sourceScheduled=await rows(db,"SELECT run_id,started_at,finished_at,status,result_json,error FROM lab_bounded_pipeline_runs WHERE job='missing-roster' AND trigger_kind='scheduled' ORDER BY started_at DESC LIMIT 1");
+ const sourceScheduled=await rows(db,"SELECT run_id,started_at,finished_at,status,result_json,error FROM lab_bounded_pipeline_runs WHERE job='missing-roster' AND trigger_kind='scheduled' ORDER BY started_at DESC LIMIT 3");
  const latest=await rows(db,"SELECT run_id,trigger_kind,started_at,finished_at,status,result_json,error FROM lab_bounded_pipeline_runs WHERE job='provisional-prediction' AND trigger_kind='scheduled' ORDER BY started_at DESC LIMIT 3");
  const clock=(await rows(db,"SELECT next_at FROM lab_provisional_clock_v1 WHERE name='queue'"))[0]||null;
  const byRoster=new Map();for(const r of roster)if(!byRoster.has(r.race_key))byRoster.set(r.race_key,r);

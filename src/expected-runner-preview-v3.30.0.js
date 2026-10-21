@@ -113,6 +113,7 @@ export async function historyForExpected(db,source,horseName,limit=8,preloaded=n
   if(rows.slice(1).some(row=>['finish','surface','distance','fieldSize'].some(field=>primary[field]!=null&&row[field]!=null&&primary[field]!==row[field])))conflict=true;
   return{primary,supplemental:rows.filter(row=>row.dbSource==='netkeiba-dated-history'),sourceEvidence,crossSourceConflict};
  });
+ const conflictDetails=groups.flatMap(group=>sourceFields.filter(field=>{const values=group.sourceEvidence.map(e=>e.values[field]).filter(v=>v!=null);return new Set(values).size>1;}).map(field=>({date:group.primary.date,venue:group.primary.venue,field,observations:group.sourceEvidence.filter(e=>e.values[field]!=null).map(e=>({provider:e.provider,sourceUrl:e.sourceUrl,value:e.values[field]}))}))).slice(0,40);
  const recent=groups.map(group=>({...group.primary,sourceEvidence:group.sourceEvidence,sourceConflict:group.crossSourceConflict,
   supplementalSourceUrl:group.supplemental[0]?.sourceUrl||null})).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,cap);
  const supplementalRecent=groups.flatMap(group=>group.primary.dbSource==='netkeiba-dated-history'?[]:group.supplemental.map(row=>({...row,sourceEvidence:[{provider:row.dbSource,sourceUrl:row.sourceUrl,values:Object.fromEntries(sourceFields.map(field=>[field,row[field]]))}]}))).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,cap);
@@ -138,7 +139,7 @@ export async function historyForExpected(db,source,horseName,limit=8,preloaded=n
  if(last3fs.length<recent.length)warnings.push('last3f-incomplete');
  return{horseName,beforeDate,fromDate,antiLeakageRule:'from_date <= race_date < target_date',
   identityBasis:'exact-horse-name + age-consistent-birth-cohort-window',
-  available:!conflict&&recent.length>0,summary,recent:conflict?[]:recent,
+  available:!conflict&&recent.length>0,conflictDetails,summary,recent:conflict?[]:recent,
   supplementalRecent:conflict?[]:supplementalRecent,supplementalSummary:{source:'netkeiba-dated-history',storedStarts:supplementalRecent.length,last3fRecorded:supplementalRecent.filter(row=>row.last3f!=null&&row.last3f>0).length},warnings};
 }
 export async function expectedRunnerPreview(db,input={}){

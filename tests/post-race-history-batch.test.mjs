@@ -12,3 +12,12 @@ test('bounded detail prefilter retains date boundaries, duplicates and evidence 
  const plan=sql.prepare('EXPLAIN QUERY PLAN '+detailSql).all(...detailArgs).map(x=>x.detail);
  assert.ok(plan.some(x=>x.includes('MATERIALIZE selected_details')));assert.equal(plan.filter(x=>x.includes('SCAN lab_prior_detail_evidence')).length,1);assert.equal(actual.get('A').detailEvidence.length,3);assert.equal(actual.get('B').detailEvidence.length,1);sql.close();
 });
+test('official history prefilter preserves cohort and result joins with one runner-table scan',async()=>{
+ const sql=new DatabaseSync(':memory:');sql.exec(`CREATE TABLE jra_runners(horse_name TEXT,race_key TEXT,horse_no INTEGER,age INTEGER);CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_name TEXT,surface TEXT,distance INTEGER,runner_count INTEGER,race_no INTEGER);CREATE TABLE lab_race_outcomes(race_key TEXT,horse_no INTEGER,finish_position INTEGER);CREATE TABLE lab_race_result_details(race_key TEXT,horse_no INTEGER,finish_position INTEGER,finish_status TEXT,time_text TEXT,time_seconds REAL,corner_positions TEXT,last3f REAL,source_url TEXT);INSERT INTO jra_races VALUES('past','2025-01-01','東京','past','芝',1600,10,1);INSERT INTO jra_races VALUES('future','2026-10-24','東京','future','芝',1600,10,1);INSERT INTO jra_runners VALUES('A','past',1,3),('B','past',2,2),('A','future',1,4);INSERT INTO lab_race_outcomes VALUES('past',1,2);`);
+ const insert=sql.prepare('INSERT INTO jra_runners VALUES(?,?,?,?)');for(let i=0;i<2000;i++)insert.run('other'+i,'past',3,3);
+ let query,args;const db={prepare(q){const w=(a=[])=>({bind(...x){return w(x)},async all(){if(q.includes('selected_runners')){query=q;args=a;}return{results:sql.prepare(q).all(...a)}}});return w()}};
+ const context={date:'2026-10-24',raceKey:'target',runners:[{horse_name:'A',age:4},{horse_name:'B',age:4}]};const actual=await postRaceHistoryBatch(db,context);
+ const old=query.slice(query.indexOf(' SELECT * FROM (')+1).replace('JOIN selected_runners x','JOIN jra_runners x');const before=sql.prepare(old).all(...args.slice(1));
+ for(const name of ['A','B'])assert.deepEqual(actual.get(name).rich,before.filter(x=>x.horse_name===name));assert.equal(actual.get('A').rich.length,1);assert.equal(actual.get('B').rich.length,0);assert.equal(actual.get('A').rich[0].finish_position,2);
+ const plan=sql.prepare('EXPLAIN QUERY PLAN '+query).all(...args).map(x=>x.detail);assert.ok(plan.some(x=>x.includes('MATERIALIZE selected_runners')));assert.equal(plan.filter(x=>x.includes('SCAN jra_runners')).length,1);sql.close();
+});

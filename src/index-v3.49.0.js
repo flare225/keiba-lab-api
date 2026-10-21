@@ -1,5 +1,5 @@
 import {readProvisionalPrediction,saveProvisionalPrediction} from './provisional-prediction-snapshots.js';
-import {provisionalExpectedPrediction} from './provisional-expected-prediction.js';
+import {provisionalExpectedPrediction,repairStoredProgramConditions} from './provisional-expected-prediction.js';
 import {validateAutomaticReferences,readAutomaticValidation,validateAutomaticValidationInput} from './automatic-reference-validation.js';
 import {trainAutomaticReferences,readAutomaticTraining,validateAutomaticTrainingInput} from './automatic-reference-training.js';
 import {readPrecardRaceState,PRECARD_STATE_PATHS} from './precard-race-state.js';
@@ -31,7 +31,7 @@ import {upcomingOfficialHistoryPlan} from './upcoming-official-history.js';
 import {captureSourceTrackRace,sourceTrackStatus} from './learning-source-track-v3.49.36.js';
 import {learningSourceTrackPage} from './learning-source-track-page-v3.49.36.js';
 import {statusCacheKey,readStatusCache,writeStatusCache} from './status-read-cache.js';
-export const VERSION='3.49.47';
+export const VERSION='3.49.48';
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
@@ -77,7 +77,7 @@ export default {
    try{const b=request.method==='GET'?{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')}:request.method==='POST'?await request.json():null;
     if(!b)return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
     if(request.method==='POST'&&b.confirm!=='SAVE_PROVISIONAL')throw Error('confirm SAVE_PROVISIONAL is required');
-    const result=request.method==='GET'?await readProvisionalPrediction(env.DB,b):await saveProvisionalPrediction(env.DB,b,async()=>provisionalExpectedPrediction(env.DB,await resolveExpectedCollectionSource(env.DB,b)));
+    const result=request.method==='GET'?await readProvisionalPrediction(env.DB,b):await saveProvisionalPrediction(env.DB,b,async()=>{const source=await resolveExpectedCollectionSource(env.DB,b);if(!source)throw Error('想定名簿が未保存です。');const repair=await repairStoredProgramConditions(env.DB,source);return {...await provisionalExpectedPrediction(env.DB,source),programRepair:repair};});
     return Response.json({...result,version:VERSION},{headers});
    }catch(e){return Response.json({ok:false,error:String(e.message||e),...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})},{status:e.saveMayHaveSucceeded?503:409,headers});}
   }

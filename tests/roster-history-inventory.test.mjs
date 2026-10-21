@@ -19,7 +19,8 @@ test('seven SELECTs inventory repeated identities, sparse history and conflicts 
  let calls=0;const db={prepare(q){assert.match(q,/^\s*(SELECT|WITH)/);calls++;return{bind(...args){return{async all(){return{results:sql.prepare(q).all(...args)}}}}}}};
  const result=await rosterHistoryInventory(db,{from:'2026-10-24',to:'2026-10-25',asOf:'2026-10-21T08:37:36Z'},Date.parse('2026-10-21T10:00:00Z'));
  assert.equal(calls,7);assert.equal(result.summary.appearances,5);assert.equal(result.summary.uniqueHorses,4);assert.equal(result.summary.uniqueStoredRuns,7);assert.equal(result.summary.readyAppearances,2);assert.equal(result.summary.insufficientAppearances,2);assert.equal(result.summary.conflictAppearances,1);assert.equal(result.summary.zeroHistoryAppearances,1);assert.equal(result.races.flatMap(r=>r.horses).find(h=>h.horseName==='C').conflictDetails[0].field,'finish');
- assert.equal(result.savedPredictions.length,0);assert.equal(result.dbWrites,0);sql.close();
+ assert.equal(result.savedPredictions.length,0);assert.equal(result.dbWrites,0);
+ const one=await rosterHistoryInventory(db,{from:'2026-10-24',to:'2026-10-25',asOf:'2026-10-21T08:37:36Z',raceKey:'2026-10-24:東京:1'},Date.parse('2026-10-21T10:00:00Z'));assert.equal(one.summary.rosters,1);assert.equal(one.summary.appearances,4);assert.equal(calls,14);sql.close();
 });
 test('out-of-scope or invalid dates reject before DB access',async()=>{
  const db={prepare(){throw Error('DB must not be touched')}};for(const input of [{from:'2026-10-01',to:'2026-10-25',asOf:'2026-10-21'},{from:'bad',to:'2026-10-25',asOf:'2026-10-21'}])await assert.rejects(rosterHistoryInventory(db,input,Date.parse('2026-10-21')));

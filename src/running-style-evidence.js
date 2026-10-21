@@ -1,10 +1,11 @@
+import {comparableHistoryValue} from './history-value-normalization.js';
 export const POSITION_POLICY='prior-corner-position-v1';
 export function assessPositionHistory(history,race){
  const seen=new Set(),records=[];
  for(const r of history?.available?history.recent||[]:[]){
   if(!/^\d{4}-\d{2}-\d{2}$/.test(r.date||'')||r.date>=race.date||r.surface!==race.surface||!Number.isFinite(r.distance)||Math.abs(r.distance-race.distance)>400||!Number.isInteger(r.fieldSize)||r.fieldSize<2||r.fieldSize>40||r.finishStatus&&r.finishStatus!=='finished')continue;
   const stamp=Date.parse(r.date+'T00:00:00Z');if(!Number.isFinite(stamp)||new Date(stamp).toISOString().slice(0,10)!==r.date||!Number.isInteger(r.finish)||r.finish<1||r.finish>r.fieldSize)continue;
-  const text=String(r.cornerPositions||'').trim().replace(/[０-９]/g,c=>String(c.charCodeAt(0)-65248));
+  const text=String(comparableHistoryValue('cornerPositions',r.cornerPositions)||'').trim().replace(/[０-９]/g,c=>String(c.charCodeAt(0)-65248));
   if(!/^\d{1,2}(?:\s*[-－–→/]\s*\d{1,2}){1,3}$/.test(text))continue;
   const positions=text.match(/\d+/g).map(Number);if(positions.some(n=>n<1||n>r.fieldSize))continue;
   const key=r.date+'|'+r.venue;if(seen.has(key))continue;seen.add(key);

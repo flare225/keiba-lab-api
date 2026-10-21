@@ -1,0 +1,739 @@
+[
+  {
+    "horseName": "ペアスターロード",
+    "raceKey": "2026-10-24:京都:9",
+    "conflicts": [
+      {
+        "date": "2026-06-20",
+        "field": "trackCondition",
+        "values": [
+          "稍重",
+          "稍"
+        ]
+      },
+      {
+        "date": "2026-10-03",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-03",
+        "field": "cornerPositions",
+        "values": [
+          "2 2",
+          "2-2"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "オデット",
+    "raceKey": "2026-10-24:新潟:10",
+    "conflicts": [
+      {
+        "date": "2026-10-11",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-11",
+        "field": "cornerPositions",
+        "values": [
+          "7 6 8 8",
+          "7-6-8-8"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "サンカルミア",
+    "raceKey": "2026-10-24:新潟:10",
+    "conflicts": [
+      {
+        "date": "2026-06-14",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-06-14",
+        "field": "trackCondition",
+        "values": [
+          "稍重",
+          "稍"
+        ]
+      },
+      {
+        "date": "2026-07-29",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-04",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-04",
+        "field": "cornerPositions",
+        "values": [
+          "7 7",
+          "7-7"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "オリーブグリーン",
+    "raceKey": "2026-10-24:東京:10",
+    "conflicts": [
+      {
+        "date": "2026-10-10",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-10",
+        "field": "cornerPositions",
+        "values": [
+          "2 2 2 2",
+          "2-2-2-2"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "セギレエルビエント",
+    "raceKey": "2026-10-24:東京:10",
+    "conflicts": [
+      {
+        "date": "2026-05-10",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-05-31",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-11",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-11",
+        "field": "cornerPositions",
+        "values": [
+          "6 5",
+          "6-5"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "トクシーカイザー",
+    "raceKey": "2026-10-24:東京:10",
+    "conflicts": [
+      {
+        "date": "2026-04-25",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-04-25",
+        "field": "trackCondition",
+        "values": [
+          "稍重",
+          "稍"
+        ]
+      },
+      {
+        "date": "2026-06-13",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-06-13",
+        "field": "trackCondition",
+        "values": [
+          "稍重",
+          "稍"
+        ]
+      },
+      {
+        "date": "2026-10-04",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-04",
+        "field": "cornerPositions",
+        "values": [
+          "2 2",
+          "2-2"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "オウギノカナメ",
+    "raceKey": "2026-10-25:京都:10",
+    "conflicts": [
+      {
+        "date": "2026-07-05",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-07-18",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-03",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-03",
+        "field": "cornerPositions",
+        "values": [
+          "10 10",
+          "10-10"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "シュラザック",
+    "raceKey": "2026-10-25:京都:10",
+    "conflicts": [
+      {
+        "date": "2026-05-23",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-05-23",
+        "field": "trackCondition",
+        "values": [
+          "稍重",
+          "稍"
+        ]
+      },
+      {
+        "date": "2026-07-12",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-11",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-11",
+        "field": "cornerPositions",
+        "values": [
+          "9 9 6 4",
+          "9-9-6-4"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "ジンセイ",
+    "raceKey": "2026-10-25:京都:10",
+    "conflicts": [
+      {
+        "date": "2026-05-30",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-07-12",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-03",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-03",
+        "field": "cornerPositions",
+        "values": [
+          "12 12",
+          "12-12"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "ペイシャモノノフ",
+    "raceKey": "2026-10-25:京都:10",
+    "conflicts": [
+      {
+        "date": "2026-06-21",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-08-23",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-11",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-11",
+        "field": "cornerPositions",
+        "values": [
+          "1 1 1 1",
+          "1-1-1-1"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "レアンダー",
+    "raceKey": "2026-10-25:京都:10",
+    "conflicts": [
+      {
+        "date": "2026-05-17",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-09-19",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-11",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-11",
+        "field": "cornerPositions",
+        "values": [
+          "2 2 2 4",
+          "2-2-2-4"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "キタノライブリー",
+    "raceKey": "2026-10-25:京都:12",
+    "conflicts": [
+      {
+        "date": "2026-08-22",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-09-06",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-09-06",
+        "field": "trackCondition",
+        "values": [
+          "不良",
+          "不"
+        ]
+      },
+      {
+        "date": "2026-10-04",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-04",
+        "field": "cornerPositions",
+        "values": [
+          "14 15",
+          "14-15"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "セールヴォラン",
+    "raceKey": "2026-10-25:京都:12",
+    "conflicts": [
+      {
+        "date": "2026-06-13",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-07-04",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-07-04",
+        "field": "time",
+        "values": [
+          "57.4",
+          "0:57.4"
+        ]
+      },
+      {
+        "date": "2026-07-04",
+        "field": "trackCondition",
+        "values": [
+          "不良",
+          "不"
+        ]
+      },
+      {
+        "date": "2026-10-11",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-11",
+        "field": "cornerPositions",
+        "values": [
+          "4 5",
+          "4-5"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "フェスティヴドレス",
+    "raceKey": "2026-10-25:京都:12",
+    "conflicts": [
+      {
+        "date": "2026-06-06",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-09-06",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-04",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-04",
+        "field": "cornerPositions",
+        "values": [
+          "11 11",
+          "11-11"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "ペプチドレオン",
+    "raceKey": "2026-10-25:京都:12",
+    "conflicts": [
+      {
+        "date": "2026-08-09",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-03",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-03",
+        "field": "cornerPositions",
+        "values": [
+          "4 3",
+          "4-3"
+        ]
+      },
+      {
+        "date": "2026-10-10",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-10",
+        "field": "cornerPositions",
+        "values": [
+          "5 5",
+          "5-5"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "ポッドドンナー",
+    "raceKey": "2026-10-25:京都:12",
+    "conflicts": [
+      {
+        "date": "2026-06-21",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-09-06",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-04",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-04",
+        "field": "cornerPositions",
+        "values": [
+          "9 8",
+          "9-8"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "ラヴオントップ",
+    "raceKey": "2026-10-25:京都:12",
+    "conflicts": [
+      {
+        "date": "2026-10-17",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-17",
+        "field": "cornerPositions",
+        "values": [
+          "10 7",
+          "10-7"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "ラピダリア",
+    "raceKey": "2026-10-25:京都:12",
+    "conflicts": [
+      {
+        "date": "2026-10-17",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-17",
+        "field": "cornerPositions",
+        "values": [
+          "13 13",
+          "13-13"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "インフローレ",
+    "raceKey": "2026-10-25:新潟:11",
+    "conflicts": [
+      {
+        "date": "2026-10-17",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-17",
+        "field": "cornerPositions",
+        "values": [
+          "12 12",
+          "12-12"
+        ]
+      }
+    ]
+  },
+  {
+    "horseName": "フウセツ",
+    "raceKey": "2026-10-25:新潟:11",
+    "conflicts": [
+      {
+        "date": "2026-05-17",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-08-15",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-11",
+        "field": "surface",
+        "values": [
+          "ダート",
+          "ダ"
+        ]
+      },
+      {
+        "date": "2026-10-11",
+        "field": "cornerPositions",
+        "values": [
+          "2 2",
+          "2-2"
+        ]
+      }
+    ]
+  }
+]

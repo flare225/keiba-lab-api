@@ -6,7 +6,7 @@ const table='lab_evidence_evaluations_v1';
 const key=t=>`${t.date}:${t.venue}:${t.raceNo}`;
 export async function readEvidenceEvaluation(db,input){
  const t=targetInput(input);let row;
- try{row=await db.prepare(`SELECT * FROM ${table} WHERE race_key=?`+(input.sha256?' AND evaluation_sha256=?':'')+' ORDER BY saved_at DESC,rowid DESC LIMIT 1').bind(key(t),...(input.sha256?[input.sha256]:[])).first();}catch(e){if(/no such table/i.test(String(e)))return{ok:true,available:false};throw e;}
+ try{row=await db.prepare(`SELECT * FROM ${table} WHERE race_key=?`+(input.sha256?' AND evaluation_sha256=? ORDER BY saved_at DESC,rowid DESC LIMIT 1':" ORDER BY CASE WHEN model_version='course-position-shadow-v1-formal-card-v1' THEN 0 ELSE 1 END,saved_at DESC,rowid DESC LIMIT 1")).bind(key(t),...(input.sha256?[input.sha256]:[])).first();}catch(e){if(/no such table/i.test(String(e)))return{ok:true,available:false};throw e;}
  if(!row)return{ok:true,available:false};
  if(await sha256(row.snapshot_json)!==row.evaluation_sha256)throw Error('検証評価版のハッシュが一致しません。');
  const s=JSON.parse(row.snapshot_json);if(key(s.race)!==key(t)||s.phase!=='shadow-comparison'||s.savedAt!==row.saved_at||s.modelVersion!==row.model_version||s.sourceFingerprint!==row.source_fingerprint||s.guardrails?.formalLock!==false||s.guardrails?.automaticPromotion!==false||s.guardrails?.eligibleForLearning!==false)throw Error('検証評価版の対象・保存状態が一致しません。');

@@ -1,5 +1,6 @@
 import {saveEvidenceEvaluation,readEvidenceEvaluation} from './evidence-evaluation-snapshots.js';
 import {SHADOW_POLICY} from './evidence-shadow-model.js';
+import {scheduledFormalComparison} from './formal-evidence-evaluation.js';
 // A separate comparison lane: no official prediction, human marks or LOCK writes.
 export async function scheduledEvidenceEvaluation(db,now=Date.now(),deps={}){
  const model=SHADOW_POLICY.model;
@@ -9,6 +10,7 @@ export async function scheduledEvidenceEvaluation(db,now=Date.now(),deps={}){
  const nextHour=(Math.floor(now/3600000)+1)*3600000;
  const claim=await db.prepare("UPDATE lab_evidence_clock_v1 SET next_at=? WHERE name='comparison' AND next_at<=?").bind(nextHour,now).run();
  if(Number(claim.meta?.changes)!==1)return{status:'not-due',externalRequests:0};
+ const formal=await(deps.formal||scheduledFormalComparison)(db,now);if(formal)return formal;
  const today=new Date(now+9*3600000).toISOString().slice(0,10),to=new Date(Date.parse(today)+7*86400000).toISOString().slice(0,10);
  let completed=[];try{completed=(await db.prepare('SELECT race_key FROM lab_evidence_evaluations_v1 WHERE model_version=? AND substr(race_key,1,10)>? AND substr(race_key,1,10)<=?').bind(model,today,to).all()).results||[];}catch(e){if(!/no such table/i.test(String(e)))throw e;}
  const receipts=(await db.prepare('SELECT * FROM lab_evidence_queue_v1 WHERE model_version=? AND substr(race_key,1,10)>? AND substr(race_key,1,10)<=?').bind(model,today,to).all()).results||[];

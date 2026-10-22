@@ -3,6 +3,17 @@ import {metaFromRacecardUrl} from './index-v1.1.4.js';
 import {officialUrl,jstDay} from './history-collection-v3.37.0.js';
 import {targetInput} from './race-history-assessment-v3.31.0.js';
 
+// Published JRA link witnessed on 2026-10-22. This is a discovery input,
+// never a saved card: runners and numbering must still come from JRA fetch.
+const witnessedOfficialCards=[{date:'2026-10-25',venue:'京都',raceNo:11,url:'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202604091120261025/39'}];
+function witnessedUrl(target){
+ const link=witnessedOfficialCards.find(x=>x.date===target.date&&x.venue===target.venue&&x.raceNo===target.raceNo);
+ if(!link)return null;
+ const url=officialUrl(link.url),meta=metaFromRacecardUrl(url);
+ if(!meta||meta.date!==target.date||meta.venue!==target.venue||meta.raceNo!==target.raceNo)throw Error('照合済み公式URLの対象が一致しません。');
+ return url;
+}
+
 export async function missingOfficialCards(db,date,stamp=Date.now(),until=date,target=null){
  targetInput({date,venue:'東京',raceNo:1});
  const exact=target?targetInput({...target,date}):null;
@@ -44,8 +55,9 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  // history-lane slot. Visit untried cards first, then the oldest due receipt.
  const pick=pool=>pool.find(r=>!receipts.has(identity(r)))||pool.filter(r=>receipts.get(identity(r))<=stamp).sort((a,b)=>receipts.get(identity(a))-receipts.get(identity(b)))[0];
  const urgent=candidates.filter(r=>{const start=Date.parse(`${r.date}T${r.startTime}:00+09:00`);return start>stamp&&start-stamp<=12*3600000});
- const r=pick(urgent)||pick(candidates);if(!r)return{ok:true,status:candidates.length?'card-discovery-not-due':'complete',externalRequests:0};
- let url;try{url=witnessedCard||officialUrl(r.sourceUrl);}catch{return{ok:false,status:'missing-program-source',externalRequests:0};}
+ // Give a witnessed link its first normal slot, then retain fair retries.
+ const r=pick(urgent)||pick(candidates.filter(r=>!receipts.has(identity(r))&&witnessedUrl(r)))||pick(candidates);if(!r)return{ok:true,status:candidates.length?'card-discovery-not-due':'complete',externalRequests:0};
+ let url;try{url=witnessedCard||witnessedUrl(r)||officialUrl(r.sourceUrl);}catch{return{ok:false,status:'missing-program-source',externalRequests:0};}
  const meta=metaFromRacecardUrl(url),targetDate=r.date;
  const source={date:targetDate,venue:r.venue,raceNo:r.raceNo,snapshotId:`official-card:${targetDate}:${r.venue}:${r.raceNo}:${r.sourceBasis}`,officialRosterDiscoveryUrl:url};
  if(meta?.date===targetDate&&meta.venue===r.venue&&meta.raceNo===r.raceNo)source.officialCardUrl=url;

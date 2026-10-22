@@ -73,6 +73,30 @@ test('targeted requests reuse complete cards and obey receipt cooldown without e
 });
 
 const kikkaDate='2026-10-25',kikkaCard='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202604091120261025/39';
+test('natural card collection hands the witnessed G1 link to the existing collector ahead of calendar-only future cards',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-22T09:00:00Z');
+ for(const [day,venue,raceNo] of [['2026-10-24','東京',11],[kikkaDate,'京都',11]])sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(day,venue,raceNo,'15:40','https://www.jra.go.jp/keiba/calendar2026/2026/10/1025.html');
+ let calls=0;const r=await collectMissingOfficialCard(db,{date:'2026-10-22',includeFuture:true,upcomingOnly:true},{now:()=>stamp,discover:async(_,s)=>{calls++;assert.equal(s.officialCardUrl,kikkaCard);assert.equal(s.officialRosterDiscoveryUrl,kikkaCard);assert.equal(s.snapshotId,'official-card:2026-10-25:京都:11:official-program');return{ok:true,status:'official-card-saved',externalRequests:1};}});
+ assert.deepEqual(r.target,{date:kikkaDate,venue:'京都',raceNo:11});assert.equal(calls,1);sql.close();
+});
+test('natural witnessed card still obeys shared wait and receipt wait and permits other cards while waiting',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-22T09:00:00Z');
+ for(const [day,venue] of [['2026-10-24','東京'],[kikkaDate,'京都']])sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(day,venue,11,'15:40','https://www.jra.go.jp/calendar');
+ sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER)');sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?)').run('official-card:2026-10-25:京都:11:official-program',stamp+3600000);
+ const input={date:'2026-10-22',includeFuture:true,upcomingOnly:true};let calls=0;
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=?').run(stamp+3600000);
+ assert.equal((await collectMissingOfficialCard(db,input,{now:()=>stamp,discover:async()=>{calls++;assert.fail('blocked gate');}})).status,'cooldown');assert.equal(calls,0);
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=0').run();
+ const r=await collectMissingOfficialCard(db,input,{now:()=>stamp,discover:async(_,s)=>{calls++;assert.equal(s.date,'2026-10-24');assert.equal(s.venue,'東京');assert.equal(s.officialCardUrl,undefined);return{ok:true,externalRequests:1};}});assert.equal(r.target.venue,'東京');assert.equal(calls,1);sql.close();
+});
+test('witnessed future card never displaces an urgent race or refetches a complete card',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-22T00:00:00Z');
+ for(const [day,venue] of [['2026-10-22','東京'],[kikkaDate,'京都']])sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(day,venue,11,'15:40','https://www.jra.go.jp/calendar');
+ let target;const deps={now:()=>stamp,discover:async(_,s)=>{target=s;return{ok:true,externalRequests:1};}};
+ await collectMissingOfficialCard(db,{date:'2026-10-22',includeFuture:true,upcomingOnly:true},deps);assert.equal(target.date,'2026-10-22');
+ sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?,?)').run('saved',kikkaDate,'京都',11,1,kikkaCard);sql.prepare('INSERT INTO jra_runners VALUES(?)').run('saved');
+ await collectMissingOfficialCard(db,{date:'2026-10-22',includeFuture:true,upcomingOnly:true},deps);assert.equal(target.date,'2026-10-22');sql.close();
+});
 test('witnessed official link selects exactly the stored target without replacing its receipt identity',async()=>{
  const {sql,db}=fixture();sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(kikkaDate,'京都',11,'15:40','https://www.jra.go.jp/keiba/calendar2026/2026/10/1025.html');
  let calls=0;const r=await collectMissingOfficialCard(db,{date:kikkaDate,venue:'京都',raceNo:11,officialCardUrl:kikkaCard},{now:()=>now,discover:async(_,source)=>{calls++;assert.equal(source.officialCardUrl,kikkaCard);assert.equal(source.officialRosterDiscoveryUrl,kikkaCard);assert.equal(source.snapshotId,'official-card:2026-10-25:京都:11:official-program');return{ok:true,status:'official-card-saved',externalRequests:1};}});

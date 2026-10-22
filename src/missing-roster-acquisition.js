@@ -22,7 +22,16 @@ export async function collectMissingRoster(db,input=null,{now=Date.now,fetcher=f
  await db.prepare('CREATE TABLE IF NOT EXISTS lab_missing_roster_clock_v1(name TEXT PRIMARY KEY,next_at INTEGER NOT NULL)').run();await db.prepare("INSERT OR IGNORE INTO lab_missing_roster_clock_v1 VALUES('source',0)").run();
  const clock=await db.prepare("SELECT next_at FROM lab_missing_roster_clock_v1 WHERE name='source'").first();if(Number(clock.next_at)>stamp)return{status:'source-not-due',externalRequests:0,nextAttemptAt:new Date(clock.next_at).toISOString()};
  const pending=await db.prepare("SELECT race_key FROM lab_missing_roster_sources_v1 WHERE status='pending-roster-readback' AND next_at<=? ORDER BY next_at LIMIT 1").bind(stamp).first();
- if(pending){const stored=await db.prepare('SELECT snapshot_id,record_json FROM lab_expected_roster_registry WHERE race_key=? ORDER BY stored_at DESC LIMIT 1').bind(pending.race_key).first();if(stored){if(await sha256(stored.record_json)!==stored.snapshot_id)throw Error('名簿再照合ハッシュ不一致');await db.prepare("UPDATE lab_missing_roster_sources_v1 SET status='roster-saved',error=NULL WHERE race_key=?").bind(pending.race_key).run();return{status:'roster-reconciled',target:pending.race_key,newRosterRaces:0,externalRequests:0,independentRosterReadback:true};}}
+ if(pending){
+  const stored=await db.prepare('SELECT snapshot_id,record_json,stored_at FROM lab_expected_roster_registry WHERE race_key=? ORDER BY stored_at DESC LIMIT 1').bind(pending.race_key).first();
+  if(stored){
+   if(await sha256(stored.record_json)!==stored.snapshot_id)throw Error('名簿再照合ハッシュ不一致');
+   const record=JSON.parse(stored.record_json),runners=record.runners;
+   if(`${record.date}:${record.venue}:${record.raceNo}`!==pending.race_key||!Array.isArray(runners)||!runners.length||runners.length>100||new Set(runners.map(r=>r.horseName)).size!==runners.length)throw Error('名簿再照合の対象・頭数不一致');
+   await db.prepare("UPDATE lab_missing_roster_sources_v1 SET status='roster-saved',error=NULL WHERE race_key=?").bind(pending.race_key).run();
+   return{status:'roster-reconciled',target:pending.race_key,snapshotId:stored.snapshot_id,snapshotSha256:stored.snapshot_id,savedAt:stored.stored_at,storedRunners:runners.length,newRosterRaces:0,externalRequests:0,independentRosterReadback:true,formalCardSaved:false};
+  }
+ }
  // Keep published official cards first from Thursday afternoon onward.
  if([4,5,6,0].includes(new Date(stamp+9*3600000).getUTCDay())&&(new Date(stamp+9*3600000).getUTCDay()!==4||new Date(stamp+9*3600000).getUTCHours()>=15))return{status:'official-card-priority',externalRequests:0};
  const filter=input?' AND p.race_date=? AND p.venue=? AND p.race_no=?':'';

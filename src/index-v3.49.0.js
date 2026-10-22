@@ -285,7 +285,7 @@ export default {
   }
   if(event.cron==='0 * * * *'){await runPipelineJob(db,'provisional-prediction','scheduled',()=>measureD1Operation(db,m=>scheduledProvisionalPrediction(m)),{scheduledTime:event.scheduledTime});await runPipelineJob(db,'evidence-evaluation','scheduled',()=>measureD1Operation(db,m=>scheduledEvidenceEvaluation(m)),{scheduledTime:event.scheduledTime});await recoverOldAutomaticPrediction(db);}
   try{await seedEditorialReferences(db);await verifyEditorialClaims(db);}catch{console.warn('editorial reference seed unavailable');}
-  await app.scheduled(event,budgetEnv,ctx);
+  await app.scheduled(event,{...budgetEnv,LAB_COMMON_PROGRAM_RECOVERY:true},ctx);
   await collectLockedMarkResults(db);
   },Date.now,scheduledBudgetLane(event));
  }

@@ -37,7 +37,7 @@ import {upcomingOfficialHistoryPlan} from './upcoming-official-history.js';
 import {captureSourceTrackRace,sourceTrackStatus} from './learning-source-track-v3.49.36.js';
 import {learningSourceTrackPage} from './learning-source-track-page-v3.49.36.js';
 import {statusCacheKey,readStatusCache,writeStatusCache} from './status-read-cache.js';
-export const VERSION='3.49.62';
+export const VERSION='3.49.63';
 const historyInventories=new WeakMap();
 export default {
  async fetch(request,env,ctx){

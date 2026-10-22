@@ -18,6 +18,13 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  const specified=input.venue!=null||input.raceNo!=null||input.race_no!=null;
  const target=specified?targetInput({...input,date}):null;
  if(!target)targetInput({date,venue:'東京',raceNo:1});
+ let witnessedCard=null;
+ if(input.officialCardUrl!=null){
+  if(!target)throw Error('公式出馬表URLの指定には対象レースが必要です。');
+  witnessedCard=officialUrl(input.officialCardUrl);
+  const identity=metaFromRacecardUrl(witnessedCard),u=new URL(witnessedCard);
+  if(u.pathname!=='/JRADB/accessD.html'||!identity||identity.date!==target.date||identity.venue!==target.venue||identity.raceNo!==target.raceNo)throw Error('公式出馬表URLの対象が一致しません。');
+ }
  let gate;try{gate=await db.prepare("SELECT next_batch_at,locked_until FROM lab_history_collection_budget WHERE name='jra-history'").first()}catch(e){if(!/no such table/.test(String(e)))throw e;}
  const blockedUntil=Math.max(Number(gate?.next_batch_at)||0,Number(gate?.locked_until)||0);
  if(blockedUntil>stamp)return{ok:true,status:'cooldown',externalRequests:0,nextBatchAt:new Date(blockedUntil).toISOString()};
@@ -38,7 +45,7 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  const pick=pool=>pool.find(r=>!receipts.has(identity(r)))||pool.filter(r=>receipts.get(identity(r))<=stamp).sort((a,b)=>receipts.get(identity(a))-receipts.get(identity(b)))[0];
  const urgent=candidates.filter(r=>{const start=Date.parse(`${r.date}T${r.startTime}:00+09:00`);return start>stamp&&start-stamp<=12*3600000});
  const r=pick(urgent)||pick(candidates);if(!r)return{ok:true,status:candidates.length?'card-discovery-not-due':'complete',externalRequests:0};
- let url;try{url=officialUrl(r.sourceUrl);}catch{return{ok:false,status:'missing-program-source',externalRequests:0};}
+ let url;try{url=witnessedCard||officialUrl(r.sourceUrl);}catch{return{ok:false,status:'missing-program-source',externalRequests:0};}
  const meta=metaFromRacecardUrl(url),targetDate=r.date;
  const source={date:targetDate,venue:r.venue,raceNo:r.raceNo,snapshotId:`official-card:${targetDate}:${r.venue}:${r.raceNo}:${r.sourceBasis}`,officialRosterDiscoveryUrl:url};
  if(meta?.date===targetDate&&meta.venue===r.venue&&meta.raceNo===r.raceNo)source.officialCardUrl=url;

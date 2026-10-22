@@ -36,14 +36,20 @@ export async function collectLiveHistory(db,event,{now=Date.now,cards=collectMis
  // Reuse saved programs/receipts before reserving a calendar page. The roster
  // collector retains the same shared lease, cooldown and hourly source limit.
  const supplemental=await missing(db,event,{now});if(supplemental&&(supplemental.externalRequests||supplemental.status==='cooldown'||supplemental.saveMayHaveSucceeded||['roster-saved','roster-reconciled'].includes(supplemental.status)))return supplemental;
- const recovery=await programs(db,{now});if(recovery&&(recovery.externalRequests||recovery.status==='cooldown'||recovery.saveMayHaveSucceeded))return recovery;
  const deps={now},today=jstDay(now()),until=new Date(Date.parse(today+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);
  const rosters=await registered(db,today,until);
+ // In the existing publication window, use stored race programs for card
+ // discovery before an unrelated calendar request can reserve the shared slot.
+ // The card collector still owns its usual gate/lease/receipt checks.
+ const officialFirst=preferOfficialCards(rosters,now());
+ const card=officialFirst?await cards(db,{upcomingOnly:true,includeFuture:true},deps):null;
+ if(card&&(card.externalRequests||card.status==='cooldown'||card.saveMayHaveSucceeded))return card;
+ const recovery=await programs(db,{now});if(recovery&&(recovery.externalRequests||recovery.status==='cooldown'||recovery.saveMayHaveSucceeded))return recovery;
  let early=null;
- if(rosters.length&&!preferOfficialCards(rosters,now())){early=await expected(db,deps);if(early.externalRequests||early.attempted||early.status==='cooldown')return early;}
+ if(rosters.length&&!officialFirst){early=await expected(db,deps);if(early.externalRequests||early.attempted||early.status==='cooldown')return early;}
 
- const card=await cards(db,{upcomingOnly:true,includeFuture:true},deps);
- if(card.externalRequests||card.status==='cooldown')return card;
+ const remainingCard=card||await cards(db,{upcomingOnly:true,includeFuture:true},deps);
+ if(remainingCard.externalRequests||remainingCard.status==='cooldown'||remainingCard.saveMayHaveSucceeded)return remainingCard;
  const priority=await main(db,deps);if(priority)return priority;
  const next=await upcoming(db,deps);if(next)return next;
  const remainder=early||await expected(db,deps);

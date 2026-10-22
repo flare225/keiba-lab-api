@@ -35,3 +35,19 @@ test('program recovery uses only its source slot and other history work resumes 
  const a=await collectLiveHistory({}, {scheduledTime:start},deps);assert.equal(a.status,'source-unconfirmed');assert.equal(cards,0);const b=await collectLiveHistory({}, {scheduledTime:start+3600000},deps);assert.equal(b.status,'official-card-saved');assert.equal(cards,1);
 });
 test('supplementary roster uses a later history slot instead of being stranded at the hourly gate',async()=>{let calls=0;const deps={now:()=>start,programs:async()=>null,missing:async()=>({status:++calls===1?'cooldown':'roster-saved',externalRequests:calls===1?0:1}),registered:()=>assert.fail('one source only')};assert.equal((await collectLiveHistory({}, {scheduledTime:start},deps)).status,'cooldown');assert.equal((await collectLiveHistory({}, {scheduledTime:start+360000},deps)).status,'roster-saved');});
+
+const published=Date.parse('2026-10-22T06:12:50Z');
+const publishedRosters=[{date:'2026-10-25',venue:'京都',raceNo:11}];
+test('publication-window card work precedes an unrelated due calendar fetch',async()=>{
+ const calls=[];const r=await collectLiveHistory({}, {scheduledTime:published},{now:()=>published,missing:async()=>({status:'official-card-priority',externalRequests:0}),registered:async()=>publishedRosters,programs:async()=>{calls.push('program-403');return{ok:false,status:'source-unconfirmed',externalRequests:1,error:'JRA program HTTP 403'}},cards:async()=>{calls.push('card');return{ok:true,status:'official-card-saved',externalRequests:1}}});
+ assert.equal(r.status,'official-card-saved');assert.deepEqual(calls,['card']);
+});
+test('publication card cooldown or source failure cannot fall through to another external source',async()=>{
+ for(const result of [{status:'cooldown',externalRequests:0,nextBatchAt:'2026-10-22T07:00:00Z'},{ok:false,status:'failed',externalRequests:1,error:'JRA取得 HTTP 403'}]){
+  const r=await collectLiveHistory({}, {scheduledTime:published},{now:()=>published,missing:async()=>null,registered:async()=>publishedRosters,cards:async()=>result,programs:()=>assert.fail('shared source wait must not be bypassed')});assert.deepEqual(r,result);
+ }
+});
+test('no-work publication cards permit program recovery without a second card call or roster scan',async()=>{
+ let cards=0,registrations=0,programs=0;const r=await collectLiveHistory({}, {scheduledTime:published},{now:()=>published,missing:async()=>null,registered:async()=>{registrations++;return publishedRosters},cards:async()=>{cards++;return{status:'complete',externalRequests:0}},programs:async()=>{programs++;return null},main:async()=>null,upcoming:async()=>null,expected:async()=>({status:'idle',externalRequests:0}),details:async()=>({status:'idle',externalRequests:0})});
+ assert.equal(r.status,'idle');assert.deepEqual({cards,registrations,programs},{cards:1,registrations:1,programs:1});
+});

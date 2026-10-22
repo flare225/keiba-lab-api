@@ -23,5 +23,8 @@ export function rotationPairs(dateCount,hour,slots=3){
 }
 
 export async function runScheduledFast(event,env,ctx,deps={}){
+ // The active Worker already recovers programs inside the bounded common lane.
+ // Preserve the legacy audit and all other inherited work, not a second fetch.
+ if(env.LAB_COMMON_PROGRAM_RECOVERY===true)return{ok:true,status:'legacy-program-sweep-delegated',externalRequests:0,runs:[]};
  return boundedProgramSweep(event,env,ctx,{...deps,stage:deps.stage||app.fetch});
 }

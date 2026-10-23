@@ -84,7 +84,11 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
   return previousClass==='retry'?(pick(fresh)||retryPick(retry)):(retryPick(retry)||pick(fresh));
  };
  const ordinary=pool=>{const r=original(pool);return r&&lane(r)==='discovery'?discoveryPick(pool.filter(x=>lane(x)==='discovery')):r};
- const fair=(pool,urgentOnly=false)=>{const select=urgentOnly?original:ordinary;return ['card','discovery'].includes(previous)?(select(pool.filter(r=>lane(r)!==previous))||select(pool)):select(pool)};
+ // Urgent pools are already sorted by post time. Reapplying the ordinary
+ // retry/untried/linked preference here would undo that deadline order.
+ // Keep inter-lane fairness and the original policy among equal deadlines.
+ const urgentPick=pool=>{if(!pool.length)return;const first=Date.parse(`${pool[0].date}T${pool[0].startTime}:00+09:00`);return original(pool.filter(r=>Date.parse(`${r.date}T${r.startTime}:00+09:00`)===first));};
+ const fair=(pool,urgentOnly=false)=>{const select=urgentOnly?urgentPick:ordinary;return ['card','discovery'].includes(previous)?(select(pool.filter(r=>lane(r)!==previous))||select(pool)):select(pool)};
  const witnessed=eligible.filter(r=>witnessedUrl(r)&&!receiptCards.get(identity(r)));
  const r=fair(urgent,true)||pick(witnessed)||fair(eligible);if(!r)return{ok:true,status:candidates.length?'card-discovery-not-due':'complete',externalRequests:0};
  const discoveryClass=lane(r)==='discovery'?(receipts.has(identity(r))?'retry':'untried'):null;

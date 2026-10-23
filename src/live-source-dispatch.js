@@ -56,13 +56,13 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
  // The card collector still owns its usual gate/lease/receipt checks.
  const officialFirst=preferOfficialCards(rosters,now());
  const card=officialFirst?await cards(db,{upcomingOnly:true,includeFuture:true},deps):null;
- if(card&&(card.externalRequests||card.status==='cooldown'||card.saveMayHaveSucceeded))return acquisition(card);
+ if(card&&(card.externalRequests||card.attempted||card.status==='cooldown'||card.saveMayHaveSucceeded))return acquisition(card);
  const recovery=await programs(db,{now});if(recovery&&(recovery.externalRequests||recovery.status==='cooldown'||recovery.saveMayHaveSucceeded))return acquisition(recovery);
  let early=null;
  if(rosters.length&&!officialFirst){early=await expected(db,deps);if(early.externalRequests||early.attempted||early.status==='cooldown')return history(early);}
 
  const remainingCard=card||await cards(db,{upcomingOnly:true,includeFuture:true},deps);
- if(remainingCard.externalRequests||remainingCard.status==='cooldown'||remainingCard.saveMayHaveSucceeded)return remainingCard;
+ if(remainingCard.externalRequests||remainingCard.attempted||remainingCard.status==='cooldown'||remainingCard.saveMayHaveSucceeded)return acquisition(remainingCard);
  const priority=await main(db,deps);if(priority)return history(priority);
  const next=checkedUpcoming?null:await upcoming(db,deps);if(next)return history(next);
  const remainder=early||await expected(db,deps);

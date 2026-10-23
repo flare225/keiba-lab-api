@@ -85,6 +85,8 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  let url;try{url=witnessedCard||witnessedUrl(r)||officialUrl(r.sourceUrl);}catch{return{ok:false,status:'missing-program-source',externalRequests:0};}
  const meta=metaFromRacecardUrl(url),targetDate=r.date;
  const source={date:targetDate,venue:r.venue,raceNo:r.raceNo,snapshotId:`official-card:${targetDate}:${r.venue}:${r.raceNo}:${r.sourceBasis}`,officialRosterDiscoveryUrl:url};
+ const discoveryReceipt=waiting.find(row=>row.snapshot_id===source.snapshotId);
+ if(discoveryReceipt)source.discoveryReceipt={...discoveryReceipt};
  if(meta?.date===targetDate&&meta.venue===r.venue&&meta.raceNo===r.raceNo)source.officialCardUrl=url;
  const result=await (deps.discover||discoverExpectedCard)(db,source,deps);
  return{...result,...(result.externalRequests?{cardSelection:selection}:{}),target:{date:targetDate,venue:r.venue,raceNo:r.raceNo},predictionRebuilt:false};

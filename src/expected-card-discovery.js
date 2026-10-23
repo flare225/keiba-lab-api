@@ -37,7 +37,7 @@ export async function cardDiscoveryFailureEvidence(html,url,source,{httpStatus,o
  return result;
 }
 
-async function saveDrawnOfficialCard(db,html,url,responseStatus,source,stamp,deps){
+export async function saveDrawnOfficialCard(db,html,url,responseStatus,source,stamp,deps){
  const inspect=(deps.inspectSourceCard||inspectSourceCard)(html);
  const race=(deps.parseRace||parseRace)({ok:true,status:responseStatus,url,body:html},source.date,source.venue,Number(source.raceNo));
  if(!inspect.allHorseNumbersObserved||!inspect.allFramesObserved||inspect.sourceRowCount!==race.runnerCount||inspect.declaredCount!==race.runnerCount||race.runnerCount<1||race.runnerCount>18||race.runners.length!==race.runnerCount||new Set(race.runners.map(r=>r.name)).size!==race.runnerCount||race.runners.some((r,i)=>r.horseNo!==i+1||!r.name))throw Error('Drawn official card failed runner/frame verification');

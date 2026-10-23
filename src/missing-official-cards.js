@@ -59,6 +59,14 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  const lane=r=>{const u=receiptCards.get(identity(r))||witnessedUrl(r)||r.sourceUrl,m=metaFromRacecardUrl(u);return m?.date===r.date&&m.venue===r.venue&&m.raceNo===r.raceNo?'card':'discovery'};
  const pick=pool=>pool.find(r=>!receipts.has(identity(r)))||pool.slice().sort((a,b)=>receipts.get(identity(a))-receipts.get(identity(b)))[0];
  const eligible=candidates.filter(due),urgent=eligible.filter(r=>{const start=Date.parse(`${r.date}T${r.startTime}:00+09:00`);return start>stamp&&start-stamp<=12*3600000});
+ // Deadline-aware ordering within the urgent cohort: a later race number must
+ // not displace an earlier post time just because SQL enumerated it first.
+ // Preserve the existing discovery/card fairness and shared gate.
+ urgent.sort((a,b)=>{
+  const aStart=Date.parse(`${a.date}T${a.startTime}:00+09:00`);
+  const bStart=Date.parse(`${b.date}T${b.startTime}:00+09:00`);
+  return aStart-bStart||a.date.localeCompare(b.date)||a.venue.localeCompare(b.venue)||a.raceNo-b.raceNo;
+ });
  const previous=deps.previousCardSelection?.lane;
  const original=pool=>pick(pool.filter(r=>linked.has(identity(r))))||pick(pool);
  // Share discovery turns between untried races and due receipts. Do not let

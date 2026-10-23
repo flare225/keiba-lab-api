@@ -11,3 +11,8 @@ test('source timer changes preserve recognized legacy routes and readable truthf
 test('stale starts are not presented as healthy running jobs',()=>{
  const run={started_at:start,status:'running'};assert.equal(pipelineHeartbeat(run,start+60000),'running');assert.equal(pipelineHeartbeat(run,start+6*60000),'completion-unconfirmed');assert.equal(pipelineHeartbeat(run,start+31*60000),'overdue');assert.equal(pipelineHeartbeat({...run,status:'cooldown',finished_at:start+2000},start+60000),'observed');
 });
+test('fairness context reuses indexed prior history result, survives cooldown and leaves job rotation unchanged',async()=>{
+ const {db,sql}=fixture();let stamp=start,seen=[];const jobs={archive:async()=>({ok:true,status:'idle',externalRequests:0}),results:async()=>({ok:true,status:'idle',externalRequests:0}),history:async context=>{seen.push(context.previousCardSelection?.lane||null);return seen.length===1?{ok:true,status:'confirmed-predraw-saved',externalRequests:1}:seen.length===2?{ok:true,status:'cooldown',externalRequests:0}:{ok:true,status:'official-card-index-found',cardSelection:{lane:'discovery'},externalRequests:1}}};
+ for(let i=0;i<12;i++){await runSourceCoordinator({cron:SOURCE_CRON,scheduledTime:stamp},{DB:db},{now:()=>stamp,jobs});stamp+=600000;}
+ assert.deepEqual(seen,[null,'card','card','discovery']);const plan=sql.prepare("EXPLAIN QUERY PLAN SELECT result_json FROM lab_bounded_pipeline_runs WHERE job='history' AND trigger_kind='scheduled' ORDER BY started_at DESC LIMIT 1").all();assert.ok(plan.some(x=>/lab_pipeline_job_started/.test(x.detail)));assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_bounded_pipeline_runs').get().n,12);sql.close();
+});

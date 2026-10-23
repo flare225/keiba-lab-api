@@ -32,11 +32,11 @@ export async function scheduledMissingRoster(db,event,{now=Date.now}={}){return 
 
 // Priorities belong inside the history lane, never ahead of the common fair
 // dispatcher: a nonempty card/history queue must not suppress result collection.
-export async function collectLiveHistory(db,event,{now=Date.now,cards=collectMissingOfficialCard,main=collectTodayMainHistory,upcoming=collectUpcomingOfficialHistory,expected=scheduledWeekendHistory,details=scheduledPriorDetails,registered=storedExpectedSources,programs=recoverMissingPrograms,missing=scheduledMissingRoster}={}){
+export async function collectLiveHistory(db,event,{now=Date.now,previousCardSelection=null,cards=collectMissingOfficialCard,main=collectTodayMainHistory,upcoming=collectUpcomingOfficialHistory,expected=scheduledWeekendHistory,details=scheduledPriorDetails,registered=storedExpectedSources,programs=recoverMissingPrograms,missing=scheduledMissingRoster}={}){
  // Reuse saved programs/receipts before reserving a calendar page. The roster
  // collector retains the same shared lease, cooldown and hourly source limit.
  const supplemental=await missing(db,event,{now});if(supplemental&&(supplemental.externalRequests||supplemental.status==='cooldown'||supplemental.saveMayHaveSucceeded||['roster-saved','roster-reconciled'].includes(supplemental.status)))return supplemental;
- const deps={now},today=jstDay(now()),until=new Date(Date.parse(today+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);
+ const deps={now,previousCardSelection},today=jstDay(now()),until=new Date(Date.parse(today+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);
  const rosters=await registered(db,today,until);
  // In the existing publication window, use stored race programs for card
  // discovery before an unrelated calendar request can reserve the shared slot.
@@ -58,5 +58,5 @@ export async function collectLiveHistory(db,event,{now=Date.now,cards=collectMis
  return remainder;
 }
 export async function dispatchLiveSources(event,env,{now=Date.now,archive=collectArchiveBatch,results=scheduledRichResult,history=collectLiveHistory}={}){
- return runSourceCoordinator(event,env,{now,jobs:{archive:()=>archive(env.DB,{now}),results:()=>results(env.DB,{now}),history:()=>history(env.DB,event,{now})}});
+ return runSourceCoordinator(event,env,{now,jobs:{archive:()=>archive(env.DB,{now}),results:()=>results(env.DB,{now}),history:context=>history(env.DB,event,{now,previousCardSelection:context.previousCardSelection})}});
 }

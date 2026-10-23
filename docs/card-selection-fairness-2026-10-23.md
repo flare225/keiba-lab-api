@@ -1,0 +1,23 @@
+# Official-card acquisition selection: 2026-10-23
+
+## Observed production state (PR246, unchanged by this proposal)
+
+Read-only coverage, pipeline-status and Saturday missing-card plan were read once each. At 13:19 JST the latest history job was 13:18:49.660–55.605, Sunday Kyoto5, official-card-link-found, externalRequests=1, officialCardsCreated=false. Saturday: 36 saved programs, 36 missing formal cards, 36 official-program receipts with no individual/index URL; all next-at dates were due. All starts are on Oct24, so none is excluded as past or urgent within12h at this observation. Coverage: roster27/72, provisional24/72; Kyoto6 newly represented by a confirmed-predraw12 roster. This is not a formal card or independent body/SHA verification. Gate nextBatchAt=13:19:55.413 JST; elapsed time is not evidence of release. HTTP numeric status and whole-history/account D1 consumption are not exposed by these observations.
+
+## Exact selection cause
+
+missingOfficialCards enumerates saved programs lacking complete official race/runner rows. Existing expected/confirmed-predraw rosters do not remove Saturday candidates. Source identity is official-card:date:venue:race:sourceBasis. A sibling-card source can create a different receipt identity than the old official-program source; coverage's first matching receipt does not expose the complete simultaneous due cohort, so its exact Sunday size is unmeasured.
+
+collectMissingOfficialCard filters upcoming starts/explicit targets, then checks individual next-at receipts. Shared next_batch_at/locked_until are checked before scanning programs. Candidate base ordering is future, date ascending,11R first, race number descending; selection within each pool prefers untried, then oldest next-at. Within12h urgent candidates retain precedence; the witnessed G1 URL retains its one-time opportunity. PR245/246 then prioritize ready individual/index URL receipts over ordinary discovery. Thus a Saturday candidate is registered yet can wait behind Sunday's ready or newly created sibling receipts. PR246's parser need not be broken for this delay to occur. Finite completion and no newly ready priority candidates eventually allow ordinary discovery; permanent starvation in production is NOT established. Existing order supplies no cohort service bound while priority candidates remain ready.
+
+## Minimal scheduling proposal
+
+Reuse the latest scheduled history result to alternate eligible card-fetch and discovery cohorts, retaining the current shared slot, urgent exception, witnessed URL exception and within-cohort rules. An exact date/venue/race individual URL is a card lane; calendar/index/sibling navigation is discovery. If the other cohort has no due candidate, use existing selection. Only an external request consumes a turn; gate/lease/not-due preserves the previous turn in existing pipeline result JSON. No new clock, writer, table or acquisition lane. The existing discoverExpectedCard still owns the atomic shared lease, one-page request and receipt/gate updates.
+
+One indexed LIMIT1 SELECT is added only when the existing coordinator chooses history, using lab_pipeline_job_started(job,trigger_kind,started_at). No additional SQL write statement; the lane is included in existing bookkeeping JSON. Query-plan test confirms indexed lookup. Actual production row consumption is unmeasured; this is +1 read query per selected history invocation, not zero and not once/hour. No change to request frequency, quota policy,403pause,lease, retry timestamps, formal card validation, prediction models/saves or LOCK. Failed indexed read propagates except missing-table bootstrap.
+
+## Validation and release boundary
+
+Production selection fails two new cohort fairness regressions; the proposal passes. Fixtures cover repeated Sunday ready URLs with Saturday discovery, inverse index-heavy discovery with a ready card, next-at403 wait, shared lease, coordinator carry across cooldown, dispatch propagation, and actual default collector→one calendar page→published-index receipt (one request, no formal save). Existing whole72 untried coverage, wrong date/venue/race parsing, saved-card exclusion, prediction immutability and LOCK regressions remain in the full suite.
+
+Local full suite:653/653. PR CI and final remote diff must be checked separately. PR247 remains independent/unmerged; no production code/model/LOCK deployment is authorized here. After separate approval/deployment, observe lane+target, list/index fetch, individual URL, formal DB save, independent GET/SHA and prediction save separately. No forced acquisition/manual POST/direct D1 or old-success re-audit.

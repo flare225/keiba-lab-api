@@ -52,17 +52,23 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  let waiting=[];try{waiting=(await db.prepare('SELECT snapshot_id,next_attempt_at,card_url,status FROM lab_expected_card_discovery WHERE snapshot_id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(candidates.map(identity))).all()).results||[]}catch(e){if(!/no such table/.test(String(e)))throw e;}
  const receipts=new Map(waiting.map(r=>[r.snapshot_id,Number(r.next_attempt_at)||0]));
  const receiptCards=new Map(waiting.map(r=>[r.snapshot_id,r.card_url]));
+ // Ready card and discovery cohorts share the existing source slot. The
+ // prior lane comes from the existing coordinator result, never a new clock.
  const linked=new Set(waiting.filter(r=>['official-card-link-found','official-card-index-found'].includes(r.status)&&r.card_url).map(r=>r.snapshot_id));
- // A short retry time must not let the first few cards monopolize every
- // history-lane slot. Visit untried cards first, then the oldest due receipt.
- const pick=pool=>pool.find(r=>!receipts.has(identity(r)))||pool.filter(r=>receipts.get(identity(r))<=stamp).sort((a,b)=>receipts.get(identity(a))-receipts.get(identity(b)))[0];
- const urgent=candidates.filter(r=>{const start=Date.parse(`${r.date}T${r.startTime}:00+09:00`);return start>stamp&&start-stamp<=12*3600000});
- // A due calendar-only receipt has not attempted the witnessed card URL yet.
- // The collector persists card_url even on failure, then fair retries resume.
- const r=pick(urgent)||pick(candidates.filter(r=>witnessedUrl(r)&&!receiptCards.get(identity(r))&&(!receipts.has(identity(r))||receipts.get(identity(r))<=stamp)))||pick(candidates.filter(r=>linked.has(identity(r))&&receipts.get(identity(r))<=stamp))||pick(candidates);if(!r)return{ok:true,status:candidates.length?'card-discovery-not-due':'complete',externalRequests:0};
+ const due=r=>!receipts.has(identity(r))||receipts.get(identity(r))<=stamp;
+ const lane=r=>{const u=receiptCards.get(identity(r))||witnessedUrl(r)||r.sourceUrl,m=metaFromRacecardUrl(u);return m?.date===r.date&&m.venue===r.venue&&m.raceNo===r.raceNo?'card':'discovery'};
+ const pick=pool=>pool.find(r=>!receipts.has(identity(r)))||pool.slice().sort((a,b)=>receipts.get(identity(a))-receipts.get(identity(b)))[0];
+ const eligible=candidates.filter(due),urgent=eligible.filter(r=>{const start=Date.parse(`${r.date}T${r.startTime}:00+09:00`);return start>stamp&&start-stamp<=12*3600000});
+ const previous=deps.previousCardSelection?.lane;
+ const original=pool=>pick(pool.filter(r=>linked.has(identity(r))))||pick(pool);
+ const fair=pool=>['card','discovery'].includes(previous)?(original(pool.filter(r=>lane(r)!==previous))||original(pool)):original(pool);
+ const witnessed=eligible.filter(r=>witnessedUrl(r)&&!receiptCards.get(identity(r)));
+ const r=fair(urgent)||pick(witnessed)||fair(eligible);if(!r)return{ok:true,status:candidates.length?'card-discovery-not-due':'complete',externalRequests:0};
+ const selection={lane:lane(r),reason:urgent.includes(r)?'urgent':witnessed.includes(r)?'witnessed-url':'alternate-eligible-cohorts',previousLane:previous||null,target:`${r.date}:${r.venue}:${r.raceNo}`,eligibleCards:eligible.filter(x=>lane(x)==='card').length,eligibleDiscovery:eligible.filter(x=>lane(x)==='discovery').length};
  let url;try{url=witnessedCard||witnessedUrl(r)||officialUrl(r.sourceUrl);}catch{return{ok:false,status:'missing-program-source',externalRequests:0};}
  const meta=metaFromRacecardUrl(url),targetDate=r.date;
  const source={date:targetDate,venue:r.venue,raceNo:r.raceNo,snapshotId:`official-card:${targetDate}:${r.venue}:${r.raceNo}:${r.sourceBasis}`,officialRosterDiscoveryUrl:url};
  if(meta?.date===targetDate&&meta.venue===r.venue&&meta.raceNo===r.raceNo)source.officialCardUrl=url;
- return{...await (deps.discover||discoverExpectedCard)(db,source,deps),target:{date:targetDate,venue:r.venue,raceNo:r.raceNo},predictionRebuilt:false};
+ const result=await (deps.discover||discoverExpectedCard)(db,source,deps);
+ return{...result,...(result.externalRequests?{cardSelection:selection}:{}),target:{date:targetDate,venue:r.venue,raceNo:r.raceNo},predictionRebuilt:false};
 }

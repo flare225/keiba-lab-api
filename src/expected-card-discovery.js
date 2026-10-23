@@ -7,6 +7,36 @@ import {ensureEvidenceTable,inspectSourceCard,runnerFingerprint,sha256} from './
 
 export function isPublishedCardIndex(value){try{const u=new URL(value);return u.origin==='https://www.jra.go.jp'&&u.pathname==='/JRADB/accessD.html'&&/^pw01dli00\/[0-9a-f]{2}$/i.test(u.searchParams.get('CNAME')||'');}catch{return false;}}
 
+// Failure evidence from the response already received. No extra request/SQL.
+// Full decoded-body SHA is distinct from the bounded, non-replayable excerpt.
+export async function cardDiscoveryFailureEvidence(html,url,source,{httpStatus,observedAt,charset,receivedBytes},links=extractLinks(html,url)){
+ const encode=new TextEncoder(),clip=(v,n)=>new TextDecoder().decode(encode.encode(String(v)).slice(0,n-3));
+ const target={date:source.date,venue:source.venue,raceNo:Number(source.raceNo)},counts={},samples=[];
+ for(const link of links){const meta=metaFromRacecardUrl(link);let reason;
+  if(meta)reason=meta.date!==target.date?'other-date':meta.venue!==target.venue?'other-venue':meta.raceNo!==target.raceNo?'other-race':'matching-card';
+  else reason=isPublishedCardIndex(link)?'index-navigation':new URL(link).pathname==='/JRADB/accessD.html'?'unhandled-navigation':'non-card-link';
+  counts[reason]=(counts[reason]||0)+1;
+  if(samples.length<12||reason==='unhandled-navigation')samples.push({url:clip(link,400),reason,...(meta?{date:meta.date,venue:meta.venue,raceNo:meta.raceNo}:{})});
+ }
+ samples.sort((a,b)=>Number(b.reason==='unhandled-navigation')-Number(a.reason==='unhandled-navigation'));samples.splice(12);
+ const result={schema:'card-discovery-failure-v1',target,sourceUrl:clip(url,400),httpStatus,observedAt,charset,receivedBytes,decodedBytes:encode.encode(html).length,bodySha256:await sha256(html),hashBasis:'complete-decoded-html-utf8',fullBodyIncluded:false,parsedLinkCount:links.length,linkCounts:counts,linkSamples:samples,samplesTruncated:links.length>samples.length,excerpt:clip(html,1024),excerptOnly:true};
+ while(encode.encode(JSON.stringify(result)).length>8192&&samples.length){samples.pop();result.samplesTruncated=true;}
+ // Keep a complete replayable decoded body only when compressed evidence fits
+ // the same 8KiB envelope. Otherwise record the limit explicitly; never truncate
+ // a compressed body and pretend it can be replayed or hashed independently.
+ try{
+  const reader=new Response(html).body.pipeThrough(new CompressionStream('gzip')).getReader(),chunks=[];let size=0,complete=true;
+  for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>4096){complete=false;await reader.cancel();break;}chunks.push(value);}
+  if(complete){const bytes=new Uint8Array(size);let at=0;for(const part of chunks){bytes.set(part,at);at+=part.byteLength;}
+   const candidate={...result,fullBodyIncluded:true,excerptOnly:false,bodyEncoding:'gzip-base64-decoded-utf8',bodyGzipBase64:btoa(String.fromCharCode(...bytes)),compressedBytes:size};
+   if(encode.encode(JSON.stringify(candidate)).length<=8192)return candidate;
+  }
+  result.bodyCaptureStatus='compressed-body-or-envelope-limit';
+ }catch{result.bodyCaptureStatus='compression-unavailable';}
+ while(encode.encode(JSON.stringify(result)).length>8192&&samples.length){samples.pop();result.samplesTruncated=true;}
+ return result;
+}
+
 export async function saveDrawnOfficialCard(db,html,url,responseStatus,source,stamp,deps){
  const inspect=(deps.inspectSourceCard||inspectSourceCard)(html);
  const race=(deps.parseRace||parseRace)({ok:true,status:responseStatus,url,body:html},source.date,source.venue,Number(source.raceNo));
@@ -46,7 +76,7 @@ export async function discoverExpectedCard(db,source,deps={}){
  if(Number(previous?.next_attempt_at)>stamp)return {ok:true,status:'card-discovery-not-due',externalRequests:0};
  const token=crypto.randomUUID(),claim=await db.prepare("UPDATE lab_history_collection_budget SET locked_until=?,lock_token=? WHERE name='jra-history' AND locked_until<=? AND next_batch_at<=?").bind(stamp+120000,token,stamp,stamp).run();
  if(Number(claim.meta?.changes)!==1)return {ok:true,status:'cooldown',externalRequests:0};
- let pause=60000,next=stamp+3600000,card=previous?.card_url||source.officialCardUrl||null,status='failed',error=null;
+ let pause=60000,next=stamp+3600000,card=previous?.card_url||source.officialCardUrl||null,status='failed',error=null,failureEvidence=null;
  try{
   const url=officialUrl(card||source.officialRosterDiscoveryUrl);
   const indexPage=isPublishedCardIndex(url);
@@ -65,15 +95,17 @@ export async function discoverExpectedCard(db,source,deps={}){
    const roster=await saveConfirmedPredraw(db,html,card,source,{allowUnassignedConnections:true});status='confirmed-predraw-saved';next=stamp+86400000;
    return {ok:true,status,confirmedRunners:roster.runners.length,externalRequests:1,officialCardsCreated:false};
   }
-  const links=extractLinks(html,url).map(link=>{try{officialUrl(link);return metaFromRacecardUrl(link)}catch{return null}}).filter(m=>m?.date===source.date&&m.venue===source.venue&&m.raceNo===source.raceNo).sort((a,b)=>Number(b.detailed)-Number(a.detailed));
+  const publishedLinks=extractLinks(html,url);
+  const links=publishedLinks.map(link=>{try{officialUrl(link);return metaFromRacecardUrl(link)}catch{return null}}).filter(m=>m?.date===source.date&&m.venue===source.venue&&m.raceNo===source.raceNo).sort((a,b)=>Number(b.detailed)-Number(a.detailed));
   if(!links.length){
-   const index=extractLinks(html,url).find(isPublishedCardIndex);
+   const index=publishedLinks.find(isPublishedCardIndex);
    if(!indexPage&&index){card=index;status='official-card-index-found';next=stamp+60000;return{ok:true,status,discoveryUrl:index,externalRequests:1,officialCardsCreated:false};}
+   failureEvidence=await cardDiscoveryFailureEvidence(html,url,source,{httpStatus:response.status,observedAt:new Date(stamp).toISOString(),charset:/charset\s*=\s*[\"']?utf-?8/i.test(response.headers.get('content-type')||'')?'utf-8':'shift_jis',receivedBytes:bytes.byteLength},publishedLinks);
    throw Error('対象レースの公式出馬表リンクをまだ確認できません。');
   }
   card=links[0].url;status='official-card-link-found';next=stamp+60000;
   return {ok:true,status,externalRequests:1,officialCardsCreated:false};
- }catch(e){error=String(e.message||e);return {ok:false,status,externalRequests:1,error};}
+ }catch(e){error=String(e.message||e);return {ok:false,status,externalRequests:1,error,...(failureEvidence?{failureEvidence}:{})};}
  finally{
   await db.prepare('INSERT OR REPLACE INTO lab_expected_card_discovery VALUES(?,?,?,?,?)').bind(source.snapshotId,card,next,status,error).run();
   await db.prepare("UPDATE lab_history_collection_budget SET locked_until=0,next_batch_at=?,lock_token=NULL WHERE name='jra-history' AND lock_token=?").bind(now()+pause,token).run();

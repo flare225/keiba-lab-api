@@ -169,9 +169,24 @@ export function createSharedSelectedCardDiscoverer({scope,races},dependencies={}
  return async(db,source,delivery={})=>{
   const matches=races.filter(r=>key(r)===key(source));
   if(matches.length!==1)throw Error('Selected race requires one existing inventory identity');
-  const race=matches[0],rootUrl=source.officialRosterDiscoveryUrl;
+  const race=matches[0],receipt=source.discoveryReceipt;
+  let rootUrl=source.officialRosterDiscoveryUrl,cardUrl=source.officialCardUrl;
   if(!rootUrl)throw Error('Selected race requires a published navigation URL');
-  const result=await runSharedPageStep(db,{scope,races:[{...race,rootUrl,cardUrl:source.officialCardUrl||undefined}]},{...dependencies,...delivery});
-  return{...result,ok:!result.error,target:{date:race.date,venue:race.venue,raceNo:race.raceNo},officialCardsCreated:!!result.formalCardSaved};
+  // Reuse the receipt already read by the existing candidate selector. Do not
+  // query it again or restart a published continuation from the calendar.
+  if(receipt){
+   if(!source.snapshotId||receipt.snapshot_id!==source.snapshotId)throw Error('Discovery receipt identity mismatch');
+   if(receipt.card_url){
+    const saved=canonicalPublishedPage(receipt.card_url),meta=metaFromRacecardUrl(saved);
+    if(meta){if(key(meta)!==key(race))throw Error('Discovery receipt card identity mismatch');cardUrl=saved;}
+    else if(/^pw01dli00\/[0-9a-f]{2}$/i.test(new URL(saved).searchParams.get('CNAME')||'')){rootUrl=saved;cardUrl=undefined;}
+    else throw Error('Discovery receipt navigation identity is unverified');
+   }
+   const stamp=(delivery.now||dependencies.now||Date.now)();
+   if(Number(receipt.next_attempt_at)>stamp)return{ok:true,status:'card-discovery-not-due',externalRequests:0,nextAttemptAt:new Date(Number(receipt.next_attempt_at)).toISOString()};
+  }
+  const result=await runSharedPageStep(db,{scope,races:[{...race,rootUrl,cardUrl:cardUrl||undefined}]},{...dependencies,...delivery});
+  const attempted=!!(result.externalRequests||result.reusedBody||result.bodyStored);
+  return{...result,attempted,ok:!result.error,target:{date:race.date,venue:race.venue,raceNo:race.raceNo},officialCardsCreated:!!result.formalCardSaved};
  };
 }

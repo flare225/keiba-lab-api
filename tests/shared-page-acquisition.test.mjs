@@ -3,6 +3,7 @@ import {createSharedSelectedCardDiscoverer,canonicalPublishedPage,parseSharedPag
 import {sha256,runnerFingerprint,requireLockEvidence} from '../src/card-evidence.js';
 import {runWithScheduledReadBudget} from '../src/scheduled-read-budget.js';
 import {collectLiveHistory} from '../src/live-source-dispatch.js';
+import {collectMissingOfficialCard} from '../src/missing-official-cards.js';
 import {ensureHistoryTable} from '../src/collection-profile-parser-v3.32.0.js';
 import {scheduledAutomaticPrediction,readAutomaticPrediction} from '../src/automatic-pre-race-prediction.js';
 import {fixtureDatabase,racesFixture,pageGraph,fixtureFetcher,FIXTURE_STAMP,SCOPE,INDEX,cardUrl,drawnHtml,calendar,meetingUrl} from './helpers/shared-page-fixture.mjs';
@@ -160,4 +161,54 @@ test('selected-source seam rejects unknown or duplicate identities and keeps sha
  await assert.rejects(createSharedSelectedCardDiscoverer({scope:SCOPE,races:[race,race]})(db,source),/existing inventory/);
  sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=?').run(FIXTURE_STAMP+3600000);
  const wait=await discover(db,source);assert.equal(wait.status,'cooldown');assert.equal(wait.externalRequests,0);sql.close();
+});
+
+test('selected shared handoff resumes the existing discovery receipt without another calendar request',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture()[0],requests=[],snapshotId='official-card:'+race.date+':'+race.venue+':'+race.raceNo+':official-program';
+ const receipt={snapshot_id:snapshotId,card_url:cardUrl(race),next_attempt_at:FIXTURE_STAMP-1,status:'official-card-link-found'};
+ const discover=createSharedSelectedCardDiscoverer({scope:SCOPE,races:[race]},{now:()=>FIXTURE_STAMP,fetcher:fixtureFetcher(pageGraph([race]),requests)});
+ const r=await discover(db,{...race,snapshotId,officialRosterDiscoveryUrl:race.rootUrl,discoveryReceipt:receipt});
+ assert.equal(r.formalCardSaved,true);assert.deepEqual(requests,[cardUrl(race)]);assert.equal(r.attempted,true);sql.close();
+});
+test('legacy receipt cooldown and wrong-target links fail before shared-store reads or network',async()=>{
+ const race=racesFixture()[0],snapshotId='legacy-id',source={...race,snapshotId,officialRosterDiscoveryUrl:race.rootUrl};
+ const db={prepare(){assert.fail('no SQL before deferred or invalid receipt')}};
+ const discover=createSharedSelectedCardDiscoverer({scope:SCOPE,races:[race]},{now:()=>FIXTURE_STAMP,fetcher:()=>assert.fail('no fetch')});
+ const wait=await discover(db,{...source,discoveryReceipt:{snapshot_id:snapshotId,next_attempt_at:FIXTURE_STAMP+1000,card_url:cardUrl(race)}});
+ assert.equal(wait.status,'card-discovery-not-due');assert.equal(wait.externalRequests,0);
+ await assert.rejects(discover(db,{...source,discoveryReceipt:{snapshot_id:snapshotId,next_attempt_at:0,card_url:cardUrl({...race,venue:'京都'})}}),/receipt.*identity/i);
+ await assert.rejects(discover(db,{...source,discoveryReceipt:{snapshot_id:'other-id',next_attempt_at:0,card_url:cardUrl(race)}}),/receipt.*identity/i);
+});
+test('cached navigation consumes the selected history stage without falling through to a second source stage',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture()[0];let now=FIXTURE_STAMP;
+ await runSharedPageStep(db,input([race]),{now:()=>now,fetcher:fixtureFetcher(pageGraph([race])),parser:()=>{throw Error('saved body awaits parser')}});now+=61000;
+ const discover=createSharedSelectedCardDiscoverer({scope:SCOPE,races:[race]},{now:()=>now,parserVersion:'resume-parser',fetcher:()=>assert.fail('cached body')});
+ const source={...race,officialRosterDiscoveryUrl:race.rootUrl};
+ const result=await collectLiveHistory(db,{scheduledTime:now},{now:()=>now,registered:async()=>[race],missing:async()=>({status:'official-card-priority',externalRequests:0}),cards:()=>discover(db,source),programs:()=>assert.fail('cached work must not fall through')});
+ assert.equal(result.status,'page-parsed');assert.equal(result.externalRequests,0);assert.equal(result.historyWorkStage,'acquisition');sql.close();
+});
+
+test('existing Kyoto/Niigata candidate selector passes its receipt to shared continuation without a duplicate receipt SELECT',async()=>{
+ for(const venue of ['京都','新潟']){
+  const {db,sql,stats,reset}=await fixtureDatabase(),race=racesFixture().find(r=>r.venue===venue&&r.raceNo===1),requests=[];let now=FIXTURE_STAMP;
+  sql.exec('CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,start_time TEXT,source_url TEXT);CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,card_url TEXT,next_attempt_at INTEGER,status TEXT,error TEXT)');
+  const snapshotId=`official-card:${race.date}:${venue}:1:official-program`;
+  sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(race.date,venue,1,'09:45',race.rootUrl);
+  sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?,?)').run(snapshotId,INDEX,now-1,'official-card-index-found',null);
+  const before=sql.prepare('SELECT * FROM lab_expected_card_discovery').get();
+  const discover=createSharedSelectedCardDiscoverer({scope:SCOPE,races:[race]},{now:()=>now,fetcher:fixtureFetcher(pageGraph([race]),requests)});
+  reset();const first=await collectMissingOfficialCard(db,{date:race.date,venue,raceNo:1},{now:()=>now,discover});
+  assert.equal(first.status,'page-parsed');assert.deepEqual(requests,[INDEX]);assert.equal(stats.executed.filter(q=>/FROM lab_expected_card_discovery/.test(q)).length,1);
+  now+=61000;const second=await collectMissingOfficialCard(db,{date:race.date,venue,raceNo:1},{now:()=>now,discover});
+  assert.equal(second.formalCardSaved,true);assert.equal(second.target.venue,venue);assert.deepEqual(requests,[INDEX,cardUrl(race)]);
+  assert.deepEqual(sql.prepare('SELECT * FROM lab_expected_card_discovery').get(),before);
+  const saved=sql.prepare('SELECT horse_no,frame_no,horse_name FROM jra_runners ORDER BY horse_no').all(),evidence=sql.prepare('SELECT runner_sha256 FROM lab_card_source_evidence').get();
+  assert.equal(saved.length,2);assert.equal(evidence.runner_sha256,await sha256(runnerFingerprint(saved)));
+  await ensureHistoryTable(db);sql.exec('CREATE TABLE lab_race_outcomes(race_key TEXT,horse_no INTEGER,finish_position INTEGER);CREATE TABLE lab_race_result_details(race_key TEXT,horse_no INTEGER,finish_position INTEGER,finish_status TEXT,time_text TEXT,time_seconds REAL,corner_positions TEXT,last3f REAL,source_url TEXT)');
+  // Synthetic prior evidence only. No live race data or source fetch here.
+  for(const horse of saved)for(const date of ['2026-09-01','2026-09-15','2026-10-01'])sql.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,surface,distance,finish_position,field_size,track_condition,source_url,fetched_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(horse.horse_name,date,venue,'隔離検証','芝',1600,2,12,'良','https://www.jra.go.jp/profile',new Date(now).toISOString());
+  assert.equal((await scheduledAutomaticPrediction(db,now+1000)).saved,1);
+  const prediction=await readAutomaticPrediction(db,race);assert.equal(prediction.integrityVerified,true);assert.equal(prediction.snapshotSha256,await sha256(JSON.stringify(prediction.snapshot)));assert.deepEqual(prediction.snapshot.runners.map(r=>r.horseName).sort(),saved.map(r=>r.horse_name).sort());assert.ok(prediction.snapshot.runners.every(r=>r.rank&&r.mark));
+  assert.equal(prediction.snapshot.guardrails.humanMarksUsed,false);assert.equal(requests.length,2);assert.throws(()=>sql.exec('DELETE FROM lab_automatic_predictions_v1'),/immutable/);sql.close();
+ }
 });

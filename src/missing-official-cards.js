@@ -61,10 +61,20 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  const eligible=candidates.filter(due),urgent=eligible.filter(r=>{const start=Date.parse(`${r.date}T${r.startTime}:00+09:00`);return start>stamp&&start-stamp<=12*3600000});
  const previous=deps.previousCardSelection?.lane;
  const original=pool=>pick(pool.filter(r=>linked.has(identity(r))))||pick(pool);
- const fair=pool=>['card','discovery'].includes(previous)?(original(pool.filter(r=>lane(r)!==previous))||original(pool)):original(pool);
+ // Share discovery turns between untried races and due receipts. Do not let
+ // new receipt identities suppress older due races, or retries suppress new ones.
+ const previousClass=deps.previousCardSelection?.lastDiscoveryClass;
+ const discoveryPick=pool=>{
+  if(!previous&&!previousClass)return original(pool);
+  const fresh=pool.filter(r=>!receipts.has(identity(r))),retry=pool.filter(r=>receipts.has(identity(r)));
+  return previousClass==='retry'?(pick(fresh)||pick(retry)):(pick(retry)||pick(fresh));
+ };
+ const ordinary=pool=>{const r=original(pool);return r&&lane(r)==='discovery'?discoveryPick(pool.filter(x=>lane(x)==='discovery')):r};
+ const fair=(pool,urgentOnly=false)=>{const select=urgentOnly?original:ordinary;return ['card','discovery'].includes(previous)?(select(pool.filter(r=>lane(r)!==previous))||select(pool)):select(pool)};
  const witnessed=eligible.filter(r=>witnessedUrl(r)&&!receiptCards.get(identity(r)));
- const r=fair(urgent)||pick(witnessed)||fair(eligible);if(!r)return{ok:true,status:candidates.length?'card-discovery-not-due':'complete',externalRequests:0};
- const selection={lane:lane(r),reason:urgent.includes(r)?'urgent':witnessed.includes(r)?'witnessed-url':'alternate-eligible-cohorts',previousLane:previous||null,target:`${r.date}:${r.venue}:${r.raceNo}`,eligibleCards:eligible.filter(x=>lane(x)==='card').length,eligibleDiscovery:eligible.filter(x=>lane(x)==='discovery').length};
+ const r=fair(urgent,true)||pick(witnessed)||fair(eligible);if(!r)return{ok:true,status:candidates.length?'card-discovery-not-due':'complete',externalRequests:0};
+ const discoveryClass=lane(r)==='discovery'?(receipts.has(identity(r))?'retry':'untried'):null;
+ const selection={lane:lane(r),lastDiscoveryClass:discoveryClass||previousClass||null,previousDiscoveryClass:previousClass||null,discoveryClass,reason:urgent.includes(r)?'urgent':witnessed.includes(r)?'witnessed-url':'alternate-eligible-cohorts',previousLane:previous||null,target:`${r.date}:${r.venue}:${r.raceNo}`,eligibleCards:eligible.filter(x=>lane(x)==='card').length,eligibleDiscovery:eligible.filter(x=>lane(x)==='discovery').length,eligibleUntriedDiscovery:eligible.filter(x=>lane(x)==='discovery'&&!receipts.has(identity(x))).length,eligibleRetryDiscovery:eligible.filter(x=>lane(x)==='discovery'&&receipts.has(identity(x))).length};
  let url;try{url=witnessedCard||witnessedUrl(r)||officialUrl(r.sourceUrl);}catch{return{ok:false,status:'missing-program-source',externalRequests:0};}
  const meta=metaFromRacecardUrl(url),targetDate=r.date;
  const source={date:targetDate,venue:r.venue,raceNo:r.raceNo,snapshotId:`official-card:${targetDate}:${r.venue}:${r.raceNo}:${r.sourceBasis}`,officialRosterDiscoveryUrl:url};

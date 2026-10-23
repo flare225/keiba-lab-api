@@ -52,7 +52,7 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  let waiting=[];try{waiting=(await db.prepare('SELECT snapshot_id,next_attempt_at,card_url,status FROM lab_expected_card_discovery WHERE snapshot_id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(candidates.map(identity))).all()).results||[]}catch(e){if(!/no such table/.test(String(e)))throw e;}
  const receipts=new Map(waiting.map(r=>[r.snapshot_id,Number(r.next_attempt_at)||0]));
  const receiptCards=new Map(waiting.map(r=>[r.snapshot_id,r.card_url]));
- const linked=new Set(waiting.filter(r=>r.status==='official-card-link-found'&&r.card_url).map(r=>r.snapshot_id));
+ const linked=new Set(waiting.filter(r=>['official-card-link-found','official-card-index-found'].includes(r.status)&&r.card_url).map(r=>r.snapshot_id));
  // A short retry time must not let the first few cards monopolize every
  // history-lane slot. Visit untried cards first, then the oldest due receipt.
  const pick=pool=>pool.find(r=>!receipts.has(identity(r)))||pool.filter(r=>receipts.get(identity(r))<=stamp).sort((a,b)=>receipts.get(identity(a))-receipts.get(identity(b)))[0];

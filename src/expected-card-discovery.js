@@ -5,6 +5,8 @@ import {jraPageRequest,isJraSourceBlocked} from './jra-page-request.js';
 import {persistFullDay} from './index.js';
 import {ensureEvidenceTable,inspectSourceCard,runnerFingerprint,sha256} from './card-evidence.js';
 
+export function isPublishedCardIndex(value){try{const u=new URL(value);return u.origin==='https://www.jra.go.jp'&&u.pathname==='/JRADB/accessD.html'&&/^pw01dli00\/[0-9a-f]{2}$/i.test(u.searchParams.get('CNAME')||'');}catch{return false;}}
+
 async function saveDrawnOfficialCard(db,html,url,responseStatus,source,stamp,deps){
  const inspect=(deps.inspectSourceCard||inspectSourceCard)(html);
  const race=(deps.parseRace||parseRace)({ok:true,status:responseStatus,url,body:html},source.date,source.venue,Number(source.raceNo));
@@ -47,13 +49,14 @@ export async function discoverExpectedCard(db,source,deps={}){
  let pause=60000,next=stamp+3600000,card=previous?.card_url||source.officialCardUrl||null,status='failed',error=null;
  try{
   const url=officialUrl(card||source.officialRosterDiscoveryUrl);
-  if(card){const identity=metaFromRacecardUrl(url);if(!identity||identity.date!==source.date||identity.venue!==source.venue||identity.raceNo!==Number(source.raceNo))throw Error('公式出馬表リンクの対象レースが一致しません。');}
+  const indexPage=isPublishedCardIndex(url);
+  if(card&&!indexPage){const identity=metaFromRacecardUrl(url);if(!identity||identity.date!==source.date||identity.venue!==source.venue||identity.raceNo!==Number(source.raceNo))throw Error('公式出馬表リンクの対象レースが一致しません。');}
   const request=jraPageRequest(url),response=await (deps.fetcher||fetch)(request.url,request.options);
   if(!response.ok){if(isJraSourceBlocked(response.status))pause=3600000;throw Error('JRA取得 HTTP '+response.status);}
   if(response.url){const resolved=new URL(officialUrl(response.url)),expected=new URL(url);if(resolved.origin!==expected.origin||resolved.pathname!==expected.pathname||(resolved.searchParams.has('CNAME')&&resolved.searchParams.get('CNAME')!==expected.searchParams.get('CNAME')))throw Error('公式名簿の転送先が一致しません。');}
   const bytes=await response.arrayBuffer();if(bytes.byteLength>1500000)throw Error('ページサイズ上限です。');
   const html=new TextDecoder(/charset\s*=\s*["']?utf-?8/i.test(response.headers.get('content-type')||'')?'utf-8':'shift_jis').decode(bytes);
-  if(card){
+  if(card&&!indexPage){
    const evidence=(deps.inspectSourceCard||inspectSourceCard)(html);
    if(evidence.allHorseNumbersObserved){
     const formal=await saveDrawnOfficialCard(db,html,url,response.status,source,stamp,deps);status='official-card-saved';next=stamp+86400000;
@@ -63,7 +66,11 @@ export async function discoverExpectedCard(db,source,deps={}){
    return {ok:true,status,confirmedRunners:roster.runners.length,externalRequests:1,officialCardsCreated:false};
   }
   const links=extractLinks(html,url).map(link=>{try{officialUrl(link);return metaFromRacecardUrl(link)}catch{return null}}).filter(m=>m?.date===source.date&&m.venue===source.venue&&m.raceNo===source.raceNo).sort((a,b)=>Number(b.detailed)-Number(a.detailed));
-  if(!links.length)throw Error('対象レースの公式出馬表リンクをまだ確認できません。');
+  if(!links.length){
+   const index=extractLinks(html,url).find(isPublishedCardIndex);
+   if(!indexPage&&index){card=index;status='official-card-index-found';next=stamp+60000;return{ok:true,status,discoveryUrl:index,externalRequests:1,officialCardsCreated:false};}
+   throw Error('対象レースの公式出馬表リンクをまだ確認できません。');
+  }
   card=links[0].url;status='official-card-link-found';next=stamp+60000;
   return {ok:true,status,externalRequests:1,officialCardsCreated:false};
  }catch(e){error=String(e.message||e);return {ok:false,status,externalRequests:1,error};}

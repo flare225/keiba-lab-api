@@ -150,3 +150,9 @@ test('discovered cards respect individual wait and urgent Saturday cards',async(
  sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run('official-card:2026-10-25:京都:9:official-program',stamp+1,card,'official-card-link-found');
  const result=await collectMissingOfficialCard(db,{date:'2026-10-24',includeFuture:true,upcomingOnly:true},{now:()=>stamp,discover:async(_,s)=>{assert.equal(s.date,'2026-10-24');return{ok:true,externalRequests:1}}});assert.equal(result.target.venue,'東京');sql.prepare('UPDATE lab_expected_card_discovery SET next_attempt_at=?').run(stamp-1);const urgent=await collectMissingOfficialCard(db,{date:'2026-10-24',includeFuture:true,upcomingOnly:true},{now:()=>stamp,discover:async(_,s)=>{assert.equal(s.date,'2026-10-24');return{ok:true,externalRequests:1}}});assert.equal(urgent.target.venue,'東京');sql.close();
 });
+test('published index receipt progresses through the same queue before an unrelated untried calendar',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-23T03:00:00Z');sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');
+ for(const [venue,no] of [['東京',1],['京都',2]])sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-24',venue,no,'10:00','https://www.jra.go.jp/calendar');
+ sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run('official-card:2026-10-24:京都:2:official-program',stamp-1,'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dli00/F3','official-card-index-found');
+ const r=await collectMissingOfficialCard(db,{date:'2026-10-23',includeFuture:true,upcomingOnly:true},{now:()=>stamp,discover:async(_,s)=>{assert.equal(s.venue,'京都');return{ok:true,status:'official-card-link-found',externalRequests:1}}});assert.equal(r.target.raceNo,2);sql.close();
+});

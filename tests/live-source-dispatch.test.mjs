@@ -44,7 +44,7 @@ test('publication-window card work precedes an unrelated due calendar fetch',asy
 });
 test('publication card cooldown or source failure cannot fall through to another external source',async()=>{
  for(const result of [{status:'cooldown',externalRequests:0,nextBatchAt:'2026-10-22T07:00:00Z'},{ok:false,status:'failed',externalRequests:1,error:'JRA取得 HTTP 403'}]){
-  const r=await collectLiveHistory({}, {scheduledTime:published},{now:()=>published,missing:async()=>null,registered:async()=>publishedRosters,cards:async()=>result,programs:()=>assert.fail('shared source wait must not be bypassed')});assert.deepEqual(r,result);
+  const r=await collectLiveHistory({}, {scheduledTime:published},{now:()=>published,missing:async()=>null,registered:async()=>publishedRosters,cards:async()=>result,programs:()=>assert.fail('shared source wait must not be bypassed')});assert.deepEqual(r,result.externalRequests?{...result,historyWorkStage:'acquisition'}:result);
  }
 });
 test('no-work publication cards permit program recovery without a second card call or roster scan',async()=>{
@@ -52,3 +52,37 @@ test('no-work publication cards permit program recovery without a second card ca
  assert.equal(r.status,'idle');assert.deepEqual({cards,registrations,programs},{cards:1,registrations:1,programs:1});
 });
 test('history passes the prior card lane to the existing card collector without creating an extra source lane',async()=>{let observed;const r=await collectLiveHistory({}, {scheduledTime:start},{now:()=>Date.parse('2026-10-23T04:00:00Z'),previousCardSelection:{lane:'card'},missing:async()=>({status:'official-card-priority',externalRequests:0}),registered:async()=>[{date:'2026-10-24'}],cards:async(_,input,deps)=>{observed=deps.previousCardSelection;return{status:'official-card-index-found',externalRequests:1}},programs:()=>assert.fail('one page only')});assert.equal(observed.lane,'card');assert.equal(r.externalRequests,1);});
+
+test('formal-card history receives alternate existing history slots while card discovery stays busy',async()=>{
+ const stamp=Date.parse('2026-10-23T14:30:00Z');let previous=null,previousStage=null;const seen=[];
+ const db={prepare(q){assert.match(q,/SELECT next_batch_at,locked_until.*jra-history/);return{async first(){return{next_batch_at:0,locked_until:0}}}}};
+ for(let i=0;i<4;i++){
+  const result=await collectLiveHistory(db,{scheduledTime:stamp+i*540000},{now:()=>stamp+i*540000,previousCardSelection:previous,previousHistoryWorkStage:previousStage,missing:async()=>({status:'official-card-priority',externalRequests:0}),registered:async()=>[{date:'2026-10-24'}],cards:async()=>{seen.push('cards');return{status:'failed',externalRequests:1,cardSelection:{lane:'discovery',reason:'urgent',lastDiscoveryClass:'retry'}}},upcoming:async()=>{seen.push('history');return{status:'collected',externalRequests:1,stage:'upcoming-official-missing-history',priorityRaceKey:'2026-10-24:東京:12'}},programs:()=>assert.fail('one source slot'),main:()=>assert.fail('one source slot')});
+  previous=result.cardSelection||previous;previousStage=result.historyWorkStage;assert.equal(result.externalRequests,1);
+ }
+ assert.deepEqual(seen,['cards','history','cards','history']);assert.equal(previous.lane,'discovery');assert.equal(previous.lastDiscoveryClass,'retry');
+});
+test('completion turn observes shared gate/lease before history planning and performs no source request',async()=>{
+ const stamp=Date.parse('2026-10-23T14:30:00Z');for(const blocked of [{next_batch_at:stamp+3600000,locked_until:0},{next_batch_at:0,locked_until:stamp+120000}]){
+  let reads=0;const result=await collectLiveHistory({prepare(){return{async first(){reads++;return blocked}}}},{scheduledTime:stamp},{now:()=>stamp,previousCardSelection:{lane:'discovery'},previousHistoryWorkStage:'acquisition',missing:async()=>null,registered:async()=>[{date:'2026-10-24'}],cards:()=>assert.fail('shared wait'),upcoming:()=>assert.fail('no planning during wait')});
+  assert.equal(result.status,'cooldown');assert.equal(result.externalRequests,0);assert.equal(reads,1);
+ }
+});
+test('no due history falls back to one card attempt without a repeated history scan',async()=>{
+ const stamp=Date.parse('2026-10-23T14:30:00Z');let history=0,cards=0;const r=await collectLiveHistory({prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}},{scheduledTime:stamp},{now:()=>stamp,previousCardSelection:{lane:'card'},previousHistoryWorkStage:'acquisition',missing:async()=>null,registered:async()=>[{date:'2026-10-24'}],upcoming:async()=>{history++;return null},cards:async()=>{cards++;return{status:'official-card-link-found',externalRequests:1,cardSelection:{lane:'discovery'}}},programs:()=>assert.fail('one request')});
+ assert.equal(history,1);assert.equal(cards,1);assert.equal(r.historyWorkStage,'acquisition');
+});
+test('D1 quota during completion gate check propagates without card fallback',async()=>{
+ const stamp=Date.parse('2026-10-23T14:30:00Z');await assert.rejects(collectLiveHistory({prepare(){throw Error('exceeded D1 daily row read limit')}},{scheduledTime:stamp},{now:()=>stamp,previousCardSelection:{lane:'discovery'},previousHistoryWorkStage:'acquisition',missing:async()=>null,registered:async()=>[{date:'2026-10-24'}],cards:()=>assert.fail('quota'),upcoming:()=>assert.fail('quota')}),/daily row read limit/);
+});
+test('existing coordinator persists completion-stage turn without a new table or loss of card fairness history',async()=>{
+ const {sql,db}=fixture();sql.exec("CREATE TABLE lab_history_collection_budget(name TEXT PRIMARY KEY,next_batch_at INTEGER,locked_until INTEGER);INSERT INTO lab_history_collection_budget VALUES('jra-history',0,0)");let stamp=Date.parse('2026-10-23T14:30:00Z');const seen=[];
+ for(let i=0;i<6;i++){
+  await dispatchLiveSources({cron:'*/3 * * * *',scheduledTime:stamp},{DB:db},{now:()=>stamp,archive:async()=>({status:'idle',externalRequests:0}),results:async()=>({status:'idle',externalRequests:0}),history:(_,event,context)=>collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,previousCardSelection:context.previousCardSelection,previousHistoryWorkStage:context.previousHistoryWorkStage,missing:async()=>null,registered:async()=>[{date:'2026-10-24'}],cards:async()=>{seen.push('cards');return{status:'failed',externalRequests:1,cardSelection:{lane:'discovery',lastDiscoveryClass:'retry',lastRetryDiscoveryStage:'continuation'}}},upcoming:async()=>{seen.push('history');return{status:'collected',externalRequests:1}},programs:()=>assert.fail('one source only')})});stamp+=180000;
+ }
+ assert.deepEqual(seen,['cards','history']);const latest=JSON.parse(sql.prepare("SELECT result_json FROM lab_bounded_pipeline_runs WHERE job='history' ORDER BY started_at DESC LIMIT 1").get().result_json);assert.equal(latest.historyWorkStage,'history');assert.equal(latest.cardSelection.lastRetryDiscoveryStage,'continuation');assert.equal(sql.prepare("SELECT COUNT(*) n FROM lab_bounded_pipeline_runs WHERE job='results'").get().n,2);sql.close();
+});
+
+test('a returned D1 pause from completion work never falls through to card acquisition',async()=>{
+ const stamp=Date.parse('2026-10-23T14:30:00Z');const r=await collectLiveHistory({prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}},{scheduledTime:stamp},{now:()=>stamp,previousCardSelection:{lane:'discovery'},previousHistoryWorkStage:'acquisition',missing:async()=>null,registered:async()=>[{date:'2026-10-24'}],upcoming:async()=>({status:'paused',reason:'d1-daily-read-limit',externalRequests:0}),cards:()=>assert.fail('no work after pause')});assert.equal(r.status,'paused');assert.equal(r.historyWorkStage,undefined);
+});

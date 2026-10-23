@@ -1,4 +1,4 @@
-import {discoverExpectedCard} from './expected-card-discovery.js';
+import {discoverExpectedCard,isPublishedCardIndex} from './expected-card-discovery.js';
 import {metaFromRacecardUrl} from './index-v1.1.4.js';
 import {officialUrl,jstDay} from './history-collection-v3.37.0.js';
 import {targetInput} from './race-history-assessment-v3.31.0.js';
@@ -64,17 +64,24 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  // Share discovery turns between untried races and due receipts. Do not let
  // new receipt identities suppress older due races, or retries suppress new ones.
  const previousClass=deps.previousCardSelection?.lastDiscoveryClass;
+ const previousRetryStage=deps.previousCardSelection?.lastRetryDiscoveryStage;
+ const continuation=r=>isPublishedCardIndex(receiptCards.get(identity(r)));
+ const retryPick=pool=>{
+  const follow=pool.filter(continuation),search=pool.filter(r=>!continuation(r));
+  return previousRetryStage==='continuation'?(pick(search)||pick(follow)):(pick(follow)||pick(search));
+ };
  const discoveryPick=pool=>{
   if(!previous&&!previousClass)return original(pool);
   const fresh=pool.filter(r=>!receipts.has(identity(r))),retry=pool.filter(r=>receipts.has(identity(r)));
-  return previousClass==='retry'?(pick(fresh)||pick(retry)):(pick(retry)||pick(fresh));
+  return previousClass==='retry'?(pick(fresh)||retryPick(retry)):(retryPick(retry)||pick(fresh));
  };
  const ordinary=pool=>{const r=original(pool);return r&&lane(r)==='discovery'?discoveryPick(pool.filter(x=>lane(x)==='discovery')):r};
  const fair=(pool,urgentOnly=false)=>{const select=urgentOnly?original:ordinary;return ['card','discovery'].includes(previous)?(select(pool.filter(r=>lane(r)!==previous))||select(pool)):select(pool)};
  const witnessed=eligible.filter(r=>witnessedUrl(r)&&!receiptCards.get(identity(r)));
  const r=fair(urgent,true)||pick(witnessed)||fair(eligible);if(!r)return{ok:true,status:candidates.length?'card-discovery-not-due':'complete',externalRequests:0};
  const discoveryClass=lane(r)==='discovery'?(receipts.has(identity(r))?'retry':'untried'):null;
- const selection={lane:lane(r),lastDiscoveryClass:discoveryClass||previousClass||null,previousDiscoveryClass:previousClass||null,discoveryClass,reason:urgent.includes(r)?'urgent':witnessed.includes(r)?'witnessed-url':'alternate-eligible-cohorts',previousLane:previous||null,target:`${r.date}:${r.venue}:${r.raceNo}`,eligibleCards:eligible.filter(x=>lane(x)==='card').length,eligibleDiscovery:eligible.filter(x=>lane(x)==='discovery').length,eligibleUntriedDiscovery:eligible.filter(x=>lane(x)==='discovery'&&!receipts.has(identity(x))).length,eligibleRetryDiscovery:eligible.filter(x=>lane(x)==='discovery'&&receipts.has(identity(x))).length};
+ const retryDiscoveryStage=discoveryClass==='retry'?(continuation(r)?'continuation':'reexploration'):null;
+ const selection={lane:lane(r),retryDiscoveryStage,lastRetryDiscoveryStage:retryDiscoveryStage||previousRetryStage||null,previousRetryDiscoveryStage:previousRetryStage||null,lastDiscoveryClass:discoveryClass||previousClass||null,previousDiscoveryClass:previousClass||null,discoveryClass,reason:urgent.includes(r)?'urgent':witnessed.includes(r)?'witnessed-url':'alternate-eligible-cohorts',previousLane:previous||null,target:`${r.date}:${r.venue}:${r.raceNo}`,eligibleCards:eligible.filter(x=>lane(x)==='card').length,eligibleDiscovery:eligible.filter(x=>lane(x)==='discovery').length,eligibleUntriedDiscovery:eligible.filter(x=>lane(x)==='discovery'&&!receipts.has(identity(x))).length,eligibleRetryDiscovery:eligible.filter(x=>lane(x)==='discovery'&&receipts.has(identity(x))).length,eligibleContinuationDiscovery:eligible.filter(x=>lane(x)==='discovery'&&receipts.has(identity(x))&&continuation(x)).length,eligibleReexplorationDiscovery:eligible.filter(x=>lane(x)==='discovery'&&receipts.has(identity(x))&&!continuation(x)).length};
  let url;try{url=witnessedCard||witnessedUrl(r)||officialUrl(r.sourceUrl);}catch{return{ok:false,status:'missing-program-source',externalRequests:0};}
  const meta=metaFromRacecardUrl(url),targetDate=r.date;
  const source={date:targetDate,venue:r.venue,raceNo:r.raceNo,snapshotId:`official-card:${targetDate}:${r.venue}:${r.raceNo}:${r.sourceBasis}`,officialRosterDiscoveryUrl:url};

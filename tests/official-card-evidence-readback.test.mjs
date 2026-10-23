@@ -1,0 +1,14 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';
+import {prelockAudit} from '../src/index-v3.16.0.js';import {sha256,runnerFingerprint} from '../src/card-evidence.js';
+async function fixture(){const sql=new DatabaseSync(':memory:'),queries=[];const db={prepare(q){assert.match(q,/^SELECT /);const w=(a=[])=>({bind(...b){return w(b)},async first(){queries.push(q);return sql.prepare(q).get(...a)||null},async all(){queries.push(q);return{results:sql.prepare(q).all(...a)}}});return w()}};
+ sql.exec("CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,race_name TEXT,runner_count INTEGER,fetched_at TEXT);CREATE TABLE jra_runners(race_key TEXT,horse_no INTEGER,frame_no INTEGER,horse_name TEXT);CREATE TABLE lab_card_source_evidence(race_key TEXT,card_fetched_at TEXT,declared_count INTEGER,source_row_count INTEGER,horse_numbers_observed INTEGER,frames_observed INTEGER,source_url TEXT,source_sha256 TEXT,runner_sha256 TEXT)");
+ const runners=[{horseNo:1,frameNo:1,name:'検証馬A'},{horseNo:2,frameNo:2,name:'検証馬B'}],time='2026-10-23T14:30:00Z',html='<p>合成出馬表</p>',sourceHash=await sha256(html),runnerHash=await sha256(runnerFingerprint(runners));
+ sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?,?,?)').run('2026-10-24:京都:1','2026-10-24','京都',1,'隔離検証',2,time);for(const r of runners)sql.prepare('INSERT INTO jra_runners VALUES(?,?,?,?)').run('2026-10-24:京都:1',r.horseNo,r.frameNo,r.name);
+ sql.prepare('INSERT INTO lab_card_source_evidence VALUES(?,?,?,?,?,?,?,?,?)').run('2026-10-24:京都:1',time,2,2,1,1,'https://www.jra.go.jp/published-fixture',sourceHash,runnerHash);return{sql,db,queries,runners,html,sourceHash,runnerHash};}
+test('existing read-only audit exposes saved source and runner hashes without another query or LOCK mutation',async()=>{
+ const f=await fixture(),r=await prelockAudit({DB:f.db},{date:'2026-10-24',venue:'京都',raceNo:1});assert.equal(r.status,200);assert.equal(r.data.audit.passed,true);assert.equal(r.data.gate,'ALLOW_PRELOCK');assert.equal(f.queries.length,4);
+ assert.equal(r.data.storedCardEvidence.current,true);assert.equal(r.data.storedCardEvidence.sourceSha256,await sha256(f.html));assert.equal(r.data.storedCardEvidence.runnerSha256,await sha256(runnerFingerprint(f.runners)));assert.notEqual(f.sourceHash,f.runnerHash);assert.equal(r.data.storedCardEvidence.runnerHashBasis,'horseNo-frameNo-name-sorted-json-v1');f.sql.close();
+});
+test('stale source evidence remains visibly stale and does not change the existing blocked gate',async()=>{
+ const f=await fixture();f.sql.exec("UPDATE lab_card_source_evidence SET card_fetched_at='old'");const r=await prelockAudit({DB:f.db},{date:'2026-10-24',venue:'京都',raceNo:1});assert.equal(r.data.storedCardEvidence.current,false);assert.equal(r.data.gate,'BLOCK_PRELOCK');assert.equal(r.data.audit.passed,false);assert.equal(f.queries.length,4);f.sql.close();
+});

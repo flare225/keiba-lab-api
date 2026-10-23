@@ -63,7 +63,8 @@ export function planSharedPages(races,rows,stamp,parserVersion=SHARED_PAGE_POLIC
    const row=records.get(url);
    if(row?.status==='formal-saved'&&row.card_key===key(race)){complete++;found=true;break;}
    if(Number(row?.next_at)>stamp)continue;
-   const cached=row?.body_sha&&(row.status==='body-stored'||row.parser_version!==parserVersion||row.status==='card-ready');
+   const parsedCard=row?.status==='parsed'&&key(metaFromRacecardUrl(url)||{})===key(race);
+   const cached=row?.body_sha&&(parsedCard||row.status==='body-stored'||row.parser_version!==parserVersion||row.status==='card-ready');
    if(cached){add(url,race,depth);found=true;break;}
    if(row?.status==='parse-failed'&&row.parser_version===parserVersion)continue;
    if(!row?.body_sha){add(url,race,depth);found=true;break;}
@@ -91,7 +92,10 @@ async function updateReceipt(db,scope,url,state){
 }
 async function parseStored(db,scope,job,row,stamp,deps){
  const body=await readBody(db,scope,job.url,row),html=body.body_html,meta=metaFromRacecardUrl(job.url),version=deps.parserVersion||SHARED_PAGE_POLICY.parserVersion;
- if(!meta){
+ // A published sibling card can be the navigation root for another race.
+ // Parse its literal links only; never save that sibling as the selected race.
+ const navigationRoot=meta&&job.races.every(r=>r.rootUrl===job.url&&key(r)!==key(meta));
+ if(!meta||navigationRoot){
   try{const data=(deps.parser||parseSharedPage)(html,job.url);await updateReceipt(db,scope,job.url,{...row,status:'parsed',next_at:0,parser_version:version,findings_json:JSON.stringify(data),error:null});return{status:'page-parsed',discoveredCards:data.cards.length,discoveredPages:data.pages.length};}
   catch(e){await updateReceipt(db,scope,job.url,{...row,status:'parse-failed',next_at:0,parser_version:version,error:String(e.message||e)});throw e;}
  }
@@ -128,7 +132,7 @@ export async function runSharedPageStep(db,{scope,races},deps={}){
  if(rows.length>SHARED_PAGE_POLICY.maxPages)return{status:'page-bound-reached',externalRequests:0};
  const plan=planSharedPages(inventory,rows,stamp,deps.parserVersion);let job=plan.jobs[0];
  if(!job)return{status:plan.complete===inventory.length?'complete':'awaiting-source-or-deadline',completeRaces:plan.complete,waitingRaces:plan.waiting,externalRequests:0};
- const isCached=j=>j.row?.body_sha&&(j.row.status==='body-stored'||j.row.status==='card-ready'||j.row.parser_version!==(deps.parserVersion||SHARED_PAGE_POLICY.parserVersion));let cached=isCached(job);
+ const isCached=j=>j.row?.body_sha&&((j.row.status==='parsed'&&j.races.some(r=>key(metaFromRacecardUrl(j.url)||{})===key(r)))||j.row.status==='body-stored'||j.row.status==='card-ready'||j.row.parser_version!==(deps.parserVersion||SHARED_PAGE_POLICY.parserVersion));let cached=isCached(job);
  if(rows.length===SHARED_PAGE_POLICY.maxPages&&!job.row)return{status:'page-bound-reached',externalRequests:0};
  if(!cached){const storage=await db.prepare(`SELECT COALESCE(SUM(bytes),0) bytes,COALESCE(json_group_object(page_url,versions),'{}') versions_json FROM (SELECT page_url,COUNT(*) versions,SUM(byte_length) bytes FROM ${BODIES} WHERE scope_key=? GROUP BY page_url)`).bind(scope).first(),versions=JSON.parse(storage.versions_json);
   const space=Number(storage.bytes)+SHARED_PAGE_POLICY.maxBytes<=SHARED_PAGE_POLICY.maxStoredBodyBytes;
@@ -156,4 +160,18 @@ export async function runSharedPageStep(db,{scope,races},deps={}){
   if(!stored&&!e.saveMayHaveSucceeded)await updateReceipt(db,scope,job.url,{...job.row,status:'http-or-source-failed',next_at:stamp+3600000,last_attempt_at:stamp,error:String(e.message||e)});
   return{status:'deferred',sourceUrl:job.url,error:String(e.message||e),externalRequests,bodyStored:stored,saveMayHaveSucceeded:!!e.saveMayHaveSucceeded};
  }finally{if(!quotaStopped)await db.prepare("UPDATE lab_history_collection_budget SET locked_until=0,next_batch_at=?,lock_token=NULL WHERE name='jra-history' AND lock_token=?").bind((deps.now||Date.now)()+delay,token).run();}
+}
+
+// Local connection seam: the existing collector owns candidate selection.
+// Only its exact selected race enters this step; saved page findings remain
+// shared across all later selections. No production entry point enables it.
+export function createSharedSelectedCardDiscoverer({scope,races},dependencies={}){
+ return async(db,source,delivery={})=>{
+  const matches=races.filter(r=>key(r)===key(source));
+  if(matches.length!==1)throw Error('Selected race requires one existing inventory identity');
+  const race=matches[0],rootUrl=source.officialRosterDiscoveryUrl;
+  if(!rootUrl)throw Error('Selected race requires a published navigation URL');
+  const result=await runSharedPageStep(db,{scope,races:[{...race,rootUrl,cardUrl:source.officialCardUrl||undefined}]},{...dependencies,...delivery});
+  return{...result,ok:!result.error,target:{date:race.date,venue:race.venue,raceNo:race.raceNo},officialCardsCreated:!!result.formalCardSaved};
+ };
 }

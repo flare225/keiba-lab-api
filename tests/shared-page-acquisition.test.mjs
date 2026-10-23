@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';
-import {canonicalPublishedPage,parseSharedPage,runSharedPageStep,planSharedPages,SHARED_PAGE_POLICY} from '../src/shared-page-acquisition.js';
+import {createSharedSelectedCardDiscoverer,canonicalPublishedPage,parseSharedPage,runSharedPageStep,planSharedPages,SHARED_PAGE_POLICY} from '../src/shared-page-acquisition.js';
 import {sha256,runnerFingerprint,requireLockEvidence} from '../src/card-evidence.js';
 import {runWithScheduledReadBudget} from '../src/scheduled-read-budget.js';
 import {collectLiveHistory} from '../src/live-source-dispatch.js';
@@ -139,4 +139,25 @@ test('planner query omits saved card results and obsolete findings instead of re
  const {db,sql,stats,reset}=await fixtureDatabase(),race=racesFixture()[0];race.cardUrl=cardUrl(race);let now=FIXTURE_STAMP;
  await runSharedPageStep(db,input([race]),{now:()=>now,fetcher:fixtureFetcher(pageGraph([race]))});sql.prepare('UPDATE lab_shared_page_receipts_v1 SET card_result_json=?').run('x'.repeat(100000));reset();now+=61000;
  const r=await runSharedPageStep(db,input([race]),{now:()=>now,fetcher:()=>assert.fail('already complete')});assert.equal(r.status,'complete');assert.ok(stats.readJsonBytes<3000);const query=stats.executed.find(q=>q.includes('ORDER BY page_url LIMIT'));assert.ok(query&&!query.includes('SELECT *')&&!query.includes('card_result_json'));sql.close();
+});
+
+test('selected-source seam keeps collector target and shares sibling navigation without saving the wrong race',async()=>{
+ const {db,sql}=await fixtureDatabase(),races=racesFixture(1),selected=races[0],sibling=races[1],later=races[2],root=cardUrl(sibling),requests=[];let now=FIXTURE_STAMP;
+ const html=drawnHtml(sibling)+[selected,later].map(r=>`<a href="${cardUrl(r)}">published</a>`).join('');
+ const pages=new Map([[root,html],[cardUrl(selected),drawnHtml(selected)],[cardUrl(later),drawnHtml(later)]]);
+ const discover=createSharedSelectedCardDiscoverer({scope:SCOPE,races},{now:()=>now,fetcher:fixtureFetcher(pages,requests)});
+ const source=r=>({date:r.date,venue:r.venue,raceNo:r.raceNo,officialRosterDiscoveryUrl:root});
+ const first=await discover(db,source(selected));assert.equal(first.status,'page-parsed');assert.equal(first.externalRequests,1);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);
+ now+=61000;const second=await discover(db,source(later));assert.equal(second.formalCardSaved,true);assert.equal(second.target.raceNo,later.raceNo);assert.equal(requests.length,2);assert.equal(requests[1],cardUrl(later));
+ now+=61000;const third=await discover(db,source(selected));assert.equal(third.formalCardSaved,true);assert.equal(requests.length,3);assert.equal(requests.filter(u=>u===root).length,1);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races WHERE race_no=?').get(sibling.raceNo).n,0);
+ now+=61000;const own=await discover(db,{...source(sibling),officialCardUrl:root});assert.equal(own.formalCardSaved,true);assert.equal(own.externalRequests,0);assert.equal(requests.length,3);assert.equal(own.target.raceNo,sibling.raceNo);sql.close();
+});
+test('selected-source seam rejects unknown or duplicate identities and keeps shared cooldown',async()=>{
+ const {db,sql}=await fixtureDatabase(),races=racesFixture(1),race=races[0],source={...race,officialRosterDiscoveryUrl:race.rootUrl};
+ const discover=createSharedSelectedCardDiscoverer({scope:SCOPE,races},{now:()=>FIXTURE_STAMP,fetcher:()=>assert.fail('no network')});
+ await assert.rejects(discover(db,{...source,raceNo:99}),/existing inventory/);
+ await assert.rejects(createSharedSelectedCardDiscoverer({scope:SCOPE,races:[race,race]})(db,source),/existing inventory/);
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=?').run(FIXTURE_STAMP+3600000);
+ const wait=await discover(db,source);assert.equal(wait.status,'cooldown');assert.equal(wait.externalRequests,0);sql.close();
 });

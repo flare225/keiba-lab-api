@@ -47,6 +47,12 @@ export function evidenceLedgerShadow(snapshot){
  const distribution={front:0,middle:0,back:0,unknown:0};for(const h of horses)distribution[h.position.style||'unknown']++;
  const scenarios=['slow','average','high'].map(pace=>({pace,probability:null,scoreAdjustments:null,reason:'Conditional scenario only; race laps and target position/settling evidence missing'}));
  for(const h of horses)h.frame.neighbours=horses.filter(x=>h.horseNo!=null&&x.horseNo!=null&&Math.abs(x.horseNo-h.horseNo)===1).map(x=>({horseNo:x.horseNo,style:x.position.style}));
+ for(const h of horses)h.reasoning={
+  facts:{usedRuns:h.inputs.length,resultIndex:h.observedResultIndex,verifiedClasses:h.ability.classRecords,longestDistance:h.distance.starts.length?Math.max(...h.distance.starts.map(x=>x.distance)):null,exactDistanceStarts:h.distance.exactStarts,last3fRows:h.dataCoverage.fields.last3f.present,cornerRows:h.dataCoverage.fields.cornerPositions.present},
+  interpretations:[h.inputs.length?'Observed finishes describe only the sampled races; opponent strength is not calibrated':'No usable prior finishes',h.ability.unclassifiedStarts?'Race class remains unverified; cross-class superiority cannot be concluded':'Verified class groups remain separate',h.position.style?'Historical position tendency is observed across different distances; target pace remains unknown':'Insufficient recorded corners for a historical style'],
+  hypotheses:{distanceExtension:'Unconfirmed; adjacent-distance experience does not prove target-distance ability',pace:['slow','average','high'].map(pace=>({pace,effect:null})),jockeyDrawEffect:null},
+  conclusion:{score:null,rank:null,mark:null,status:'held',relativeSuperiority:null,reason:'Cross-class strength, independent condition and target-race scenario effects remain unvalidated'}
+ };
  return{modelVersion:LEDGER_MODEL,phase:'offline-research',race,baselineSha:snapshot.baselineSha??null,horses,distribution,scenarios,
   guardrails:{productionEnabled:false,automaticPromotion:false,formalLock:false,inputModified:false,externalRequests:0,dbQueries:0,accuracyValidated:false,missingIsNotZeroAbility:true,overallRankingHeld:true}};
 }

@@ -19,3 +19,9 @@ test('saved Kikka input replay keeps all 18 baseline marks, identifies missingne
  assert.equal(a.horses.find(h=>h.horseNo===8).baseline.score,100);assert.equal(a.horses.find(h=>h.horseNo===14).baseline.score,100);
  assert.ok([10,13,18].every(no=>a.horses.find(h=>h.horseNo===no).distance.starts.some(r=>r.distance===2600)));
 });
+
+test('four-stage reasoning separates observed facts from hypotheses and holds comparative conclusions',()=>{
+ const s=input();s.histories[0].recent.forEach(r=>r.cornerPositions=null);const a=evidenceLedgerShadow(s);
+ assert.equal(a.horses[0].reasoning.facts.cornerRows,0);assert.equal(a.horses[1].reasoning.facts.cornerRows,3);
+ for(const h of a.horses){assert.equal(h.reasoning.facts.exactDistanceStarts,0);assert.equal(h.reasoning.conclusion.relativeSuperiority,null);assert.equal(h.reasoning.conclusion.rank,null);assert.ok(h.reasoning.hypotheses.pace.every(x=>x.effect===null));}
+});

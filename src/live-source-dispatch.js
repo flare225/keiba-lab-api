@@ -43,7 +43,7 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
   if(!gate)return{ok:true,status:'shared-gate-unavailable',externalRequests:0};
   const blocked=Math.max(Number(gate.next_batch_at)||0,Number(gate.locked_until)||0);
   if(blocked>now())return{ok:true,status:'cooldown',nextBatchAt:new Date(blocked).toISOString(),externalRequests:0};
-  checkedUpcoming=true;const completion=await upcoming(db,{now,previousCardSelection});
+  checkedUpcoming=true;const completion=await measureD1Operation(db,measured=>upcoming(measured,{now,previousCardSelection}),now);
   if(completion&&(completion.externalRequests||completion.attempted||completion.saveMayHaveSucceeded||['cooldown','lease-unavailable','shared-gate-unavailable','paused'].includes(completion.status)))return history(completion);
  }
  // Reuse saved programs/receipts before reserving a calendar page. The roster

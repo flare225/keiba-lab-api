@@ -11,10 +11,13 @@ export async function scheduledEvidenceEvaluation(db,now=Date.now(),deps={}){
  const claim=await db.prepare("UPDATE lab_evidence_clock_v1 SET next_at=? WHERE name='comparison' AND next_at<=?").bind(nextHour,now).run();
  if(Number(claim.meta?.changes)!==1)return{status:'not-due',externalRequests:0};
  const formal=await(deps.formal||scheduledFormalComparison)(db,now);if(formal)return formal;
- const today=new Date(now+9*3600000).toISOString().slice(0,10),to=new Date(Date.parse(today)+7*86400000).toISOString().slice(0,10);
- let completed=[];try{completed=(await db.prepare('SELECT race_key FROM lab_evidence_evaluations_v1 WHERE model_version=? AND substr(race_key,1,10)>? AND substr(race_key,1,10)<=?').bind(model,today,to).all()).results||[];}catch(e){if(!/no such table/i.test(String(e)))throw e;}
- const receipts=(await db.prepare('SELECT * FROM lab_evidence_queue_v1 WHERE model_version=? AND substr(race_key,1,10)>? AND substr(race_key,1,10)<=?').bind(model,today,to).all()).results||[];
- let candidates=[];try{candidates=(await db.prepare("SELECT race_key,(SELECT COUNT(*) FROM json_each(snapshot_json,'$.runners') r WHERE json_extract(r.value,'$.rank') IS NULL) held FROM lab_provisional_predictions_v1 WHERE substr(race_key,1,10)>? AND substr(race_key,1,10)<=? ORDER BY held DESC,race_key LIMIT 120").bind(today,to).all()).results||[];}catch(e){if(!/no such table/i.test(String(e)))throw e;}
+ const today=new Date(now+9*3600000).toISOString().slice(0,10);
+ // Canonical race keys start YYYY-MM-DD:. Keep tomorrow through day seven,
+ // using the existing race_key indexes instead of scanning every historical key.
+ const fromKey=new Date(Date.parse(today)+86400000).toISOString().slice(0,10)+':',untilKey=new Date(Date.parse(today)+8*86400000).toISOString().slice(0,10)+':';
+ let completed=[];try{completed=(await db.prepare('SELECT race_key FROM lab_evidence_evaluations_v1 WHERE model_version=? AND race_key>=? AND race_key<?').bind(model,fromKey,untilKey).all()).results||[];}catch(e){if(!/no such table/i.test(String(e)))throw e;}
+ const receipts=(await db.prepare('SELECT * FROM lab_evidence_queue_v1 WHERE model_version=? AND race_key>=? AND race_key<?').bind(model,fromKey,untilKey).all()).results||[];
+ let candidates=[];try{candidates=(await db.prepare("SELECT race_key,(SELECT COUNT(*) FROM json_each(snapshot_json,'$.runners') r WHERE json_extract(r.value,'$.rank') IS NULL) held FROM lab_provisional_predictions_v1 WHERE race_key>=? AND race_key<? ORDER BY held DESC,race_key LIMIT 120").bind(fromKey,untilKey).all()).results||[];}catch(e){if(!/no such table/i.test(String(e)))throw e;}
  const exists=new Set(completed.map(r=>r.race_key)),byKey=new Map(receipts.map(r=>[r.race_key,r]));
  const due=candidates.filter(r=>{const q=byKey.get(r.race_key);return (!exists.has(r.race_key)||q?.status==='pending-readback')&&Number(q?.next_at||0)<=now;}).sort((a,b)=>Number(byKey.get(b.race_key)?.status==='pending-readback')-Number(byKey.get(a.race_key)?.status==='pending-readback')||b.held-a.held||a.race_key.localeCompare(b.race_key));
  const source=due[0];if(!source)return{status:'no-due-comparison',externalRequests:0};

@@ -125,3 +125,24 @@ test('registered upcoming roster continues collecting after formal publication r
  const r=await collectUpcomingExpectedHistory(db,{sources:[{...source,snapshotId:'registered:abc',priority:50}],now:()=>stamp,wait:async()=>{},fetcher:async url=>new Response(url.includes('accessU')?html:'<a href="'+profile+'">HorseA</a>',{headers:{'content-type':'text/html; charset=utf-8'}})});
  assert.equal(r.attempted,1);assert.equal(r.before.race.raceKey,'future');assert.equal(r.after.totalStoredRows,1);sql.close();
 });
+
+test('calendar published index is followed on the next natural delivery, never in the same page budget',async()=>{
+ const {db,sql}=await fixture(),s={...source,officialRosterDiscoveryUrl:'https://www.jra.go.jp/keiba/calendar2026/2026/10/1010.html'};
+ const index='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dli00%2FF3',card='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604031120261010/9E';let time=stamp,calls=0;
+ const calendar=`<h1>競馬番組（予定）</h1><a href="#" onclick="doAction('/JRADB/accessD.html','pw01dli00/F3');return false;">出馬表</a>`;
+ const deps={now:()=>time,fetcher:async(url,opts)=>{calls++;return new Response(calls===1?calendar:'<a href="'+card+'">target</a>',{headers:{'content-type':'text/html;charset=utf-8'}})}};
+ const first=await discoverExpectedCard(db,s,deps);assert.equal(first.status,'official-card-index-found');assert.equal(first.officialCardsCreated,false);assert.equal(calls,1);assert.equal(sql.prepare('SELECT card_url FROM lab_expected_card_discovery').get().card_url,index);
+ assert.equal((await discoverExpectedCard(db,s,deps)).externalRequests,0);assert.equal(calls,1);
+ time+=61000;const second=await discoverExpectedCard(db,s,deps);assert.equal(second.status,'official-card-link-found');assert.equal(calls,2);assert.equal(sql.prepare('SELECT card_url FROM lab_expected_card_discovery').get().card_url,card);sql.close();
+});
+test('index hop obeys the same HTTP403 pause without creating cards',async()=>{
+ const {db,sql}=await fixture(),s={...source,officialRosterDiscoveryUrl:'https://www.jra.go.jp/calendar'};let time=stamp;
+ await discoverExpectedCard(db,s,{now:()=>time,fetcher:async()=>new Response(`<a href="#" onclick="doAction('/JRADB/accessD.html','pw01dli00/F3')">出馬表</a>`,{headers:{'content-type':'text/html;charset=utf-8'}})});time+=61000;
+ const blocked=await discoverExpectedCard(db,s,{now:()=>time,fetcher:async()=>new Response('',{status:403})});assert.equal(blocked.ok,false);assert.equal(sql.prepare('SELECT next_batch_at FROM lab_history_collection_budget').get().next_batch_at,time+3600000);assert.equal((await discoverExpectedCard(db,s,{now:()=>time+61000,fetcher:()=>assert.fail('no retry')})).externalRequests,0);sql.close();
+});
+
+test('published index cannot turn wrong-date or wrong-venue links into a saved card',async()=>{
+ const {db,sql}=await fixture(),s={...source,officialRosterDiscoveryUrl:'https://www.jra.go.jp/calendar'};let time=stamp;
+ await discoverExpectedCard(db,s,{now:()=>time,fetcher:async()=>new Response(`<a href="#" onclick="doAction('/JRADB/accessD.html','pw01dli00/F3')">出馬表</a>`,{headers:{'content-type':'text/html;charset=utf-8'}})});time+=61000;
+ const r=await discoverExpectedCard(db,s,{now:()=>time,fetcher:async()=>new Response('<a href="https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604031120261011/9E">wrong date</a><a href="https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202604031120261010/9E">wrong venue</a>',{headers:{'content-type':'text/html;charset=utf-8'}})});assert.equal(r.ok,false);assert.equal(r.officialCardsCreated,undefined);assert.match(r.error,/リンク/);sql.close();
+});

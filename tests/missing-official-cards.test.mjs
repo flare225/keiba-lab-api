@@ -230,3 +230,25 @@ test('continuation selection reaches existing index parser and saves only exact 
  const r=await collectMissingOfficialCard(db,{date:'2026-10-23',includeFuture:true,upcomingOnly:true},{now:()=>stamp,previousCardSelection:{lane:'card',lastDiscoveryClass:'untried'},fetcher:async(request,options)=>{requests++;assert.equal(request,'https://www.jra.go.jp/JRADB/accessD.html');assert.equal(new URLSearchParams(options.body).get('CNAME'),'pw01dli00/F3');return new Response(`<a href="${url.replace('20261024','20261025')}">wrong date</a><a href="${url.replace('dde0105','dde0108')}">wrong venue</a><a href="${url.replace('08112026','08122026')}">wrong race</a><a href="${url}">correct</a>`,{headers:{'content-type':'text/html;charset=utf-8'}})}});
  assert.equal(requests,1);assert.equal(r.status,'official-card-link-found');assert.deepEqual(r.target,{date:'2026-10-24',venue:'東京',raceNo:11});assert.equal(r.cardSelection.retryDiscoveryStage,'continuation');assert.equal(r.officialCardsCreated,false);assert.equal(sql.prepare("SELECT card_url FROM lab_expected_card_discovery WHERE snapshot_id='official-card:2026-10-24:東京:11:official-program'").get().card_url,url);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);sql.close();
 });
+
+function urgentFixture(){const f=fixture();f.sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');return f;}
+const urgentStamp=Date.parse('2026-10-24T00:00:00Z');
+const urgentLink=no=>`https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde010520260408${String(no).padStart(2,'0')}20261024/AA`;
+function urgentRace(sql,no,time,receipt=null){sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-24','東京',no,time,'https://www.jra.go.jp/keiba/calendar2026/2026/10/1024.html');if(receipt)sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(`official-card:2026-10-24:東京:${no}:official-program`,receipt.next,receipt.url,receipt.status);}
+test('urgent deadline order survives older retry timestamps inside the selected card cohort',async()=>{
+ const {sql,db}=urgentFixture();urgentRace(sql,1,'10:00',{next:urgentStamp-1,url:urgentLink(1),status:'failed'});urgentRace(sql,11,'15:00',{next:urgentStamp-3600000,url:urgentLink(11),status:'failed'});
+ const r=await collectMissingOfficialCard(db,{date:'2026-10-24',upcomingOnly:true},{now:()=>urgentStamp,previousCardSelection:{lane:'discovery'},discover:async()=>({ok:true,externalRequests:1})});assert.equal(r.target.raceNo,1);sql.close();
+});
+test('urgent deadline order cannot be replaced by a later linked-index preference',async()=>{
+ const {sql,db}=urgentFixture();urgentRace(sql,1,'10:00');urgentRace(sql,11,'15:00',{next:urgentStamp-1,url:'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dli00/F3',status:'official-card-index-found'});
+ const r=await collectMissingOfficialCard(db,{date:'2026-10-24',upcomingOnly:true},{now:()=>urgentStamp,previousCardSelection:{lane:'card'},discover:async()=>({ok:true,externalRequests:1})});assert.equal(r.target.raceNo,1);sql.close();
+});
+test('urgent earlier due discovery is not displaced by a later untried race',async()=>{
+ const {sql,db}=urgentFixture();urgentRace(sql,1,'10:00',{next:urgentStamp-1,url:null,status:'failed'});urgentRace(sql,11,'15:00');
+ const r=await collectMissingOfficialCard(db,{date:'2026-10-24',upcomingOnly:true},{now:()=>urgentStamp,previousCardSelection:{lane:'card'},discover:async()=>({ok:true,externalRequests:1})});assert.equal(r.target.raceNo,1);sql.close();
+});
+test('urgent deadline selection still alternates card and discovery lanes and excludes waiting receipts',async()=>{
+ const {sql,db}=urgentFixture();urgentRace(sql,1,'10:00',{next:urgentStamp-1,url:urgentLink(1),status:'official-card-link-found'});urgentRace(sql,2,'10:30');urgentRace(sql,3,'09:30',{next:urgentStamp+3600000,url:urgentLink(3),status:'failed'});
+ const input={date:'2026-10-24',upcomingOnly:true},deps={now:()=>urgentStamp,discover:async()=>({ok:true,externalRequests:1})};
+ const a=await collectMissingOfficialCard(db,input,{...deps,previousCardSelection:{lane:'card'}}),b=await collectMissingOfficialCard(db,input,{...deps,previousCardSelection:a.cardSelection});assert.equal(a.target.raceNo,2);assert.equal(b.target.raceNo,1);sql.close();
+});

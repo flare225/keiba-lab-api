@@ -59,6 +59,14 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  const lane=r=>{const u=receiptCards.get(identity(r))||witnessedUrl(r)||r.sourceUrl,m=metaFromRacecardUrl(u);return m?.date===r.date&&m.venue===r.venue&&m.raceNo===r.raceNo?'card':'discovery'};
  const pick=pool=>pool.find(r=>!receipts.has(identity(r)))||pool.slice().sort((a,b)=>receipts.get(identity(a))-receipts.get(identity(b)))[0];
  const eligible=candidates.filter(due),urgent=eligible.filter(r=>{const start=Date.parse(`${r.date}T${r.startTime}:00+09:00`);return start>stamp&&start-stamp<=12*3600000});
+ // Deadline-aware ordering within the urgent cohort: a later race number must
+ // not displace an earlier post time just because SQL enumerated it first.
+ // Preserve the existing discovery/card fairness and shared gate.
+ urgent.sort((a,b)=>{
+  const aStart=Date.parse(`${a.date}T${a.startTime}:00+09:00`);
+  const bStart=Date.parse(`${b.date}T${b.startTime}:00+09:00`);
+  return aStart-bStart||a.date.localeCompare(b.date)||a.venue.localeCompare(b.venue)||a.raceNo-b.raceNo;
+ });
  const previous=deps.previousCardSelection?.lane;
  const original=pool=>pick(pool.filter(r=>linked.has(identity(r))))||pick(pool);
  // Share discovery turns between untried races and due receipts. Do not let
@@ -76,7 +84,11 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
   return previousClass==='retry'?(pick(fresh)||retryPick(retry)):(retryPick(retry)||pick(fresh));
  };
  const ordinary=pool=>{const r=original(pool);return r&&lane(r)==='discovery'?discoveryPick(pool.filter(x=>lane(x)==='discovery')):r};
- const fair=(pool,urgentOnly=false)=>{const select=urgentOnly?original:ordinary;return ['card','discovery'].includes(previous)?(select(pool.filter(r=>lane(r)!==previous))||select(pool)):select(pool)};
+ // Urgent pools are already sorted by post time. Reapplying the ordinary
+ // retry/untried/linked preference here would undo that deadline order.
+ // Keep inter-lane fairness and the original policy among equal deadlines.
+ const urgentPick=pool=>{if(!pool.length)return;const first=Date.parse(`${pool[0].date}T${pool[0].startTime}:00+09:00`);return original(pool.filter(r=>Date.parse(`${r.date}T${r.startTime}:00+09:00`)===first));};
+ const fair=(pool,urgentOnly=false)=>{const select=urgentOnly?urgentPick:ordinary;return ['card','discovery'].includes(previous)?(select(pool.filter(r=>lane(r)!==previous))||select(pool)):select(pool)};
  const witnessed=eligible.filter(r=>witnessedUrl(r)&&!receiptCards.get(identity(r)));
  const r=fair(urgent,true)||pick(witnessed)||fair(eligible);if(!r)return{ok:true,status:candidates.length?'card-discovery-not-due':'complete',externalRequests:0};
  const discoveryClass=lane(r)==='discovery'?(receipts.has(identity(r))?'retry':'untried'):null;

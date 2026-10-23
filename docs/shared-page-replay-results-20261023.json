@@ -1,0 +1,412 @@
+{
+  "generatedAt": "2026-10-23T11:01:43.947Z",
+  "evidence": "Only the existing calendar-to-index DOM excerpt is witnessed; all index/meeting/card content in this replay is synthetic.",
+  "scope": "Page acquisition/card persistence only; prediction/GET/UI/LOCK completion is not implied.",
+  "initializationExcluded": true,
+  "inventoryEnumeration": "Legacy direct discovery and new engine receive the same supplied inventory; active production queue selection and its enumeration cost are not simulated.",
+  "results": [
+    {
+      "mode": "legacy",
+      "fixture": "synthetic-flat",
+      "days": 1,
+      "cadenceMs": 61000,
+      "deadlines": false,
+      "deliveryAttempts": 108,
+      "fixtureFetches": 108,
+      "realExternalRequests": 0,
+      "uniqueFetchedPages": 38,
+      "formalCards": 36,
+      "byMeeting": [
+        {
+          "race_date": "2026-10-24",
+          "venue": "京都",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-24",
+          "venue": "新潟",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-24",
+          "venue": "東京",
+          "races": 12
+        }
+      ],
+      "elapsedMs": 146,
+      "sqlite": {
+        "statements": 1764,
+        "returnedRows": 108,
+        "changedRows": 504,
+        "readJsonBytes": 18738,
+        "sourceBodyVersions": 0,
+        "sourceBodyUtf8Bytes": 0,
+        "normalizedFindingsCharacters": 0
+      },
+      "d1RowsRead": null,
+      "d1AccountUsage": null,
+      "predictionsVerified": 0,
+      "productionSuccesses": 0
+    },
+    {
+      "mode": "shared",
+      "fixture": "synthetic-flat",
+      "days": 1,
+      "cadenceMs": 61000,
+      "deadlines": false,
+      "deliveryAttempts": 39,
+      "fixtureFetches": 38,
+      "realExternalRequests": 0,
+      "uniqueFetchedPages": 38,
+      "formalCards": 36,
+      "byMeeting": [
+        {
+          "race_date": "2026-10-24",
+          "venue": "京都",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-24",
+          "venue": "新潟",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-24",
+          "venue": "東京",
+          "races": 12
+        }
+      ],
+      "elapsedMs": 113,
+      "sqlite": {
+        "statements": 848,
+        "returnedRows": 892,
+        "changedRows": 370,
+        "readJsonBytes": 594843,
+        "sourceBodyVersions": 38,
+        "sourceBodyUtf8Bytes": 17050,
+        "normalizedFindingsCharacters": 7029
+      },
+      "d1RowsRead": null,
+      "d1AccountUsage": null,
+      "predictionsVerified": 0,
+      "productionSuccesses": 0
+    },
+    {
+      "mode": "legacy",
+      "fixture": "synthetic-flat",
+      "days": 2,
+      "cadenceMs": 61000,
+      "deadlines": false,
+      "deliveryAttempts": 216,
+      "fixtureFetches": 216,
+      "realExternalRequests": 0,
+      "uniqueFetchedPages": 75,
+      "formalCards": 72,
+      "byMeeting": [
+        {
+          "race_date": "2026-10-24",
+          "venue": "京都",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-24",
+          "venue": "新潟",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-24",
+          "venue": "東京",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-25",
+          "venue": "京都",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-25",
+          "venue": "新潟",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-25",
+          "venue": "東京",
+          "races": 12
+        }
+      ],
+      "elapsedMs": 161,
+      "sqlite": {
+        "statements": 3528,
+        "returnedRows": 216,
+        "changedRows": 1008,
+        "readJsonBytes": 37476,
+        "sourceBodyVersions": 0,
+        "sourceBodyUtf8Bytes": 0,
+        "normalizedFindingsCharacters": 0
+      },
+      "d1RowsRead": null,
+      "d1AccountUsage": null,
+      "predictionsVerified": 0,
+      "productionSuccesses": 0
+    },
+    {
+      "mode": "shared",
+      "fixture": "synthetic-flat",
+      "days": 2,
+      "cadenceMs": 61000,
+      "deadlines": false,
+      "deliveryAttempts": 75,
+      "fixtureFetches": 74,
+      "realExternalRequests": 0,
+      "uniqueFetchedPages": 74,
+      "formalCards": 72,
+      "byMeeting": [
+        {
+          "race_date": "2026-10-24",
+          "venue": "京都",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-24",
+          "venue": "新潟",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-24",
+          "venue": "東京",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-25",
+          "venue": "京都",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-25",
+          "venue": "新潟",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-25",
+          "venue": "東京",
+          "races": 12
+        }
+      ],
+      "elapsedMs": 198,
+      "sqlite": {
+        "statements": 1676,
+        "returnedRows": 3070,
+        "changedRows": 730,
+        "readJsonBytes": 2240107,
+        "sourceBodyVersions": 74,
+        "sourceBodyUtf8Bytes": 34015,
+        "normalizedFindingsCharacters": 13950
+      },
+      "d1RowsRead": null,
+      "d1AccountUsage": null,
+      "predictionsVerified": 0,
+      "productionSuccesses": 0
+    },
+    {
+      "mode": "legacy",
+      "fixture": "synthetic-nested",
+      "days": 2,
+      "cadenceMs": 61000,
+      "deadlines": false,
+      "deliveryAttempts": 144,
+      "fixtureFetches": 144,
+      "realExternalRequests": 0,
+      "uniqueFetchedPages": 3,
+      "formalCards": 0,
+      "byMeeting": [],
+      "elapsedMs": 44,
+      "sqlite": {
+        "statements": 1728,
+        "returnedRows": 72,
+        "changedRows": 432,
+        "readJsonBytes": 16506,
+        "sourceBodyVersions": 0,
+        "sourceBodyUtf8Bytes": 0,
+        "normalizedFindingsCharacters": 0
+      },
+      "d1RowsRead": null,
+      "d1AccountUsage": null,
+      "predictionsVerified": 0,
+      "productionSuccesses": 0
+    },
+    {
+      "mode": "shared",
+      "fixture": "synthetic-nested",
+      "days": 2,
+      "cadenceMs": 61000,
+      "deadlines": false,
+      "deliveryAttempts": 82,
+      "fixtureFetches": 81,
+      "realExternalRequests": 0,
+      "uniqueFetchedPages": 81,
+      "formalCards": 72,
+      "byMeeting": [
+        {
+          "race_date": "2026-10-24",
+          "venue": "京都",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-24",
+          "venue": "新潟",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-24",
+          "venue": "東京",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-25",
+          "venue": "京都",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-25",
+          "venue": "新潟",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-25",
+          "venue": "東京",
+          "races": 12
+        }
+      ],
+      "elapsedMs": 224,
+      "sqlite": {
+        "statements": 1739,
+        "returnedRows": 3637,
+        "changedRows": 765,
+        "readJsonBytes": 2319186,
+        "sourceBodyVersions": 81,
+        "sourceBodyUtf8Bytes": 34658,
+        "normalizedFindingsCharacters": 14600
+      },
+      "d1RowsRead": null,
+      "d1AccountUsage": null,
+      "predictionsVerified": 0,
+      "productionSuccesses": 0
+    },
+    {
+      "mode": "legacy",
+      "fixture": "synthetic-flat",
+      "days": 2,
+      "cadenceMs": 1080000,
+      "deadlines": true,
+      "deliveryAttempts": 151,
+      "fixtureFetches": 151,
+      "realExternalRequests": 0,
+      "uniqueFetchedPages": 49,
+      "formalCards": 46,
+      "byMeeting": [
+        {
+          "race_date": "2026-10-24",
+          "venue": "京都",
+          "races": 7
+        },
+        {
+          "race_date": "2026-10-24",
+          "venue": "新潟",
+          "races": 7
+        },
+        {
+          "race_date": "2026-10-24",
+          "venue": "東京",
+          "races": 7
+        },
+        {
+          "race_date": "2026-10-25",
+          "venue": "京都",
+          "races": 9
+        },
+        {
+          "race_date": "2026-10-25",
+          "venue": "新潟",
+          "races": 8
+        },
+        {
+          "race_date": "2026-10-25",
+          "venue": "東京",
+          "races": 8
+        }
+      ],
+      "elapsedMs": 96,
+      "sqlite": {
+        "statements": 2410,
+        "returnedRows": 143,
+        "changedRows": 683,
+        "readJsonBytes": 25076,
+        "sourceBodyVersions": 0,
+        "sourceBodyUtf8Bytes": 0,
+        "normalizedFindingsCharacters": 0
+      },
+      "d1RowsRead": null,
+      "d1AccountUsage": null,
+      "predictionsVerified": 0,
+      "productionSuccesses": 0
+    },
+    {
+      "mode": "shared",
+      "fixture": "synthetic-flat",
+      "days": 2,
+      "cadenceMs": 1080000,
+      "deadlines": true,
+      "deliveryAttempts": 75,
+      "fixtureFetches": 74,
+      "realExternalRequests": 0,
+      "uniqueFetchedPages": 74,
+      "formalCards": 72,
+      "byMeeting": [
+        {
+          "race_date": "2026-10-24",
+          "venue": "京都",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-24",
+          "venue": "新潟",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-24",
+          "venue": "東京",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-25",
+          "venue": "京都",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-25",
+          "venue": "新潟",
+          "races": 12
+        },
+        {
+          "race_date": "2026-10-25",
+          "venue": "東京",
+          "races": 12
+        }
+      ],
+      "elapsedMs": 233,
+      "sqlite": {
+        "statements": 1676,
+        "returnedRows": 3070,
+        "changedRows": 730,
+        "readJsonBytes": 2240107,
+        "sourceBodyVersions": 74,
+        "sourceBodyUtf8Bytes": 34015,
+        "normalizedFindingsCharacters": 13950
+      },
+      "d1RowsRead": null,
+      "d1AccountUsage": null,
+      "predictionsVerified": 0,
+      "productionSuccesses": 0
+    }
+  ]
+}

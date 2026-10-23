@@ -7,7 +7,7 @@ import {ensureEvidenceTable,inspectSourceCard,runnerFingerprint,sha256} from './
 
 export function isPublishedCardIndex(value){try{const u=new URL(value);return u.origin==='https://www.jra.go.jp'&&u.pathname==='/JRADB/accessD.html'&&/^pw01dli00\/[0-9a-f]{2}$/i.test(u.searchParams.get('CNAME')||'');}catch{return false;}}
 
-async function saveDrawnOfficialCard(db,html,url,responseStatus,source,stamp,deps){
+export async function saveDrawnOfficialCard(db,html,url,responseStatus,source,stamp,deps){
  const inspect=(deps.inspectSourceCard||inspectSourceCard)(html);
  const race=(deps.parseRace||parseRace)({ok:true,status:responseStatus,url,body:html},source.date,source.venue,Number(source.raceNo));
  if(!inspect.allHorseNumbersObserved||!inspect.allFramesObserved||inspect.sourceRowCount!==race.runnerCount||inspect.declaredCount!==race.runnerCount||race.runnerCount<1||race.runnerCount>18||race.runners.length!==race.runnerCount||new Set(race.runners.map(r=>r.name)).size!==race.runnerCount||race.runners.some((r,i)=>r.horseNo!==i+1||!r.name))throw Error('Drawn official card failed runner/frame verification');

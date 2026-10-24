@@ -59,7 +59,7 @@ test('explicit target restricts SQL and receipt discovery to one race even with 
  for(const day of ['2026-10-24','2026-10-25'])for(const venue of ['東京','京都','新潟'])for(let raceNo=1;raceNo<=12;raceNo++)sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(day,venue,raceNo,'10:00','https://www.jra.go.jp/calendar');
  const observed=[];const tracked={prepare(q){const statement=db.prepare(q);return{...statement,bind(...args){observed.push({q,args});return statement.bind(...args)}}}};
  const result=await collectMissingOfficialCard(tracked,{date:'2026-10-24',venue:'新潟',race_no:3,includeFuture:true},{now:()=>now,discover:async(_,s)=>{assert.deepEqual([s.date,s.venue,s.raceNo],['2026-10-24','新潟',3]);return{ok:true,externalRequests:1}}});
- assert.equal(result.target.raceNo,3);const program=observed.find(x=>x.q.includes('FROM jra_race_program p'));assert.match(program.q,/WHERE p.race_date=\? AND p.venue=\? AND p.race_no=\? AND NOT EXISTS/);assert.deepEqual(program.args,['2026-10-24','新潟',3]);const receipts=observed.find(x=>x.q.includes('SELECT snapshot_id'));assert.equal(JSON.parse(receipts.args[0]).length,1);sql.close();
+ assert.equal(result.target.raceNo,3);const program=observed.find(x=>x.q.includes('FROM jra_race_program p'));assert.match(program.q,/WHERE p.race_date=\? AND p.venue=\? AND p.race_no=\? AND NOT EXISTS/);assert.deepEqual(program.args,['2026-10-24','新潟',3]);const receipts=observed.find(x=>x.q.includes('SELECT snapshot_id'));assert.equal(JSON.parse(receipts.args[0]).length,2);sql.close();
 });
 test('invalid explicit target fails before any DB read, including cooldown lookup',async()=>{
  let reads=0;const db={prepare(){reads++;throw Error('unexpected query')}};
@@ -244,4 +244,23 @@ test('natural Niigata12 reuses the due Niigata11 meeting URL without changing se
   runs.push(statements);sql.close();
  }
  assert.equal(runs[0],runs[1]);
+});
+
+test('saved Niigata11 changes sibling basis but Niigata12 keeps its existing meeting receipt and cooldown',async()=>{
+ const {readFile}=await import('node:fs/promises'),real=JSON.parse(await readFile(new URL('./fixtures/jra-niigata11-card-receipt-20261024.json',import.meta.url),'utf8'));
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-24T03:24:00Z'),oldId='official-card:2026-10-24:新潟:12:official-program',newId='official-card:2026-10-24:新潟:12:stored-sibling-card';
+ const meeting='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01drl00042026040320261024%2F33';
+ sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');
+ sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-24','新潟',12,'16:00','https://www.jra.go.jp/keiba/calendar2026/2026/10/1024.html');
+ sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?,?)').run(real.race.raceKey,'2026-10-24','新潟',11,real.audit.stored,real.storedCardEvidence.sourceUrl);
+ for(let i=0;i<real.audit.stored;i++)sql.prepare('INSERT INTO jra_runners VALUES(?)').run(real.race.raceKey);
+ sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(oldId,stamp-1,meeting,'official-card-index-found');
+ let observed;const deps={now:()=>stamp,discover:async(_,s)=>{observed=s;return{ok:true,externalRequests:0}}};
+ await collectMissingOfficialCard(db,{date:'2026-10-24',venue:'新潟',raceNo:12},deps);
+ assert.equal(observed.snapshotId,oldId);assert.equal(observed.officialMeetingListUrl,meeting);assert.equal(observed.officialRosterDiscoveryUrl,real.storedCardEvidence.sourceUrl);
+ // A second legacy identity waiting after a failure must not be bypassed by
+ // selecting the older active continuation. Both identities denote one race.
+ sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(newId,stamp+3600000,null,'failed');
+ assert.equal((await collectMissingOfficialCard(db,{date:'2026-10-24',venue:'新潟',raceNo:12},{...deps,discover:()=>assert.fail('race retry still blocked')})).status,'card-discovery-not-due');
+ sql.close();
 });

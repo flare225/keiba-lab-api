@@ -50,7 +50,7 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  });
  // Preserve the existing PR257 continuity logic across source-basis changes.
  const receiptIds=r=>['official-program','stored-sibling-card'].map(basis=>`official-card:${r.date}:${r.venue}:${r.raceNo}:${basis}`);
- let waiting=[];try{waiting=(await db.prepare('SELECT snapshot_id,next_attempt_at,card_url,status FROM lab_expected_card_discovery WHERE snapshot_id IN (SELECT value FROM json_each(?))').bind(JSON.stringify([...new Set(candidates.flatMap(r=>Array.from({length:12},(_,i)=>receiptIds({...r,raceNo:i+1})).flat()))])).all()).results||[]}catch(e){if(!/no such table/.test(String(e)))throw e;}
+ let waiting=[];try{waiting=(await db.prepare('SELECT snapshot_id,next_attempt_at,card_url,status FROM lab_expected_card_discovery WHERE snapshot_id IN (SELECT value FROM json_each(?))').bind(JSON.stringify([...new Set([...new Map(candidates.map(r=>[`${r.date}:${r.venue}`,r])).values()].flatMap(r=>Array.from({length:12},(_,i)=>receiptIds({...r,raceNo:i+1})).flat()))])).all()).results||[]}catch(e){if(!/no such table/.test(String(e)))throw e;}
  const receiptById=new Map(waiting.map(row=>[row.snapshot_id,row]));
  const identity=r=>{
   const existing=receiptIds(r).map(id=>receiptById.get(id)).filter(Boolean);

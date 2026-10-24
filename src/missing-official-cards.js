@@ -1,5 +1,5 @@
 import {discoverExpectedCard,isPublishedCardNavigation} from './expected-card-discovery.js';
-import {metaFromRacecardUrl} from './index-v1.1.4.js';
+import {metaFromMeetingListUrl,metaFromRacecardUrl} from './index-v1.1.4.js';
 import {officialUrl,jstDay} from './history-collection-v3.37.0.js';
 import {targetInput} from './race-history-assessment-v3.31.0.js';
 
@@ -48,19 +48,21 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
   const future=r=>/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${r.date}T${r.startTime}:00+09:00`)>stamp;
   return Number(future(b))-Number(future(a))||a.date.localeCompare(b.date)||Number(b.raceNo===11)-Number(a.raceNo===11)||b.raceNo-a.raceNo;
  });
- // The source basis can change when a sibling card is saved. Look up both
- // legacy receipt identities so an in-flight navigation is never abandoned.
+ // Preserve the existing PR257 continuity logic across source-basis changes.
  const receiptIds=r=>['official-program','stored-sibling-card'].map(basis=>`official-card:${r.date}:${r.venue}:${r.raceNo}:${basis}`);
  let waiting=[];try{waiting=(await db.prepare('SELECT snapshot_id,next_attempt_at,card_url,status FROM lab_expected_card_discovery WHERE snapshot_id IN (SELECT value FROM json_each(?))').bind(JSON.stringify([...new Set(candidates.flatMap(receiptIds))])).all()).results||[]}catch(e){if(!/no such table/.test(String(e)))throw e;}
  const receiptById=new Map(waiting.map(row=>[row.snapshot_id,row]));
  const identity=r=>{
-  const ids=receiptIds(r),existing=ids.map(id=>receiptById.get(id)).filter(Boolean);
-  // Prefer a due continuation over a newly derived source identity.
+  const existing=receiptIds(r).map(id=>receiptById.get(id)).filter(Boolean);
   const active=existing.filter(x=>x.card_url&&['official-card-link-found','official-card-index-found'].includes(x.status));
   const chosen=(active.length?active:existing).sort((a,b)=>Number(b.next_attempt_at)-Number(a.next_attempt_at))[0];
   return chosen?.snapshot_id||`official-card:${r.date}:${r.venue}:${r.raceNo}:${r.sourceBasis}`;
  };
  const receipts=new Map(waiting.map(r=>[r.snapshot_id,Number(r.next_attempt_at)||0]));
+ // Both legacy IDs denote one race: preserve the strictest existing retry
+ // deadline, even when the URL continuation lives on the older identity.
+ for(const r of candidates)if(receiptIds(r).some(id=>receiptById.has(id)))receipts.set(identity(r),Math.max(0,...receiptIds(r).map(id=>Number(receiptById.get(id)?.next_attempt_at)||0)));
+
  const receiptCards=new Map(waiting.map(r=>[r.snapshot_id,r.card_url]));
  // Ready card and discovery cohorts share the existing source slot. The
  // prior lane comes from the existing coordinator result, never a new clock.
@@ -95,6 +97,10 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  let url;try{url=witnessedCard||witnessedUrl(r)||officialUrl(r.sourceUrl);}catch{return{ok:false,status:'missing-program-source',externalRequests:0};}
  const meta=metaFromRacecardUrl(url),targetDate=r.date;
  const source={date:targetDate,venue:r.venue,raceNo:r.raceNo,snapshotId:identity(r),officialRosterDiscoveryUrl:url};
+ // Reuse a due same-day/same-venue meeting URL from the already-read receipts.
+ // No extra SELECT, URL construction, or write.
+ const meetingReceipt=waiting.find(row=>{if(Number(row.next_attempt_at)>stamp)return false;const m=metaFromMeetingListUrl(row.card_url);return m?.date===targetDate&&m.venue===r.venue;});
+ if(meetingReceipt)source.officialMeetingListUrl=meetingReceipt.card_url;
  if(meta?.date===targetDate&&meta.venue===r.venue&&meta.raceNo===r.raceNo)source.officialCardUrl=url;
  const result=await (deps.discover||discoverExpectedCard)(db,source,deps);
  return{...result,...(result.externalRequests?{cardSelection:selection}:{}),target:{date:targetDate,venue:r.venue,raceNo:r.raceNo},predictionRebuilt:false};

@@ -55,7 +55,9 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
  // discovery before an unrelated calendar request can reserve the shared slot.
  // The card collector still owns its usual gate/lease/receipt checks.
  const officialFirst=cardCompletionFirst||preferOfficialCards(rosters,now());
- const cardInput=cardCompletionFirst?{includeFuture:true,completeDateFirst:true}:{upcomingOnly:true,includeFuture:true};
+ // Sunday must retain Saturday's incomplete cards across the JST midnight.
+ const cardDay=cardCompletionFirst&&new Date(now()+9*3600000).getUTCDay()===0?new Date(Date.parse(today+'T00:00:00Z')-86400000).toISOString().slice(0,10):today;
+ const cardInput=cardCompletionFirst?{date:cardDay,includeFuture:true,completeDateFirst:true}:{upcomingOnly:true,includeFuture:true};
  const card=officialFirst?await cards(db,cardInput,deps):null;
  if(card&&(card.externalRequests||card.status==='cooldown'||card.saveMayHaveSucceeded))return acquisition(card);
  const recovery=await programs(db,{now});if(recovery&&(recovery.externalRequests||recovery.status==='cooldown'||recovery.saveMayHaveSucceeded))return acquisition(recovery);

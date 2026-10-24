@@ -71,6 +71,22 @@ async function saveDrawnOfficialCard(db,html,url,responseStatus,source,stamp,dep
  await db.prepare("INSERT OR IGNORE INTO lab_history_collection_targets (race_key,date,venue,race_no,history_limit,status) VALUES (?,?,?,?,10,'pending')").bind(raceKey,source.date,source.venue,Number(source.raceNo)).run();
  return {raceKey,runnerCount:race.runnerCount,fetchedAt};
 }
+// Reuse links already present in the fetched page; never fetch another page here.
+async function retainPublishedSiblingLinks(db,links,target,stamp){
+ const found=new Map();
+ for(const link of links){let m;try{m=metaFromRacecardUrl(officialUrl(link))}catch{continue;}
+  if(!m||m.date!==target.date||m.venue!==target.venue||m.raceNo===Number(target.raceNo)||m.raceNo<1||m.raceNo>12)continue;
+  const old=found.get(m.raceNo);if(!old||Number(m.detailed)>Number(old.detailed))found.set(m.raceNo,m);
+ }
+ if(!found.size)return 0;
+ const rows=[...found.values()].map(m=>({id:`official-card:${m.date}:${m.venue}:${m.raceNo}:official-program`,url:m.url}));
+ const result=await db.prepare(`INSERT INTO lab_expected_card_discovery(snapshot_id,card_url,next_attempt_at,status,error)
+ SELECT json_extract(value,'$.id'),json_extract(value,'$.url'),?,'official-card-link-found',NULL FROM json_each(?) WHERE 1
+ ON CONFLICT(snapshot_id) DO UPDATE SET card_url=excluded.card_url,next_attempt_at=MAX(lab_expected_card_discovery.next_attempt_at,excluded.next_attempt_at),status=excluded.status
+ WHERE lab_expected_card_discovery.status NOT IN ('official-card-saved','confirmed-predraw-saved') AND (lab_expected_card_discovery.card_url IS NULL OR lab_expected_card_discovery.status IN ('failed','official-card-index-found'))`).bind(stamp+60000,JSON.stringify(rows)).run();
+ return Number(result.meta?.changes)||0;
+}
+
 // Follow only published links. Each delivery fetches one page under the shared lease.
 export async function discoverExpectedCard(db,source,deps={}){
  if(source.officialMeetingListUrl){const m=metaFromMeetingListUrl(source.officialMeetingListUrl);if(!m||m.date!==source.date||m.venue!==source.venue)throw Error('保存済み開催一覧URLの対象が一致しません。');}
@@ -105,6 +121,7 @@ export async function discoverExpectedCard(db,source,deps={}){
    return {ok:true,status,confirmedRunners:roster.runners.length,externalRequests:1,officialCardsCreated:false};
   }
   const publishedLinks=extractLinks(html,url);
+  await retainPublishedSiblingLinks(db,publishedLinks,source,stamp);
   const links=publishedLinks.map(link=>{try{officialUrl(link);return metaFromRacecardUrl(link)}catch{return null}}).filter(m=>m?.date===source.date&&m.venue===source.venue&&m.raceNo===source.raceNo).sort((a,b)=>Number(b.detailed)-Number(a.detailed));
   if(!links.length){
    const meeting=publishedLinks.find(link=>{const m=metaFromMeetingListUrl(link);return m?.date===source.date&&m.venue===source.venue}),index=meeting||(!indexPage?publishedLinks.find(isPublishedCardIndex):null);

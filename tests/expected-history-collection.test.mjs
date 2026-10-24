@@ -146,3 +146,26 @@ test('published index cannot turn wrong-date or wrong-venue links into a saved c
  await discoverExpectedCard(db,s,{now:()=>time,fetcher:async()=>new Response(`<a href="#" onclick="doAction('/JRADB/accessD.html','pw01dli00/F3')">出馬表</a>`,{headers:{'content-type':'text/html;charset=utf-8'}})});time+=61000;
  const r=await discoverExpectedCard(db,s,{now:()=>time,fetcher:async()=>new Response('<a href="https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604031120261011/9E">wrong date</a><a href="https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202604031120261010/9E">wrong venue</a>',{headers:{'content-type':'text/html;charset=utf-8'}})});assert.equal(r.ok,false);assert.equal(r.officialCardsCreated,undefined);assert.match(r.error,/リンク/);sql.close();
 });
+
+test('09:06 production URLs resume through the exact meeting list, with one page per delivery and no cross-meeting links',async()=>{
+ const {readFile}=await import('node:fs/promises');
+ const {metaFromMeetingListUrl}=await import('../src/index-v1.1.4.js');
+ const evidence=JSON.parse(await readFile(new URL('./fixtures/jra-meeting-links-20261024.json',import.meta.url),'utf8'));
+ assert.equal(evidence.fullBodyIncluded,false);assert.equal(evidence.links.length,7);
+ const identities=evidence.links.map(metaFromMeetingListUrl).filter(Boolean);
+ assert.equal(identities.length,6);assert.deepEqual(new Set(identities.map(x=>x.date+':'+x.venue)),new Set(['2026-10-24:東京','2026-10-24:京都','2026-10-24:新潟','2026-10-25:東京','2026-10-25:京都','2026-10-25:新潟']));
+ for(const link of evidence.links){assert.equal(metaFromMeetingListUrl(link.replace('www.jra.go.jp','attacker.invalid')),null);assert.equal(metaFromMeetingListUrl(link+'&extra=1'),null);}
+ const {db,sql}=await fixture(),beforeCards=sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,s={...source,date:'2026-10-24',venue:'京都',raceNo:12,officialRosterDiscoveryUrl:evidence.sourceUrl};
+ const meeting=identities.find(x=>x.date===s.date&&x.venue===s.venue).url;
+ let time=Date.parse(evidence.observedAt),calls=0;const seen=[];
+ // Literal links from production evidence, reconstructed as anchors. The next
+ // page/card body is unavailable; its routing fixture is explicitly synthetic.
+ const page=evidence.links.map(u=>`<a href="${u}">published</a>`).join('');
+ const exact='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202604081220261024/AA';
+ const wrong=exact.replace('1220261024','1120261024');
+ const deps={now:()=>time,fetcher:async(url,options)=>{calls++;seen.push(new URLSearchParams(options.body).get('CNAME'));return new Response(calls===1?page:`<a href="${wrong}">wrong R</a><a href="${exact}">matching R</a>`,{headers:{'content-type':'text/html;charset=utf-8'}})}};
+ const first=await discoverExpectedCard(db,s,deps);assert.equal(first.status,'official-card-index-found');assert.equal(first.discoveryUrl,meeting);assert.equal(first.externalRequests,1);assert.equal(sql.prepare('SELECT card_url FROM lab_expected_card_discovery').get().card_url,meeting);
+ assert.equal((await discoverExpectedCard(db,s,deps)).externalRequests,0);assert.equal(calls,1);
+ time+=61000;const second=await discoverExpectedCard(db,s,deps);assert.equal(second.status,'official-card-link-found');assert.equal(second.externalRequests,1);assert.equal(calls,2);assert.equal(seen[1],new URL(meeting).searchParams.get('CNAME'));assert.equal(sql.prepare('SELECT card_url FROM lab_expected_card_discovery').get().card_url,exact);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,beforeCards);sql.close();
+});

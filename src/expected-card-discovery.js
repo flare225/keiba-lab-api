@@ -1,11 +1,16 @@
 import {ensureCollectionTables,officialUrl} from './history-collection-v3.37.0.js';
-import {extractLinks,metaFromRacecardUrl,parseRace} from './index-v1.1.4.js';
+import {extractLinks,metaFromMeetingListUrl,metaFromRacecardUrl,parseRace} from './index-v1.1.4.js';
 import {saveConfirmedPredraw} from './confirmed-predraw-roster.js';
 import {jraPageRequest,isJraSourceBlocked} from './jra-page-request.js';
 import {persistFullDay} from './index.js';
 import {ensureEvidenceTable,inspectSourceCard,runnerFingerprint,sha256} from './card-evidence.js';
 
 export function isPublishedCardIndex(value){try{const u=new URL(value);return u.origin==='https://www.jra.go.jp'&&u.pathname==='/JRADB/accessD.html'&&/^pw01dli00\/[0-9a-f]{2}$/i.test(u.searchParams.get('CNAME')||'');}catch{return false;}}
+
+export function isPublishedCardNavigation(value,target){
+ if(isPublishedCardIndex(value))return true;
+ const m=metaFromMeetingListUrl(value);return !!m&&m.date===target.date&&m.venue===target.venue;
+}
 
 // Failure evidence from the response already received. No extra request/SQL.
 // Full decoded-body SHA is distinct from the bounded, non-replayable excerpt.
@@ -79,7 +84,7 @@ export async function discoverExpectedCard(db,source,deps={}){
  let pause=60000,next=stamp+3600000,card=previous?.card_url||source.officialCardUrl||null,status='failed',error=null,failureEvidence=null;
  try{
   const url=officialUrl(card||source.officialRosterDiscoveryUrl);
-  const indexPage=isPublishedCardIndex(url);
+  const indexPage=isPublishedCardNavigation(url,source);
   if(card&&!indexPage){const identity=metaFromRacecardUrl(url);if(!identity||identity.date!==source.date||identity.venue!==source.venue||identity.raceNo!==Number(source.raceNo))throw Error('公式出馬表リンクの対象レースが一致しません。');}
   const request=jraPageRequest(url),response=await (deps.fetcher||fetch)(request.url,request.options);
   if(!response.ok){if(isJraSourceBlocked(response.status))pause=3600000;throw Error('JRA取得 HTTP '+response.status);}
@@ -98,8 +103,8 @@ export async function discoverExpectedCard(db,source,deps={}){
   const publishedLinks=extractLinks(html,url);
   const links=publishedLinks.map(link=>{try{officialUrl(link);return metaFromRacecardUrl(link)}catch{return null}}).filter(m=>m?.date===source.date&&m.venue===source.venue&&m.raceNo===source.raceNo).sort((a,b)=>Number(b.detailed)-Number(a.detailed));
   if(!links.length){
-   const index=publishedLinks.find(isPublishedCardIndex);
-   if(!indexPage&&index){card=index;status='official-card-index-found';next=stamp+60000;return{ok:true,status,discoveryUrl:index,externalRequests:1,officialCardsCreated:false};}
+   const meeting=publishedLinks.find(link=>{const m=metaFromMeetingListUrl(link);return m?.date===source.date&&m.venue===source.venue}),index=meeting||(!indexPage?publishedLinks.find(isPublishedCardIndex):null);
+   if(index&&index!==url){card=index;status='official-card-index-found';next=stamp+60000;return{ok:true,status,discoveryUrl:index,externalRequests:1,officialCardsCreated:false};}
    failureEvidence=await cardDiscoveryFailureEvidence(html,url,source,{httpStatus:response.status,observedAt:new Date(stamp).toISOString(),charset:/charset\s*=\s*[\"']?utf-?8/i.test(response.headers.get('content-type')||'')?'utf-8':'shift_jis',receivedBytes:bytes.byteLength},publishedLinks);
    throw Error('対象レースの公式出馬表リンクをまだ確認できません。');
   }

@@ -1,4 +1,4 @@
-import {discoverExpectedCard,isPublishedCardIndex} from './expected-card-discovery.js';
+import {discoverExpectedCard,isPublishedCardNavigation} from './expected-card-discovery.js';
 import {metaFromRacecardUrl} from './index-v1.1.4.js';
 import {officialUrl,jstDay} from './history-collection-v3.37.0.js';
 import {targetInput} from './race-history-assessment-v3.31.0.js';
@@ -65,7 +65,7 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  // new receipt identities suppress older due races, or retries suppress new ones.
  const previousClass=deps.previousCardSelection?.lastDiscoveryClass;
  const previousRetryStage=deps.previousCardSelection?.lastRetryDiscoveryStage;
- const continuation=r=>isPublishedCardIndex(receiptCards.get(identity(r)));
+ const continuation=r=>isPublishedCardNavigation(receiptCards.get(identity(r)),r);
  const retryPick=pool=>{
   const follow=pool.filter(continuation),search=pool.filter(r=>!continuation(r));
   return previousRetryStage==='continuation'?(pick(search)||pick(follow)):(pick(follow)||pick(search));

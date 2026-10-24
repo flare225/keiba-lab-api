@@ -12,7 +12,7 @@ test('official roster discovery follows witnessed exact-date links one page per 
  let time=stamp,calls=0;
  const deps={now:()=>time,fetcher:async()=>{calls++;return new Response('<a href="'+card.replace('20261010','20261011')+'">wrong day</a><a href="'+card+'">card</a>',{headers:{'content-type':'text/html;charset=utf-8'}})}};
  assert.equal((await discoverExpectedCard(db,s,deps)).status,'official-card-link-found');assert.equal(calls,1);
- assert.equal(sql.prepare('SELECT card_url FROM lab_expected_card_discovery').get().card_url,card);
+ assert.equal(sql.prepare('SELECT card_url FROM lab_expected_card_discovery WHERE snapshot_id=?').get(s.snapshotId).card_url,card);
  assert.equal((await discoverExpectedCard(db,s,deps)).externalRequests,0);
  time+=61000;const roster='<table><caption>2026年10月10日 東京<img alt="11レース"></caption><thead></thead><tbody><tr><td class="waku"></td><td class="num"></td><td class="horse"><div class="name"><a href="'+profile+'">HorseA</a></div></td><td class="jockey"><p class="age">牡2/黒鹿</p><p class="weight">56kg</p><p class="jockey">騎手</p></td></tr></tbody></table>';
  const result=await discoverExpectedCard(db,s,{...deps,fetcher:async(url,opts)=>{calls++;assert.equal(url,'https://www.jra.go.jp/JRADB/accessD.html');assert.equal(opts.method,'POST');assert.equal(new URLSearchParams(opts.body).get('CNAME'),new URL(card).searchParams.get('CNAME'));return new Response(roster,{headers:{'content-type':'text/html;charset=utf-8'}})}});
@@ -131,9 +131,9 @@ test('calendar published index is followed on the next natural delivery, never i
  const index='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dli00%2FF3',card='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604031120261010/9E';let time=stamp,calls=0;
  const calendar=`<h1>競馬番組（予定）</h1><a href="#" onclick="doAction('/JRADB/accessD.html','pw01dli00/F3');return false;">出馬表</a>`;
  const deps={now:()=>time,fetcher:async(url,opts)=>{calls++;return new Response(calls===1?calendar:'<a href="'+card+'">target</a>',{headers:{'content-type':'text/html;charset=utf-8'}})}};
- const first=await discoverExpectedCard(db,s,deps);assert.equal(first.status,'official-card-index-found');assert.equal(first.officialCardsCreated,false);assert.equal(calls,1);assert.equal(sql.prepare('SELECT card_url FROM lab_expected_card_discovery').get().card_url,index);
+ const first=await discoverExpectedCard(db,s,deps);assert.equal(first.status,'official-card-index-found');assert.equal(first.officialCardsCreated,false);assert.equal(calls,1);assert.equal(sql.prepare('SELECT card_url FROM lab_expected_card_discovery WHERE snapshot_id=?').get(s.snapshotId).card_url,index);
  assert.equal((await discoverExpectedCard(db,s,deps)).externalRequests,0);assert.equal(calls,1);
- time+=61000;const second=await discoverExpectedCard(db,s,deps);assert.equal(second.status,'official-card-link-found');assert.equal(calls,2);assert.equal(sql.prepare('SELECT card_url FROM lab_expected_card_discovery').get().card_url,card);sql.close();
+ time+=61000;const second=await discoverExpectedCard(db,s,deps);assert.equal(second.status,'official-card-link-found');assert.equal(calls,2);assert.equal(sql.prepare('SELECT card_url FROM lab_expected_card_discovery WHERE snapshot_id=?').get(s.snapshotId).card_url,card);sql.close();
 });
 test('index hop obeys the same HTTP403 pause without creating cards',async()=>{
  const {db,sql}=await fixture(),s={...source,officialRosterDiscoveryUrl:'https://www.jra.go.jp/calendar'};let time=stamp;
@@ -164,8 +164,25 @@ test('09:06 production URLs resume through the exact meeting list, with one page
  const exact='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202604081220261024/AA';
  const wrong=exact.replace('1220261024','1120261024');
  const deps={now:()=>time,fetcher:async(url,options)=>{calls++;seen.push(new URLSearchParams(options.body).get('CNAME'));return new Response(calls===1?page:`<a href="${wrong}">wrong R</a><a href="${exact}">matching R</a>`,{headers:{'content-type':'text/html;charset=utf-8'}})}};
- const first=await discoverExpectedCard(db,s,deps);assert.equal(first.status,'official-card-index-found');assert.equal(first.discoveryUrl,meeting);assert.equal(first.externalRequests,1);assert.equal(sql.prepare('SELECT card_url FROM lab_expected_card_discovery').get().card_url,meeting);
+ const first=await discoverExpectedCard(db,s,deps);assert.equal(first.status,'official-card-index-found');assert.equal(first.discoveryUrl,meeting);assert.equal(first.externalRequests,1);assert.equal(sql.prepare('SELECT card_url FROM lab_expected_card_discovery WHERE snapshot_id=?').get(s.snapshotId).card_url,meeting);
  assert.equal((await discoverExpectedCard(db,s,deps)).externalRequests,0);assert.equal(calls,1);
- time+=61000;const second=await discoverExpectedCard(db,s,deps);assert.equal(second.status,'official-card-link-found');assert.equal(second.externalRequests,1);assert.equal(calls,2);assert.equal(seen[1],new URL(meeting).searchParams.get('CNAME'));assert.equal(sql.prepare('SELECT card_url FROM lab_expected_card_discovery').get().card_url,exact);
+ time+=61000;const second=await discoverExpectedCard(db,s,deps);assert.equal(second.status,'official-card-link-found');assert.equal(second.externalRequests,1);assert.equal(calls,2);assert.equal(seen[1],new URL(meeting).searchParams.get('CNAME'));assert.equal(sql.prepare('SELECT card_url FROM lab_expected_card_discovery WHERE snapshot_id=?').get(s.snapshotId).card_url,exact);
  assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,beforeCards);sql.close();
+});
+
+test('one published page retains exact sibling card URLs without shortening waits or changing saved receipts',async()=>{
+ // Literal URLs already observed in production; the surrounding HTML is isolated.
+ const own='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0104202604031120261024/A2',peer='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0104202604031220261024/57',other='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202604081120261024/09';
+ for(const mode of ['new','waiting','saved']){
+  const {db,sql}=await fixture(),id='official-card:2026-10-24:新潟:12:official-program';
+  sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,card_url TEXT,next_attempt_at INTEGER NOT NULL,status TEXT,error TEXT)');
+  if(mode!=='new')sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?,?)').run(id,peer,stamp+3600000,mode==='saved'?'official-card-saved':'failed','old error');
+  const before=mode==='saved'?sql.prepare('SELECT * FROM lab_expected_card_discovery WHERE snapshot_id=?').get(id):null;
+  const target={date:'2026-10-24',venue:'新潟',raceNo:11,snapshotId:'official-card:2026-10-24:新潟:11:official-program',officialRosterDiscoveryUrl:'https://www.jra.go.jp/keiba/calendar2026/2026/10/1024.html'};
+  let calls=0;await discoverExpectedCard(db,target,{now:()=>stamp,fetcher:async()=>{calls++;return new Response([own,peer,other].map(u=>`<a href="${u}">published</a>`).join(''),{headers:{'content-type':'text/html;charset=utf-8'}})}});
+  const row=sql.prepare('SELECT * FROM lab_expected_card_discovery WHERE snapshot_id=?').get(id);assert.equal(row?.card_url,peer);assert.equal(calls,1);
+  if(mode==='waiting'){assert.equal(row.next_attempt_at,stamp+3600000);assert.equal(row.error,'old error');assert.equal((await discoverExpectedCard(db,{...target,raceNo:12,snapshotId:id},{now:()=>stamp+61000,fetcher:()=>assert.fail('individual wait')})).externalRequests,0);}
+  if(mode==='saved')assert.deepEqual(row,before);
+  assert.equal(sql.prepare("SELECT COUNT(*) n FROM lab_expected_card_discovery WHERE snapshot_id LIKE '%京都%'").get().n,0);sql.close();
+ }
 });

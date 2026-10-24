@@ -230,3 +230,18 @@ test('continuation selection reaches existing index parser and saves only exact 
  const r=await collectMissingOfficialCard(db,{date:'2026-10-23',includeFuture:true,upcomingOnly:true},{now:()=>stamp,previousCardSelection:{lane:'card',lastDiscoveryClass:'untried'},fetcher:async(request,options)=>{requests++;assert.equal(request,'https://www.jra.go.jp/JRADB/accessD.html');assert.equal(new URLSearchParams(options.body).get('CNAME'),'pw01dli00/F3');return new Response(`<a href="${url.replace('20261024','20261025')}">wrong date</a><a href="${url.replace('dde0105','dde0108')}">wrong venue</a><a href="${url.replace('08112026','08122026')}">wrong race</a><a href="${url}">correct</a>`,{headers:{'content-type':'text/html;charset=utf-8'}})}});
  assert.equal(requests,1);assert.equal(r.status,'official-card-link-found');assert.deepEqual(r.target,{date:'2026-10-24',venue:'東京',raceNo:11});assert.equal(r.cardSelection.retryDiscoveryStage,'continuation');assert.equal(r.officialCardsCreated,false);assert.equal(sql.prepare("SELECT card_url FROM lab_expected_card_discovery WHERE snapshot_id='official-card:2026-10-24:東京:11:official-program'").get().card_url,url);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);sql.close();
 });
+
+test('natural Niigata12 reuses the due Niigata11 meeting URL without changing selection, SQL count, or fetching the generic index',async()=>{
+ const {readFile}=await import('node:fs/promises');
+ const e=JSON.parse(await readFile(new URL('./fixtures/jra-meeting-links-20261024.json',import.meta.url),'utf8')),meeting=e.links.find(x=>decodeURIComponent(x).includes('pw01drl00042026040320261024/'));
+ const stamp=Date.parse('2026-10-24T01:08:01Z'),index=e.sourceUrl,runs=[];
+ for(const reuse of [false,true]){
+  const {sql,db}=fixture();sql.exec("CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,card_url TEXT,next_attempt_at INTEGER,status TEXT,error TEXT);ALTER TABLE lab_history_collection_budget ADD COLUMN lock_token TEXT;CREATE UNIQUE INDEX gate_name ON lab_history_collection_budget(name);UPDATE lab_history_collection_budget SET next_batch_at=0");
+  for(const no of [11,12]){sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-24','新潟',no,'15:25','https://www.jra.go.jp/keiba/calendar2026/2026/10/1024.html');sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?,?)').run(`official-card:2026-10-24:新潟:${no}:official-program`,no===11&&reuse?meeting:index,stamp-(no===11?60000:3600000),'official-card-index-found',null);}
+  let statements=0;const measured={prepare(q){statements++;return db.prepare(q)}};let calls=0;const seen=[];
+  const result=await collectMissingOfficialCard(measured,{date:'2026-10-24',upcomingOnly:true},{now:()=>stamp,previousCardSelection:{lane:'discovery'},fetcher:async(url,options)=>{calls++;const cname=new URLSearchParams(options.body).get('CNAME');seen.push(cname);return new Response(cname.includes('drl')?'<a href="https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0104202604031220261024/AA">routing fixture only</a>':e.links.map(x=>`<a href="${x}">recorded link</a>`).join(''),{headers:{'content-type':'text/html;charset=utf-8'}})}});
+  assert.equal(result.target.raceNo,12);assert.equal(calls,1);assert.equal(result.status,reuse?'official-card-link-found':'official-card-index-found');assert.equal(seen[0],new URL(reuse?meeting:index).searchParams.get('CNAME'));assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);
+  runs.push(statements);sql.close();
+ }
+ assert.equal(runs[0],runs[1]);
+});

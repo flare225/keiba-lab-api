@@ -86,3 +86,9 @@ test('existing coordinator persists completion-stage turn without a new table or
 test('a returned D1 pause from completion work never falls through to card acquisition',async()=>{
  const stamp=Date.parse('2026-10-23T14:30:00Z');const r=await collectLiveHistory({prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}},{scheduledTime:stamp},{now:()=>stamp,previousCardSelection:{lane:'discovery'},previousHistoryWorkStage:'acquisition',missing:async()=>null,registered:async()=>[{date:'2026-10-24'}],upcoming:async()=>({status:'paused',reason:'d1-daily-read-limit',externalRequests:0}),cards:()=>assert.fail('no work after pause')});assert.equal(r.status,'paused');assert.equal(r.historyWorkStage,undefined);
 });
+
+test('scheduled card completion mode uses its existing slot before history without excluding started cards',async()=>{
+ let history=0;const stamp=Date.parse('2026-10-24T04:50:00Z');
+ const r=await collectLiveHistory({prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}},{scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',missing:async()=>null,registered:async()=>[],cards:async(_,input)=>{assert.deepEqual(input,{includeFuture:true,completeDateFirst:true});return{status:'official-card-saved',externalRequests:1}},upcoming:async()=>{history++;assert.fail('card slot must not become history')},programs:()=>assert.fail('no second external batch')});
+ assert.equal(r.status,'official-card-saved');assert.equal(history,0);assert.equal(r.externalRequests,1);
+});

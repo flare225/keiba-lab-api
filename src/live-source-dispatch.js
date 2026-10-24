@@ -32,7 +32,7 @@ export async function scheduledMissingRoster(db,event,{now=Date.now}={}){return 
 
 // Priorities belong inside the history lane, never ahead of the common fair
 // dispatcher: a nonempty card/history queue must not suppress result collection.
-export async function collectLiveHistory(db,event,{now=Date.now,previousCardSelection=null,previousHistoryWorkStage=null,cards=collectMissingOfficialCard,main=collectTodayMainHistory,upcoming=collectUpcomingOfficialHistory,expected=scheduledWeekendHistory,details=scheduledPriorDetails,registered=storedExpectedSources,programs=recoverMissingPrograms,missing=scheduledMissingRoster}={}){
+export async function collectLiveHistory(db,event,{now=Date.now,previousCardSelection=null,previousHistoryWorkStage=null,cardCompletionFirst=false,cards=collectMissingOfficialCard,main=collectTodayMainHistory,upcoming=collectUpcomingOfficialHistory,expected=scheduledWeekendHistory,details=scheduledPriorDetails,registered=storedExpectedSources,programs=recoverMissingPrograms,missing=scheduledMissingRoster}={}){
  // Stage history is separate from card-candidate fairness. It is carried in
  // the existing coordinator result, with no new table or periodic clock.
  const acquisition=r=>r&&(r.externalRequests||r.attempted||r.saveMayHaveSucceeded)?{...r,historyWorkStage:'acquisition'}:r;
@@ -43,8 +43,8 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
   if(!gate)return{ok:true,status:'shared-gate-unavailable',externalRequests:0};
   const blocked=Math.max(Number(gate.next_batch_at)||0,Number(gate.locked_until)||0);
   if(blocked>now())return{ok:true,status:'cooldown',nextBatchAt:new Date(blocked).toISOString(),externalRequests:0};
-  checkedUpcoming=true;const completion=await measureD1Operation(db,measured=>upcoming(measured,{now,previousCardSelection}),now);
-  if(completion&&(completion.externalRequests||completion.attempted||completion.saveMayHaveSucceeded||['cooldown','lease-unavailable','shared-gate-unavailable','paused'].includes(completion.status)))return history(completion);
+  if(!cardCompletionFirst){checkedUpcoming=true;const completion=await measureD1Operation(db,measured=>upcoming(measured,{now,previousCardSelection}),now);
+  if(completion&&(completion.externalRequests||completion.attempted||completion.saveMayHaveSucceeded||['cooldown','lease-unavailable','shared-gate-unavailable','paused'].includes(completion.status)))return history(completion);}
  }
  // Reuse saved programs/receipts before reserving a calendar page. The roster
  // collector retains the same shared lease, cooldown and hourly source limit.
@@ -54,14 +54,15 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
  // In the existing publication window, use stored race programs for card
  // discovery before an unrelated calendar request can reserve the shared slot.
  // The card collector still owns its usual gate/lease/receipt checks.
- const officialFirst=preferOfficialCards(rosters,now());
- const card=officialFirst?await cards(db,{upcomingOnly:true,includeFuture:true},deps):null;
+ const officialFirst=cardCompletionFirst||preferOfficialCards(rosters,now());
+ const cardInput=cardCompletionFirst?{includeFuture:true,completeDateFirst:true}:{upcomingOnly:true,includeFuture:true};
+ const card=officialFirst?await cards(db,cardInput,deps):null;
  if(card&&(card.externalRequests||card.status==='cooldown'||card.saveMayHaveSucceeded))return acquisition(card);
  const recovery=await programs(db,{now});if(recovery&&(recovery.externalRequests||recovery.status==='cooldown'||recovery.saveMayHaveSucceeded))return acquisition(recovery);
  let early=null;
  if(rosters.length&&!officialFirst){early=await expected(db,deps);if(early.externalRequests||early.attempted||early.status==='cooldown')return history(early);}
 
- const remainingCard=card||await cards(db,{upcomingOnly:true,includeFuture:true},deps);
+ const remainingCard=card||await cards(db,cardInput,deps);
  if(remainingCard.externalRequests||remainingCard.status==='cooldown'||remainingCard.saveMayHaveSucceeded)return remainingCard;
  const priority=await main(db,deps);if(priority)return history(priority);
  const next=checkedUpcoming?null:await upcoming(db,deps);if(next)return history(next);
@@ -71,5 +72,5 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
  return remainder;
 }
 export async function dispatchLiveSources(event,env,{now=Date.now,archive=collectArchiveBatch,results=scheduledRichResult,history=collectLiveHistory}={}){
- return runSourceCoordinator(event,env,{now,jobs:{archive:()=>archive(env.DB,{now}),results:()=>results(env.DB,{now}),history:context=>history(env.DB,event,{now,previousCardSelection:context.previousCardSelection,previousHistoryWorkStage:context.previousHistoryWorkStage})}});
+ return runSourceCoordinator(event,env,{now,jobs:{archive:()=>archive(env.DB,{now}),results:()=>results(env.DB,{now}),history:context=>history(env.DB,event,{now,previousCardSelection:context.previousCardSelection,previousHistoryWorkStage:context.previousHistoryWorkStage,cardCompletionFirst:true})}});
 }

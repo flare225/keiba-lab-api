@@ -42,7 +42,8 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  const until=input.includeFuture?new Date(Date.parse(date+'T00:00:00Z')+7*86400000).toISOString().slice(0,10):date;
  const plan=await missingOfficialCards(db,date,stamp,until,target);
  if(plan.nextBatchAt&&Date.parse(plan.nextBatchAt)>stamp)return{ok:true,status:'cooldown',externalRequests:0,nextBatchAt:plan.nextBatchAt};
- const candidates=plan.missing.filter(r=>(!input.upcomingOnly||(/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${r.date}T${r.startTime}:00+09:00`)>stamp))&&(!specified||(r.date===date&&r.venue===input.venue&&r.raceNo===Number(input.raceNo??input.race_no))));
+ const firstIncompleteDay=input.completeDateFirst&&!specified?plan.missing.map(r=>r.date).sort()[0]:null;
+ const candidates=plan.missing.filter(r=>!firstIncompleteDay||r.date===firstIncompleteDay).filter(r=>(!input.upcomingOnly||(/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${r.date}T${r.startTime}:00+09:00`)>stamp))&&(!specified||(r.date===date&&r.venue===input.venue&&r.raceNo===Number(input.raceNo??input.race_no))));
  // Upcoming cards first. Past cards may be stored, never used to recreate forecasts.
  candidates.sort((a,b)=>{
   const future=r=>/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${r.date}T${r.startTime}:00+09:00`)>stamp;

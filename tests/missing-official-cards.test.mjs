@@ -283,3 +283,17 @@ test('completed sibling keeps its meeting URL available to an untried race, with
  assert.equal((await collectMissingOfficialCard(db,input,{...deps,discover:()=>assert.fail('own cooldown required')})).status,'card-discovery-not-due');
  sql.close();
 });
+
+test('completion-first keeps all Saturday cards before Sunday, including started races and individual retry waits',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-24T04:50:00Z'),input={date:'2026-10-24',includeFuture:true,completeDateFirst:true};
+ for(const day of ['2026-10-24','2026-10-25'])sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(day,'京都',1,'09:45','https://www.jra.go.jp/calendar');
+ sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');
+ const saturday='official-card:2026-10-24:京都:1:official-program';
+ sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(saturday,stamp+3600000,null,'failed');
+ assert.equal((await collectMissingOfficialCard(db,input,{now:()=>stamp,discover:()=>assert.fail('Sunday must not pass unfinished Saturday')})).status,'card-discovery-not-due');
+ sql.prepare('UPDATE lab_expected_card_discovery SET next_attempt_at=0').run();
+ const selected=[];const deps={now:()=>stamp,discover:async(_,source)=>{selected.push(source.date);return{status:'official-card-saved',externalRequests:1}}};
+ await collectMissingOfficialCard(db,input,deps);assert.deepEqual(selected,['2026-10-24']);
+ sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?,?)').run('saturday-saved','2026-10-24','京都',1,1,'https://www.jra.go.jp/card');sql.prepare('INSERT INTO jra_runners VALUES(?)').run('saturday-saved');
+ await collectMissingOfficialCard(db,input,deps);assert.deepEqual(selected,['2026-10-24','2026-10-25']);sql.close();
+});

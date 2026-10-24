@@ -59,7 +59,7 @@ test('explicit target restricts SQL and receipt discovery to one race even with 
  for(const day of ['2026-10-24','2026-10-25'])for(const venue of ['東京','京都','新潟'])for(let raceNo=1;raceNo<=12;raceNo++)sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(day,venue,raceNo,'10:00','https://www.jra.go.jp/calendar');
  const observed=[];const tracked={prepare(q){const statement=db.prepare(q);return{...statement,bind(...args){observed.push({q,args});return statement.bind(...args)}}}};
  const result=await collectMissingOfficialCard(tracked,{date:'2026-10-24',venue:'新潟',race_no:3,includeFuture:true},{now:()=>now,discover:async(_,s)=>{assert.deepEqual([s.date,s.venue,s.raceNo],['2026-10-24','新潟',3]);return{ok:true,externalRequests:1}}});
- assert.equal(result.target.raceNo,3);const program=observed.find(x=>x.q.includes('FROM jra_race_program p'));assert.match(program.q,/WHERE p.race_date=\? AND p.venue=\? AND p.race_no=\? AND NOT EXISTS/);assert.deepEqual(program.args,['2026-10-24','新潟',3]);const receipts=observed.find(x=>x.q.includes('SELECT snapshot_id'));assert.equal(JSON.parse(receipts.args[0]).length,2);sql.close();
+ assert.equal(result.target.raceNo,3);const program=observed.find(x=>x.q.includes('FROM jra_race_program p'));assert.match(program.q,/WHERE p.race_date=\? AND p.venue=\? AND p.race_no=\? AND NOT EXISTS/);assert.deepEqual(program.args,['2026-10-24','新潟',3]);const receipts=observed.find(x=>x.q.includes('SELECT snapshot_id'));assert.equal(JSON.parse(receipts.args[0]).length,24);assert.ok(JSON.parse(receipts.args[0]).every(id=>id.startsWith('official-card:2026-10-24:新潟:')));sql.close();
 });
 test('invalid explicit target fails before any DB read, including cooldown lookup',async()=>{
  let reads=0;const db={prepare(){reads++;throw Error('unexpected query')}};
@@ -262,5 +262,24 @@ test('saved Niigata11 changes sibling basis but Niigata12 keeps its existing mee
  // selecting the older active continuation. Both identities denote one race.
  sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(newId,stamp+3600000,null,'failed');
  assert.equal((await collectMissingOfficialCard(db,{date:'2026-10-24',venue:'新潟',raceNo:12},{...deps,discover:()=>assert.fail('race retry still blocked')})).status,'card-discovery-not-due');
+ sql.close();
+});
+
+test('completed sibling keeps its meeting URL available to an untried race, without bypassing its own wait',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-24T03:24:00Z');
+ const meeting='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01drl00042026040320261024%2F33';
+ sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');
+ sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-24','新潟',12,'16:00','https://www.jra.go.jp/keiba/calendar2026/2026/10/1024.html');
+ sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?,?)').run('saved11','2026-10-24','新潟',11,1,'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0104202604031120261024/AA');
+ sql.prepare('INSERT INTO jra_runners VALUES(?)').run('saved11');
+ sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run('official-card:2026-10-24:新潟:11:official-program',stamp+3600000,meeting,'official-card-index-found');
+ let observed;
+ const input={date:'2026-10-24',venue:'新潟',raceNo:12},deps={now:()=>stamp,discover:async(_,s)=>{observed=s;return{ok:true,externalRequests:0}}};
+ await collectMissingOfficialCard(db,input,deps);
+ assert.equal(observed.officialMeetingListUrl,meeting);
+ assert.equal(observed.snapshotId,'official-card:2026-10-24:新潟:12:stored-sibling-card');
+ // The sibling's next_attempt_at must not block the independent target.
+ sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run('official-card:2026-10-24:新潟:12:stored-sibling-card',stamp+3600000,null,'failed');
+ assert.equal((await collectMissingOfficialCard(db,input,{...deps,discover:()=>assert.fail('own cooldown required')})).status,'card-discovery-not-due');
  sql.close();
 });

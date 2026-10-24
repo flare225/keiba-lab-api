@@ -83,6 +83,18 @@ function extractLinks(html, base) {
   return links;
 }
 
+// Meeting-list URLs observed in the existing 2026-10-24 natural response.
+// Decode only published URLs; never generate a race URL from their components.
+function metaFromMeetingListUrl(value) {
+  try {
+    const u=new URL(value),m=(u.searchParams.get("CNAME")||"").match(/^pw01drl00(\d{2})(\d{4})(\d{2})(\d{2})(\d{8})\/[0-9a-f]{2}$/i);
+    if(u.origin!=="https://www.jra.go.jp"||u.username||u.password||u.pathname!=="/JRADB/accessD.html"||u.searchParams.size!==1||!m||!VENUE_BY_CODE[m[1]])return null;
+    const date=`${m[5].slice(0,4)}-${m[5].slice(4,6)}-${m[5].slice(6,8)}`;
+    if(m[2]!==m[5].slice(0,4)||new Date(date+"T00:00:00Z").toISOString().slice(0,10)!==date)return null;
+    return{date,venue:VENUE_BY_CODE[m[1]],url:u.href};
+  }catch{return null;}
+}
+
 function metaFromRacecardUrl(url) {
   try {
     const parsed = new URL(url);
@@ -413,4 +425,4 @@ export default {
   },
 };
 // Shared with date-specific ingestion; keep the existing repair behavior.
-export {fetchHtml, extractLinks, metaFromRacecardUrl, parseRace, extractRunners};
+export {fetchHtml, extractLinks, metaFromMeetingListUrl, metaFromRacecardUrl, parseRace, extractRunners};

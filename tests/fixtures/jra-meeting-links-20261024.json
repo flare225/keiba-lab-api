@@ -1,0 +1,18 @@
+{
+  "observedAt": "2026-10-24T00:06:53.909Z",
+  "sourceUrl": "https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dli00%2FF3",
+  "httpStatus": 200,
+  "bodySha256": "3500df9db073814db3e9e668d06160bceb1b00d466feb7eba405aca076d77bfb",
+  "hashBasis": "complete-decoded-html-utf8",
+  "fullBodyIncluded": false,
+  "note": "Actual extracted URL evidence; original HTML is not included. Reconstructed anchors in tests are not captured HTML.",
+  "links": [
+    "https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01drl00052026040820261024%2FBC",
+    "https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01drl00082026040820261024%2F9A",
+    "https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01drl00042026040320261024%2F33",
+    "https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01drl00052026040920261025%2FAA",
+    "https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01drl00082026040920261025%2F88",
+    "https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01drl00042026040420261025%2F21",
+    "https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01d5010A0%2FB8"
+  ]
+}

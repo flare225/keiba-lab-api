@@ -1,3 +1,4 @@
+import {readRosterVersion} from './roster-version-read.js';
 import {measureD1Operation} from './d1-operation-metrics.js';
 import {readEvidenceEvaluation,saveEvidenceEvaluation} from './evidence-evaluation-snapshots.js';
 import {rosterHistoryInventory} from './roster-history-inventory.js';
@@ -66,6 +67,12 @@ export default {
   if(u.pathname==='/v1/lab/expected-runners'&&request.method==='GET'&&u.searchParams.has('date')){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
    try{
+    const basis=u.searchParams.get('basis')||'auto';
+    if(basis!=='expected-roster'){
+     const version=await readRosterVersion(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no'),basis,sha256:u.searchParams.get('sha256')});
+     if(version)return Response.json({...version,version:VERSION},{headers});
+     if(basis!=='auto'||u.searchParams.has('sha256'))throw Error('指定された保存名簿版はありません。');
+    }else if(u.searchParams.has('sha256'))throw Error('旧想定版は既存snapshotIdで識別してください。');
     const source=await resolveExpectedCollectionSource(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')});
     if(!source)return Response.json({ok:false,version:VERSION,error:'対象レースの想定名簿は未保存です。'},{status:404,headers});
     return Response.json({ok:true,version:VERSION,source:{...source,names:undefined},runners:source.names.map(horseName=>({horseName,horseNo:null,frameNo:null,age:source.ages?.[horseName]??source.age??null})),guardrails:PREVIEW_GUARDS},{headers});

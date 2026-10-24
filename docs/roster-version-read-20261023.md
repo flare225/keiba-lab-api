@@ -1,0 +1,15 @@
+# 新旧名簿の版指定読み返し（本番未反映）
+
+原因: expected-runnersのresolveExpectedCollectionSourceはlab_expected_roster_registryと同梱EXPECTED_SOURCESだけを参照。公式枠順未確定版lab_confirmed_predraw_rostersを参照しないため、京都10/25 10Rでは保存メタデータ15頭に対し旧登録17頭が返る。coverageは正式→公式枠順未確定→想定の順なのでAPI間で対象版が異なった。
+
+修正: expected-runnersのGETだけに読み取り専用adapterを追加。defaultは証跡検証済み正式→公式枠順未確定→旧想定。basis=official-card / confirmed-predraw / expected-rosterで明示指定できる。正式は現行source evidenceと全馬番号/枠/名前fingerprint/保存時刻/頭数を照合。枠順未確定は番号枠nullを維持し正式扱いしない。全て対象日/場/R/公式URLを検証。
+
+新しい2種はsnapshotSha256とsnapshotを返し、sha256指定時は同じ版だけを返す。不一致/欠落時は別版へfallbackしない。snapshotにはbasis、raceKey、保存時刻、出典URL、保存済みsourceSha256、当該版だけのrunnersを含む。sourceSha256は元HTMLの保存済みハッシュで、今回新しく計算するcanonical readback snapshotのハッシュとは別。元HTMLは既存テーブルに無いため再hash不可、storedSnapshotHashAvailable=falseを明示。返却JSONの独立再計算と元HTMLの再検証を混同しない。
+
+既存predrawテーブルは現行版を保持する方式で、今回過去版保存schemaは追加しない。現行predrawが更新された場合、旧sha指定は拒否し、過去版を取得できたと偽らない。旧登録想定版、保存済み予想、その参照版/SHA/保存時刻、LOCK、予想生成のresolverは変更しない。
+
+負荷: 明示predrawは対象キーSELECT1。defaultの未保存判定は正式1+predraw1の最大2SELECT後に既存想定読取。正式版は対象race/evidence/runnersの3SELECT。全走査/外部要求/新SQL書込/schema変更なし。自然cronに追加SQLなし。API利用分D1実行量の本番値は未測定。
+
+検証: 旧APIが17頭を返す新規試験失敗を再現。修正後646/646成功。15頭指定GET/旧17頭指定GET、SHA違い拒否、正式18頭優先とfingerprint不一致拒否、出典対象違い、DB失敗停止。既存予想保存/正式18比較/旧21保全/LOCK試験も成功。既存2件のmockを読取追加に合わせfirst=nullへ拡張（本番のエラー握潰しはしない）。
+
+本番APIは未反映なので京都10R実データの15頭版指定GET/独立SHAはまだ実施不可。公開後は新15頭版だけを1GETで読み、保存メタデータ/版/SHA/番号nullを照合。正式18菊花賞の保存済み予想へ変更を加えない。

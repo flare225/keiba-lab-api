@@ -89,6 +89,13 @@ test('a returned D1 pause from completion work never falls through to card acqui
 
 test('scheduled card completion mode uses its existing slot before history without excluding started cards',async()=>{
  let history=0;const stamp=Date.parse('2026-10-24T04:50:00Z');
- const r=await collectLiveHistory({prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}},{scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',missing:async()=>null,registered:async()=>[],cards:async(_,input)=>{assert.deepEqual(input,{includeFuture:true,completeDateFirst:true});return{status:'official-card-saved',externalRequests:1}},upcoming:async()=>{history++;assert.fail('card slot must not become history')},programs:()=>assert.fail('no second external batch')});
+ const r=await collectLiveHistory({prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}},{scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',missing:async()=>null,registered:async()=>[],cards:async(_,input)=>{assert.deepEqual(input,{date:'2026-10-24',includeFuture:true,completeDateFirst:true});return{status:'official-card-saved',externalRequests:1}},upcoming:async()=>{history++;assert.fail('card slot must not become history')},programs:()=>assert.fail('no second external batch')});
  assert.equal(r.status,'official-card-saved');assert.equal(history,0);assert.equal(r.externalRequests,1);
+});
+
+
+test('Sunday completion still starts at Saturday so midnight cannot abandon its missing cards',async()=>{
+ const stamp=Date.parse('2026-10-24T15:10:00Z');let observed;
+ await collectLiveHistory({}, {scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,missing:async()=>null,registered:async()=>[],cards:async(_,input)=>{observed=input;return{status:'official-card-saved',externalRequests:1}},programs:()=>assert.fail('one source only')});
+ assert.equal(observed.date,'2026-10-24');assert.equal(observed.completeDateFirst,true);
 });

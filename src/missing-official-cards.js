@@ -1,5 +1,5 @@
 import {discoverExpectedCard,isPublishedCardNavigation} from './expected-card-discovery.js';
-import {metaFromRacecardUrl} from './index-v1.1.4.js';
+import {metaFromMeetingListUrl,metaFromRacecardUrl} from './index-v1.1.4.js';
 import {officialUrl,jstDay} from './history-collection-v3.37.0.js';
 import {targetInput} from './race-history-assessment-v3.31.0.js';
 
@@ -85,6 +85,10 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  let url;try{url=witnessedCard||witnessedUrl(r)||officialUrl(r.sourceUrl);}catch{return{ok:false,status:'missing-program-source',externalRequests:0};}
  const meta=metaFromRacecardUrl(url),targetDate=r.date;
  const source={date:targetDate,venue:r.venue,raceNo:r.raceNo,snapshotId:`official-card:${targetDate}:${r.venue}:${r.raceNo}:${r.sourceBasis}`,officialRosterDiscoveryUrl:url};
+ // Reuse a due same-day/same-venue meeting URL from the already-read receipts.
+ // No extra SELECT, URL construction, or write.
+ const meetingReceipt=waiting.find(row=>{if(Number(row.next_attempt_at)>stamp)return false;const m=metaFromMeetingListUrl(row.card_url);return m?.date===targetDate&&m.venue===r.venue;});
+ if(meetingReceipt)source.officialMeetingListUrl=meetingReceipt.card_url;
  if(meta?.date===targetDate&&meta.venue===r.venue&&meta.raceNo===r.raceNo)source.officialCardUrl=url;
  const result=await (deps.discover||discoverExpectedCard)(db,source,deps);
  return{...result,...(result.externalRequests?{cardSelection:selection}:{}),target:{date:targetDate,venue:r.venue,raceNo:r.raceNo},predictionRebuilt:false};

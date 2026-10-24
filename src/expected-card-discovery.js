@@ -73,6 +73,7 @@ async function saveDrawnOfficialCard(db,html,url,responseStatus,source,stamp,dep
 }
 // Follow only published links. Each delivery fetches one page under the shared lease.
 export async function discoverExpectedCard(db,source,deps={}){
+ if(source.officialMeetingListUrl){const m=metaFromMeetingListUrl(source.officialMeetingListUrl);if(!m||m.date!==source.date||m.venue!==source.venue)throw Error('保存済み開催一覧URLの対象が一致しません。');}
  if(source.officialCardUrl){const meta=metaFromRacecardUrl(officialUrl(source.officialCardUrl));if(!meta||meta.date!==source.date||meta.venue!==source.venue||meta.raceNo!==Number(source.raceNo))throw Error('公式出馬表リンクの対象が一致しません。');}
  if(!source.officialRosterDiscoveryUrl)return {ok:true,status:'not-configured',externalRequests:0};
  const now=deps.now||Date.now,stamp=now();await ensureCollectionTables(db);
@@ -82,6 +83,9 @@ export async function discoverExpectedCard(db,source,deps={}){
  const token=crypto.randomUUID(),claim=await db.prepare("UPDATE lab_history_collection_budget SET locked_until=?,lock_token=? WHERE name='jra-history' AND locked_until<=? AND next_batch_at<=?").bind(stamp+120000,token,stamp,stamp).run();
  if(Number(claim.meta?.changes)!==1)return {ok:true,status:'cooldown',externalRequests:0};
  let pause=60000,next=stamp+3600000,card=previous?.card_url||source.officialCardUrl||null,status='failed',error=null,failureEvidence=null;
+ // A due sibling receipt already discovered this literal meeting URL. Keep an
+ // exact individual card, but do not fetch the generic selector again.
+ if(source.officialMeetingListUrl&&(!card||isPublishedCardIndex(card)))card=source.officialCardUrl||source.officialMeetingListUrl;
  try{
   const url=officialUrl(card||source.officialRosterDiscoveryUrl);
   const indexPage=isPublishedCardNavigation(url,source);

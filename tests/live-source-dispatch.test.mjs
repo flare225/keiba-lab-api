@@ -94,10 +94,10 @@ test('scheduled card completion mode uses its existing slot before history witho
 });
 
 
-test('Sunday completion still starts at Saturday so midnight cannot abandon its missing cards',async()=>{
+test('Sunday completion starts at the current race day rather than the previous day backlog',async()=>{
  const stamp=Date.parse('2026-10-24T15:10:00Z');let observed;
  await collectLiveHistory({}, {scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,missing:async()=>null,registered:async()=>[],cards:async(_,input)=>{observed=input;return{status:'official-card-saved',externalRequests:1}},programs:()=>assert.fail('one source only')});
- assert.equal(observed.date,'2026-10-24');assert.equal(observed.completeDateFirst,true);
+ assert.equal(observed.date,'2026-10-25');assert.equal(observed.completeDateFirst,true);
 });
 
 test('card completion precedes an available supplemental roster and avoids registration scans',async()=>{

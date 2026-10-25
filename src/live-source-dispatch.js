@@ -49,8 +49,7 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
  const deps={now,previousCardSelection},today=jstDay(now()),until=new Date(Date.parse(today+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);
  // Complete cards before supplemental acquisition or its roster inventory read.
  // The existing card collector remains responsible for gate, lease and budget.
- const cardDay=cardCompletionFirst&&new Date(now()+9*3600000).getUTCDay()===0?new Date(Date.parse(today+'T00:00:00Z')-86400000).toISOString().slice(0,10):today;
- const cardInput=cardCompletionFirst?{date:cardDay,includeFuture:true,completeDateFirst:true}:{upcomingOnly:true,includeFuture:true};
+ const cardInput=cardCompletionFirst?{date:today,includeFuture:true,completeDateFirst:true}:{upcomingOnly:true,includeFuture:true};
  const stops=r=>r&&(r.externalRequests||r.attempted||r.saveMayHaveSucceeded||['cooldown','lease-unavailable','shared-gate-unavailable','paused'].includes(r.status));
  let card=cardCompletionFirst?await cards(db,cardInput,deps):null;
  if(stops(card))return acquisition(card);

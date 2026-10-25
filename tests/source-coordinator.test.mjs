@@ -30,3 +30,14 @@ test('pipeline status selects latest once per group rather than once per histori
  const before=sql.prepare('SELECT p.* FROM lab_bounded_pipeline_runs p WHERE p.run_id=(SELECT q.run_id FROM lab_bounded_pipeline_runs q WHERE q.job=p.job AND q.trigger_kind=p.trigger_kind ORDER BY q.started_at DESC,q.run_id DESC LIMIT 1) ORDER BY p.job,p.trigger_kind').all();
  assert.deepEqual(sql.prepare(query).all(),before);sql.close();
 });
+
+test('source latest lookup preserves every trigger kind and missing-job fairness with accumulated history',async()=>{
+ const {db,sql}=fixture();await runSourceCoordinator({cron:SOURCE_CRON,scheduledTime:start},{DB:db},{now:()=>start,jobs:{archive:async()=>({status:'idle'})}});
+ const insert=sql.prepare('INSERT INTO lab_bounded_pipeline_runs(run_id,job,trigger_kind,started_at,status) VALUES(?,?,?,?,?)');
+ for(let i=0;i<20000;i++)insert.run('bulk'+i,['archive','results','history','learning'][i%4],['scheduled','manual','custom'][i%3],start+i,'complete');
+ let query;const observed={prepare(q){query=q;return db.prepare(q)}};
+ const expected=sql.prepare("SELECT job,MAX(started_at) latest FROM lab_bounded_pipeline_runs WHERE job IN ('archive','results','history') GROUP BY job").all();
+ assert.equal(await pickSourceJob(observed),'archive');assert.deepEqual(sql.prepare(query).all(),expected);
+ sql.exec("DELETE FROM lab_bounded_pipeline_runs WHERE job='results'");assert.equal(await pickSourceJob(db),'results');
+ sql.exec('DELETE FROM lab_bounded_pipeline_runs');assert.equal(await pickSourceJob(db),'archive');sql.close();
+});

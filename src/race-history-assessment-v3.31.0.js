@@ -1,3 +1,4 @@
+import {postRaceHistoryBatch} from './post-race-history-batch.js';
 import {storedExpectedSources} from './expected-roster-registry.js';
 import {buildRaceShapeEvidence} from './running-style-evidence.js';
 import {EXPECTED_SOURCES,historyForExpected} from './expected-runner-preview-v3.30.0.js';
@@ -34,10 +35,11 @@ export async function raceHistoryAssessment(db,input){
 
 export async function officialHistoryEvidence(db,context,track=null,preloaded=null){
  const histories=[];
+ for(const runner of context.runners)if(!Number.isInteger(Number(runner.age))||Number(runner.age)<2||Number(runner.age)>20)throw Error('出走馬の年齢データを確認できません。精査を保留します。');
+ const batch=preloaded||await postRaceHistoryBatch(db,context);
  for(const runner of context.runners){
-  if(!Number.isInteger(Number(runner.age))||Number(runner.age)<2||Number(runner.age)>20)throw Error('出走馬の年齢データを確認できません。精査を保留します。');
   const supplement=EXPECTED_SOURCES.find(s=>s.raceKey===context.raceKey&&s.names.includes(runner.horse_name));
-  histories.push(await historyForExpected(db,{...context,age:Number(runner.age),snapshotId:supplement?.snapshotId||context.snapshotId||'no-expected-supplement'},runner.horse_name,8,preloaded?.get(runner.horse_name)||null));
+  histories.push(await historyForExpected(db,{...context,age:Number(runner.age),snapshotId:supplement?.snapshotId||context.snapshotId||'no-expected-supplement'},runner.horse_name,8,batch.get(runner.horse_name)||null));
  }
  const byHistory=new Map(histories.map(h=>[h.horseName,h]));
  const all=rankAssessment(context.runners.map(r=>({horseName:r.horse_name,horseNo:Number(r.horse_no),assessment:assessExpectedHistory(byHistory.get(r.horse_name),context,track,'recent-three-v1')})));

@@ -267,3 +267,11 @@ test('shared natural handoff can process another due card while the legacy-selec
  const waiting=await collectLiveHistory(db,{scheduledTime:FIXTURE_STAMP+61000},{now:()=>FIXTURE_STAMP+61000,cardCompletionFirst:true,cards:(d,input,deps)=>collectMissingOfficialCard(d,{date:selected.date},{...deps,discover:discoverSharedSelectedCard,fetcher:()=>assert.fail('private retry is not due')}),missing:()=>assert.fail('waiting acquisition owns this stage'),registered:()=>assert.fail('no repeated roster scan'),programs:()=>assert.fail('no fallthrough source request')});
  assert.equal(waiting.status,'awaiting-source-or-deadline');assert.equal(waiting.externalRequests,0);assert.equal(waiting.attempted,true);assert.equal(waiting.cardSelection.lane,'card');sql.close();
 });
+
+test('a meeting URL parsed for one race is reused by another race without revisiting its calendar',()=>{
+ const literal='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01drl00042026040420261025%2F21';
+ const race=racesFixture().find(r=>r.date==='2026-10-25'&&r.venue==='新潟'&&r.raceNo===1),input={...race,start:Date.parse(race.startAt),enqueued:FIXTURE_STAMP};
+ const saved={page_url:INDEX,status:'parsed',next_at:0,body_sha:'already-saved-index',parser_version:SHARED_PAGE_POLICY.parserVersion,observed_at:FIXTURE_STAMP,findings_json:JSON.stringify({pages:[literal],cards:[]})};
+ assert.equal(planSharedPages([input],[saved],FIXTURE_STAMP).jobs[0].url,canonicalPublishedPage(literal));
+ for(const other of [{...input,venue:'京都'},{...input,date:'2026-10-24',rootUrl:calendar('2026-10-24')}])assert.equal(planSharedPages([other],[saved],FIXTURE_STAMP).jobs[0].url,other.rootUrl);
+});

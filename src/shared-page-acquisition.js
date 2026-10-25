@@ -52,14 +52,15 @@ function validateInventory(races,scope,stamp){
 }
 function findings(row){return row?.findings_json?JSON.parse(row.findings_json):null;}
 export function planSharedPages(races,rows,stamp,parserVersion=SHARED_PAGE_POLICY.parserVersion,{allowStartedCards=false}={}){
- const records=new Map(rows.map(r=>[r.page_url,r])),known=new Map(),jobs=new Map();let complete=0,waiting=0;
+ const records=new Map(rows.map(r=>[r.page_url,r])),known=new Map(),meetings=new Map(),jobs=new Map();let complete=0,waiting=0;
  for(const row of rows){const f=findings(row);if(row.status!=='parsed'||!f||row.parser_version!==parserVersion)continue;
+  for(const page of f.pages||[]){const meeting=metaFromMeetingListUrl(page);if(meeting)meetings.set(`${meeting.date}:${meeting.venue}`,canonicalPublishedPage(page));}
   for(const card of f.cards||[]){const old=known.get(key(card));if(!old||Number(card.detailed)>Number(old.detailed))known.set(key(card),card);}
  }
  const add=(url,race,depth)=>{const old=jobs.get(url);if(old)old.races.push(race);else jobs.set(url,{url,races:[race],depth,row:records.get(url)});};
  for(const race of races){if(race.formalSaved||(!allowStartedCards&&race.start<=stamp+300000)){complete+=Number(!!race.formalSaved);continue;}
   const card=race.cardUrl||known.get(key(race))?.url;
-  const queue=[{url:card||race.rootUrl,depth:0}],seen=new Set(),refresh=[];let found=false;
+  const queue=[{url:card||meetings.get(`${race.date}:${race.venue}`)||race.rootUrl,depth:0}],seen=new Set(),refresh=[];let found=false;
   while(queue.length){const {url,depth}=queue.shift();if(seen.has(url)||depth>SHARED_PAGE_POLICY.maxDepth)continue;seen.add(url);
    const row=records.get(url);
    if(row?.status==='formal-saved'&&row.card_key===key(race)){complete++;found=true;break;}

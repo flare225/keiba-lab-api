@@ -25,7 +25,7 @@ import {verifyEditorialClaims} from './editorial-claim-verification.js';
 import {seedEditorialReferences,readEditorialReferences,editorialReferencePage} from './editorial-reference-notes.js';
 import {scheduledReadStatus,runWithScheduledReadBudget,scheduledBudgetLane} from './scheduled-read-budget.js';
 import {COLLECTION_READ_POLICY,shouldRunScheduled} from './collection-read-policy.js';
-import {runPipelineJob} from './pipeline-runs-v3.40.0.js';
+import {runPipelineJob,readPipelineFailure} from './pipeline-runs-v3.40.0.js';
 import {priorDetailStatus,collectPriorDetails} from './prior-result-details.js';
 import {collectLockedMarkResults,readLockedMarkResults} from './locked-mark-result-evidence.js';
 import {userMarkLockEndpoint,readUserMarkLock} from './user-mark-lock.js';
@@ -42,6 +42,11 @@ const historyInventories=new WeakMap();
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/pipeline-status'&&request.method==='GET'&&u.searchParams.has('failure_job')){
+   const job=u.searchParams.get('failure_job'),trigger=u.searchParams.get('trigger_kind')||'scheduled',headers={'cache-control':'no-store','access-control-allow-origin':'*'};
+   if(!['archive','history','results','learning','prior-details'].includes(job)||!['scheduled','manual'].includes(trigger))return Response.json({ok:false,error:'Unsupported pipeline failure scope'},{status:400,headers});
+   try{return Response.json({...await readPipelineFailure(env.DB,job,trigger),version:VERSION},{headers});}catch(e){return Response.json({ok:false,error:String(e.message||e),version:VERSION},{status:503,headers});}
+  }
   if(u.pathname==='/v1/lab/evidence-evaluation'){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*','access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'content-type'};
    if(request.method==='OPTIONS')return new Response(null,{status:204,headers});

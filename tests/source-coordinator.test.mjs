@@ -41,3 +41,14 @@ test('source latest lookup preserves every trigger kind and missing-job fairness
  sql.exec("DELETE FROM lab_bounded_pipeline_runs WHERE job='results'");assert.equal(await pickSourceJob(db),'results');
  sql.exec('DELETE FROM lab_bounded_pipeline_runs');assert.equal(await pickSourceJob(db),'archive');sql.close();
 });
+
+test('explicit failure read retrieves saved evidence hidden by cooldown with one indexed bounded SELECT',async()=>{
+ const {db,sql}=fixture();await runSourceCoordinator({cron:SOURCE_CRON,scheduledTime:start},{DB:db},{now:()=>start,jobs:{archive:async()=>({status:'idle'})}});
+ const evidence={target:{date:'2026-10-25',venue:'京都',raceNo:3},cardInspection:{problemRows:[{connectionCell:'missing age'}]}};
+ const put=sql.prepare('INSERT INTO lab_bounded_pipeline_runs(run_id,job,trigger_kind,started_at,status,result_json) VALUES(?,?,?,?,?,?)');put.run('failure','history','scheduled',start+1,'deferred',JSON.stringify({error:'Not a pre-draw roster',failureEvidence:evidence}));put.run('later','history','scheduled',start+2,'cooldown','{}');
+ const app=(await import('../src/index-v3.49.0.js')).default;let query,count=0;const observed={prepare(q){count++;query=q;assert.match(q,/^SELECT/);return db.prepare(q)}};
+ const response=await app.fetch(new Request('https://test/v1/lab/pipeline-status?failure_job=history'),{DB:observed},{}),data=await response.json();assert.equal(response.status,200);assert.equal(data.runId,'failure');assert.deepEqual(data.failureEvidence,evidence);assert.equal(count,1);assert.equal(data.scannedRuns,2);assert.match(query,/LIMIT 32$/);
+ const plan=sql.prepare('EXPLAIN QUERY PLAN '+query).all('history','scheduled').map(r=>r.detail).join(' ');assert.match(plan,/lab_pipeline_job_started/);
+ count=0;assert.equal((await app.fetch(new Request('https://test/v1/lab/pipeline-status?failure_job=invalid'),{DB:observed},{})).status,400);assert.equal(count,0);
+ for(let i=0;i<32;i++)put.run('new'+i,'history','scheduled',start+3+i,'cooldown','{}');const {readPipelineFailure}=await import('../src/pipeline-runs-v3.40.0.js');assert.equal((await readPipelineFailure(db,'history')).available,false);assert.equal((await readPipelineFailure(db,'history')).scannedRuns,32);sql.close();
+});

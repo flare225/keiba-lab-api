@@ -42,8 +42,7 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  const until=input.includeFuture?new Date(Date.parse(date+'T00:00:00Z')+7*86400000).toISOString().slice(0,10):date;
  const plan=await missingOfficialCards(db,date,stamp,until,target);
  if(plan.nextBatchAt&&Date.parse(plan.nextBatchAt)>stamp)return{ok:true,status:'cooldown',externalRequests:0,nextBatchAt:plan.nextBatchAt};
- const firstIncompleteDay=input.completeDateFirst&&!specified?plan.missing.map(r=>r.date).sort()[0]:null;
- const candidates=plan.missing.filter(r=>!firstIncompleteDay||r.date===firstIncompleteDay).filter(r=>(!input.upcomingOnly||(/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${r.date}T${r.startTime}:00+09:00`)>stamp))&&(!specified||(r.date===date&&r.venue===input.venue&&r.raceNo===Number(input.raceNo??input.race_no))));
+ const candidates=plan.missing.filter(r=>(!input.upcomingOnly||(/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${r.date}T${r.startTime}:00+09:00`)>stamp))&&(!specified||(r.date===date&&r.venue===input.venue&&r.raceNo===Number(input.raceNo??input.race_no))));
  // Upcoming cards first. Past cards may be stored, never used to recreate forecasts.
  candidates.sort((a,b)=>{
   const future=r=>/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${r.date}T${r.startTime}:00+09:00`)>stamp;
@@ -71,7 +70,9 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  const due=r=>!receipts.has(identity(r))||receipts.get(identity(r))<=stamp;
  const lane=r=>{const u=receiptCards.get(identity(r))||witnessedUrl(r)||r.sourceUrl,m=metaFromRacecardUrl(u);return m?.date===r.date&&m.venue===r.venue&&m.raceNo===r.raceNo?'card':'discovery'};
  const pick=pool=>pool.find(r=>!receipts.has(identity(r)))||pool.slice().sort((a,b)=>receipts.get(identity(a))-receipts.get(identity(b)))[0];
- const eligible=candidates.filter(due),urgent=eligible.filter(r=>{const start=Date.parse(`${r.date}T${r.startTime}:00+09:00`);return start>stamp&&start-stamp<=12*3600000});
+ let eligible=candidates.filter(due);
+ if(input.completeDateFirst&&!specified){const firstDueDay=eligible.map(r=>r.date).sort()[0];eligible=eligible.filter(r=>r.date===firstDueDay);}
+ const urgent=eligible.filter(r=>{const start=Date.parse(`${r.date}T${r.startTime}:00+09:00`);return start>stamp&&start-stamp<=12*3600000});
  const previous=deps.previousCardSelection?.lane;
  const original=pool=>pick(pool.filter(r=>linked.has(identity(r))))||pick(pool);
  // Share discovery turns between untried races and due receipts. Do not let

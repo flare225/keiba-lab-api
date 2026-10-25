@@ -46,20 +46,19 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
   if(!cardCompletionFirst){checkedUpcoming=true;const completion=await measureD1Operation(db,measured=>upcoming(measured,{now,previousCardSelection}),now);
   if(completion&&(completion.externalRequests||completion.attempted||completion.saveMayHaveSucceeded||['cooldown','lease-unavailable','shared-gate-unavailable','paused'].includes(completion.status)))return history(completion);}
  }
- // Reuse saved programs/receipts before reserving a calendar page. The roster
- // collector retains the same shared lease, cooldown and hourly source limit.
- const supplemental=await missing(db,event,{now});if(supplemental&&(supplemental.externalRequests||supplemental.status==='cooldown'||supplemental.saveMayHaveSucceeded||['roster-saved','roster-reconciled'].includes(supplemental.status)))return acquisition(supplemental);
  const deps={now,previousCardSelection},today=jstDay(now()),until=new Date(Date.parse(today+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);
- const rosters=await registered(db,today,until);
- // In the existing publication window, use stored race programs for card
- // discovery before an unrelated calendar request can reserve the shared slot.
- // The card collector still owns its usual gate/lease/receipt checks.
- const officialFirst=cardCompletionFirst||preferOfficialCards(rosters,now());
- // Sunday must retain Saturday's incomplete cards across the JST midnight.
+ // Complete cards before supplemental acquisition or its roster inventory read.
+ // The existing card collector remains responsible for gate, lease and budget.
  const cardDay=cardCompletionFirst&&new Date(now()+9*3600000).getUTCDay()===0?new Date(Date.parse(today+'T00:00:00Z')-86400000).toISOString().slice(0,10):today;
  const cardInput=cardCompletionFirst?{date:cardDay,includeFuture:true,completeDateFirst:true}:{upcomingOnly:true,includeFuture:true};
- const card=officialFirst?await cards(db,cardInput,deps):null;
- if(card&&(card.externalRequests||card.status==='cooldown'||card.saveMayHaveSucceeded))return acquisition(card);
+ const stops=r=>r&&(r.externalRequests||r.attempted||r.saveMayHaveSucceeded||['cooldown','lease-unavailable','shared-gate-unavailable','paused'].includes(r.status));
+ let card=cardCompletionFirst?await cards(db,cardInput,deps):null;
+ if(stops(card))return acquisition(card);
+ const supplemental=await missing(db,event,{now});if(supplemental&&(supplemental.externalRequests||supplemental.status==='cooldown'||supplemental.saveMayHaveSucceeded||['roster-saved','roster-reconciled'].includes(supplemental.status)))return acquisition(supplemental);
+ const rosters=await registered(db,today,until);
+ const officialFirst=cardCompletionFirst||preferOfficialCards(rosters,now());
+ if(officialFirst&&!card)card=await cards(db,cardInput,deps);
+ if(stops(card))return acquisition(card);
  const recovery=await programs(db,{now});if(recovery&&(recovery.externalRequests||recovery.status==='cooldown'||recovery.saveMayHaveSucceeded))return acquisition(recovery);
  let early=null;
  if(rosters.length&&!officialFirst){early=await expected(db,deps);if(early.externalRequests||early.attempted||early.status==='cooldown')return history(early);}

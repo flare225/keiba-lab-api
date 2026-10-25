@@ -99,3 +99,16 @@ test('Sunday completion still starts at Saturday so midnight cannot abandon its 
  await collectLiveHistory({}, {scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,missing:async()=>null,registered:async()=>[],cards:async(_,input)=>{observed=input;return{status:'official-card-saved',externalRequests:1}},programs:()=>assert.fail('one source only')});
  assert.equal(observed.date,'2026-10-24');assert.equal(observed.completeDateFirst,true);
 });
+
+test('card completion precedes an available supplemental roster and avoids registration scans',async()=>{
+ const calls=[];const stamp=Date.parse('2026-10-25T00:30:00Z');
+ const r=await collectLiveHistory({}, {scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,missing:async()=>{calls.push('roster');return{status:'roster-saved',externalRequests:1}},registered:()=>assert.fail('no roster inventory before card completion'),cards:async()=>{calls.push('card');return{status:'official-card-saved',externalRequests:1}},programs:()=>assert.fail('one source slot')});
+ assert.equal(r.status,'official-card-saved');assert.deepEqual(calls,['card']);
+});
+test('card completion preserves stops and falls back once only when cards have no work',async()=>{
+ const stamp=Date.parse('2026-10-25T00:30:00Z');
+ for(const status of ['cooldown','lease-unavailable','shared-gate-unavailable','paused']){
+  const r=await collectLiveHistory({}, {scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,cards:async()=>({status,externalRequests:0}),missing:()=>assert.fail('must preserve card stop'),registered:()=>assert.fail('no inventory on stop')});assert.equal(r.status,status);
+ }
+ const calls=[];const r=await collectLiveHistory({}, {scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,cards:async()=>{calls.push('card');return{status:'complete',externalRequests:0}},missing:async()=>{calls.push('roster');return{status:'roster-saved',externalRequests:1}},registered:()=>assert.fail('no inventory after roster source')});assert.equal(r.status,'roster-saved');assert.deepEqual(calls,['card','roster']);
+});

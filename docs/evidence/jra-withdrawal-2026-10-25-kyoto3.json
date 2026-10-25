@@ -1,0 +1,19 @@
+{
+  "schema": "reviewed-public-withdrawal-notice-v1",
+  "date": "2026-10-25",
+  "venue": "京都",
+  "raceNo": 3,
+  "horseNo": 5,
+  "horseName": "シュプレヒコール",
+  "jockey": "武 豊",
+  "status": "出走取消",
+  "sourceUrl": "https://www.jra.go.jp/news/202610/102503.html",
+  "sourceKind": "JRA official public notice retrieved through web search",
+  "sourceHtmlCaptured": false,
+  "sourceHtmlSha256": null,
+  "productionImported": false,
+  "guardrails": {
+    "notInferredFromRowOrder": true,
+    "doesNotAuthorizePredictionOrLockRewrite": true
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "sourceUrl": "https://race.netkeiba.com/race/shutuba.html?race_id=202608041001",
+  "observedAt": "2026-10-25T21:55:02.122Z",
+  "storedSha256": "a181cfa9b29fa353051476ed216ffb0e4fedf2b2670378f5a0043f69101f5f8f",
+  "actualSha256": "a181cfa9b29fa353051476ed216ffb0e4fedf2b2670378f5a0043f69101f5f8f",
+  "bytes": 76929,
+  "sourceUrlMatches": true,
+  "checks": {
+    "raceId": true,
+    "date": false,
+    "meeting": false
+  },
+  "horseRowCount": 0,
+  "hasRaceName": false,
+  "hasRaceData": false,
+  "title": "  |    - netkeiba",
+  "replacementCharacters": 0,
+  "accepted": false,
+  "parserError": "補助名簿の開催日・開催場を確認できません。",
+  "classification": "empty-race-template-in-stored-response",
+  "classificationScope": "this saved decoded response only; publication elsewhere unverified",
+  "hashBasis": "complete-decoded-html-utf8",
+  "rawHttpBytesAvailable": false,
+  "actualDecodeCharsetRecorded": false,
+  "sourceFetchesInDiagnosis": 0,
+  "independentRead": {
+    "rowsRead": 2,
+    "rowsWritten": 0,
+    "queries": 1,
+    "durationMs": 343
+  },
+  "approval": {
+    "pr": 282,
+    "head": "6c6a44202cc0d38c2a4d49f91bca12c355cd225c",
+    "merge": "fefa59de9fdfa5b649fd66fbab225b4d9595229f",
+    "workerVersion": "b40a86cf-2ef8-4cbe-a904-24f4a974eed3"
+  },
+  "fullHtmlIncluded": false
+}

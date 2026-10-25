@@ -52,7 +52,8 @@ function validateInventory(races,scope,stamp){
  if(new Set(result.map(key)).size!==result.length)throw Error('Duplicate race identity');return result;
 }
 function findings(row){return row?.findings_json?JSON.parse(row.findings_json):null;}
-export function planSharedPages(races,rows,stamp,parserVersion=SHARED_PAGE_POLICY.parserVersion,{allowStartedCards=false}={}){
+export function planSharedPages(races,rows,stamp,parserVersion=SHARED_PAGE_POLICY.parserVersion,{allowStartedCards=false,completionPriorityRaceKeys=[]}={}){
+ const completionOrder=new Map(completionPriorityRaceKeys.map((k,i)=>[k,i]));
  const records=new Map(rows.map(r=>[r.page_url,r])),known=new Map(),meetings=new Map(),jobs=new Map();let complete=0,waiting=0;
  for(const row of rows){const f=findings(row);if(row.status!=='parsed'||!f||row.parser_version!==parserVersion)continue;
   for(const page of f.pages||[]){const meeting=metaFromMeetingListUrl(page);if(meeting)meetings.set(`${meeting.date}:${meeting.venue}`,canonicalPublishedPage(page));}
@@ -84,7 +85,8 @@ export function planSharedPages(races,rows,stamp,parserVersion=SHARED_PAGE_POLIC
   const urgent=upcoming.length>0&&start-stamp<=12*3600000;
   const pastOnly=upcoming.length===0;
   const since=Number(job.row?.last_attempt_at)||Math.min(...job.races.map(r=>r.enqueued));
-  return[pastOnly?2:urgent?0:1,urgent?start:Math.min(start,since+SHARED_PAGE_POLICY.maxWaitMs),start,job.url];
+  const focus=pastOnly?Math.min(...job.races.map(r=>completionOrder.get(key(r))??completionOrder.size)):0;
+  return[pastOnly?2:urgent?0:1,focus,urgent?start:Math.min(start,since+SHARED_PAGE_POLICY.maxWaitMs),start,job.url];
  };
  const compare=(a,b)=>{const x=priority(a),y=priority(b);for(let i=0;i<x.length;i++){if(x[i]!==y[i])return typeof x[i]==='number'?x[i]-y[i]:x[i].localeCompare(y[i]);}return 0;};
  return{jobs:[...jobs.values()].sort(compare),complete,waiting};
@@ -139,7 +141,7 @@ export async function runSharedPageStep(db,{scope,races},deps={}){
  // attached to an unparsed replacement body. Keep those in the receipt only.
  const rows=(await db.prepare(`SELECT page_url,status,next_at,body_sha,CASE WHEN status='parsed' THEN findings_json ELSE NULL END findings_json,parser_version,observed_at,last_attempt_at,card_key FROM ${PAGES} WHERE scope_key=? ORDER BY page_url LIMIT ?`).bind(scope,SHARED_PAGE_POLICY.maxPages+1).all()).results||[];
  if(rows.length>SHARED_PAGE_POLICY.maxPages)return{status:'page-bound-reached',externalRequests:0};
- const plan=planSharedPages(inventory,rows,stamp,deps.parserVersion,{allowStartedCards:deps.allowStartedCards===true});let job=plan.jobs[0];
+ const plan=planSharedPages(inventory,rows,stamp,deps.parserVersion,{allowStartedCards:deps.allowStartedCards===true,completionPriorityRaceKeys:deps.completionPriorityRaceKeys});let job=plan.jobs[0];
  if(!job)return{status:plan.complete===inventory.length?'complete':'awaiting-source-or-deadline',completeRaces:plan.complete,waitingRaces:plan.waiting,externalRequests:0};
  const isCached=j=>j.row?.body_sha&&((j.row.status==='parsed'&&j.races.some(r=>key(metaFromRacecardUrl(j.url)||{})===key(r)))||j.row.status==='body-stored'||j.row.status==='card-ready'||(j.row.status==='parse-failed'&&j.races.some(r=>hasReviewedWithdrawal(r,stamp)))||j.row.parser_version!==(deps.parserVersion||SHARED_PAGE_POLICY.parserVersion));let cached=isCached(job);
  if(rows.length===SHARED_PAGE_POLICY.maxPages&&!job.row)return{status:'page-bound-reached',externalRequests:0};
@@ -214,6 +216,7 @@ export async function discoverSharedSelectedCard(db,source,delivery={}){
  const actual=inventory.find(r=>key(r)===(result.card?.raceKey||result.dependentRaces?.[0]))||inventory.find(r=>key(r)===key(source));
  if(!actual)throw Error('Shared page result has no due race identity');
  const attempted=!!(result.externalRequests||result.reusedBody||result.bodyStored||result.waitingRaces);
- return{...result,attempted,ok:!result.error,target:{date:actual.date,venue:actual.venue,raceNo:actual.raceNo},officialCardsCreated:!!result.formalCardSaved,...(attempted?{cardSelection:{...delivery.previousCardSelection,lane:metaFromRacecardUrl(result.sourceUrl||actual.cardUrl||actual.rootUrl)?'card':'discovery',reason:'shared-page-deadline',target:key(actual),eligibleSharedRaces:inventory.length}}:{})};
+ const completionPriorityApplied=(options.completionPriorityRaceKeys||[]).includes(key(actual))&&Date.parse(actual.startAt)<=stamp+300000;
+ return{...result,attempted,ok:!result.error,target:{date:actual.date,venue:actual.venue,raceNo:actual.raceNo},officialCardsCreated:!!result.formalCardSaved,...(attempted?{cardSelection:{...delivery.previousCardSelection,lane:metaFromRacecardUrl(result.sourceUrl||actual.cardUrl||actual.rootUrl)?'card':'discovery',reason:completionPriorityApplied?'shared-page-completion-priority':'shared-page-deadline',target:key(actual),eligibleSharedRaces:inventory.length,completionPriorityApplied,completionPriorityRaceKeys:options.completionPriorityRaceKeys||[]}}:{})};
 }
 discoverSharedSelectedCard.acceptsDueInventory=true;

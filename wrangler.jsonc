@@ -2,6 +2,9 @@
   "name": "keiba-lab-api",
   "main": "src/index-v3.49.0.js",
   "compatibility_date": "2026-10-03",
+  "vars": {
+    "LAB_SHARED_PAGE_ACQUISITION": "true"
+  },
   "d1_databases": [
     {
       "binding": "DB",

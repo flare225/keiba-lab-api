@@ -202,5 +202,5 @@ export function createSharedSelectedCardDiscoverer({scope,races},dependencies={}
 export async function discoverSharedSelectedCard(db,source,delivery={}){
  const stamp=(delivery.now||Date.now)();
  const race={date:source.date,venue:source.venue,raceNo:source.raceNo,startAt:source.startAt,enqueuedAt:new Date(stamp).toISOString(),rootUrl:source.officialRosterDiscoveryUrl};
- return createSharedSelectedCardDiscoverer({scope:source.date,races:[race]},{fetcher:fetch,initializeStore:true,allowStartedCards:true,...delivery})(db,source,delivery);
+ return createSharedSelectedCardDiscoverer({scope:source.date,races:[race]},{fetcher:(...args)=>globalThis.fetch(...args),initializeStore:true,allowStartedCards:true,...delivery})(db,source,delivery);
 }

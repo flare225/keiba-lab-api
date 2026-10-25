@@ -51,13 +51,13 @@ function validateInventory(races,scope,stamp){
  if(new Set(result.map(key)).size!==result.length)throw Error('Duplicate race identity');return result;
 }
 function findings(row){return row?.findings_json?JSON.parse(row.findings_json):null;}
-export function planSharedPages(races,rows,stamp,parserVersion=SHARED_PAGE_POLICY.parserVersion){
+export function planSharedPages(races,rows,stamp,parserVersion=SHARED_PAGE_POLICY.parserVersion,{allowStartedCards=false}={}){
  const records=new Map(rows.map(r=>[r.page_url,r])),known=new Map(),jobs=new Map();let complete=0,waiting=0;
  for(const row of rows){const f=findings(row);if(row.status!=='parsed'||!f||row.parser_version!==parserVersion)continue;
   for(const card of f.cards||[]){const old=known.get(key(card));if(!old||Number(card.detailed)>Number(old.detailed))known.set(key(card),card);}
  }
  const add=(url,race,depth)=>{const old=jobs.get(url);if(old)old.races.push(race);else jobs.set(url,{url,races:[race],depth,row:records.get(url)});};
- for(const race of races){if(race.formalSaved||race.start<=stamp+300000){complete+=Number(!!race.formalSaved);continue;}
+ for(const race of races){if(race.formalSaved||(!allowStartedCards&&race.start<=stamp+300000)){complete+=Number(!!race.formalSaved);continue;}
   const card=race.cardUrl||known.get(key(race))?.url;
   const queue=[{url:card||race.rootUrl,depth:0}],seen=new Set(),refresh=[];let found=false;
   while(queue.length){const {url,depth}=queue.shift();if(seen.has(url)||depth>SHARED_PAGE_POLICY.maxDepth)continue;seen.add(url);
@@ -101,7 +101,7 @@ async function parseStored(db,scope,job,row,stamp,deps){
   catch(e){await updateReceipt(db,scope,job.url,{...row,status:'parse-failed',next_at:0,parser_version:version,error:String(e.message||e)});throw e;}
  }
  const race=job.races.find(r=>key(r)===key(meta));if(!race)throw Error('Card target identity mismatch');
- if((deps.now||Date.now)()>=race.start-300000)return{status:'deadline-passed',formalCardSaved:false,predictionRebuilt:false};
+ if(!deps.allowStartedCards&&(deps.now||Date.now)()>=race.start-300000)return{status:'deadline-passed',formalCardSaved:false,predictionRebuilt:false};
  const text=html.replace(/<[^>]*>/g,' ').replace(/\s+/g,' '),parts=race.date.split('-').map(Number);
  if(!text.includes(`${parts[0]}年${parts[1]}月${parts[2]}日`)||!text.includes(race.venue)||!new RegExp(`alt=["']${race.raceNo}レース["']`).test(html))throw Error('Card source header mismatch');
  const inspect=(deps.inspectSourceCard||inspectSourceCard)(html);let result;
@@ -134,7 +134,7 @@ export async function runSharedPageStep(db,{scope,races},deps={}){
  // attached to an unparsed replacement body. Keep those in the receipt only.
  const rows=(await db.prepare(`SELECT page_url,status,next_at,body_sha,CASE WHEN status='parsed' THEN findings_json ELSE NULL END findings_json,parser_version,observed_at,last_attempt_at,card_key FROM ${PAGES} WHERE scope_key=? ORDER BY page_url LIMIT ?`).bind(scope,SHARED_PAGE_POLICY.maxPages+1).all()).results||[];
  if(rows.length>SHARED_PAGE_POLICY.maxPages)return{status:'page-bound-reached',externalRequests:0};
- const plan=planSharedPages(inventory,rows,stamp,deps.parserVersion);let job=plan.jobs[0];
+ const plan=planSharedPages(inventory,rows,stamp,deps.parserVersion,{allowStartedCards:deps.allowStartedCards===true});let job=plan.jobs[0];
  if(!job)return{status:plan.complete===inventory.length?'complete':'awaiting-source-or-deadline',completeRaces:plan.complete,waitingRaces:plan.waiting,externalRequests:0};
  const isCached=j=>j.row?.body_sha&&((j.row.status==='parsed'&&j.races.some(r=>key(metaFromRacecardUrl(j.url)||{})===key(r)))||j.row.status==='body-stored'||j.row.status==='card-ready'||j.row.parser_version!==(deps.parserVersion||SHARED_PAGE_POLICY.parserVersion));let cached=isCached(job);
  if(rows.length===SHARED_PAGE_POLICY.maxPages&&!job.row)return{status:'page-bound-reached',externalRequests:0};
@@ -202,5 +202,5 @@ export function createSharedSelectedCardDiscoverer({scope,races},dependencies={}
 export async function discoverSharedSelectedCard(db,source,delivery={}){
  const stamp=(delivery.now||Date.now)();
  const race={date:source.date,venue:source.venue,raceNo:source.raceNo,startAt:source.startAt,enqueuedAt:new Date(stamp).toISOString(),rootUrl:source.officialRosterDiscoveryUrl};
- return createSharedSelectedCardDiscoverer({scope:source.date,races:[race]},{fetcher:fetch,initializeStore:true,...delivery})(db,source,delivery);
+ return createSharedSelectedCardDiscoverer({scope:source.date,races:[race]},{fetcher:fetch,initializeStore:true,allowStartedCards:true,...delivery})(db,source,delivery);
 }

@@ -239,3 +239,10 @@ test('shared handoff honors a verified sibling meeting URL while retaining exact
   sql.close();
  }
 });
+
+test('natural shared connection can retain a started card without creating a retrospective pre-race prediction',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture()[0],now=Date.parse(race.startAt)+60000;
+ const result=await discoverSharedSelectedCard(db,{...race,officialRosterDiscoveryUrl:race.rootUrl,officialCardUrl:cardUrl(race)},{now:()=>now,fetcher:fixtureFetcher(pageGraph([race]))});
+ assert.equal(result.formalCardSaved,true);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,1);
+ await ensureHistoryTable(db);sql.exec('CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,start_time TEXT,source_url TEXT)');sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(race.date,race.venue,race.raceNo,race.startAt.slice(11,16),race.rootUrl);assert.equal((await scheduledAutomaticPrediction(db,now+1000)).saved,0);assert.equal((await readAutomaticPrediction(db,race)).available,false);sql.close();
+});

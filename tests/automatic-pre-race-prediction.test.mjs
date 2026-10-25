@@ -23,7 +23,18 @@ test('missed forecasts, missing start times, missing frames, target results and 
 });
 test('scheduled queue includes same-day unstarted Niigata races and records cooldown for missing evidence',async()=>{
  const {sql,db}=await fixture();sql.exec("UPDATE jra_races SET venue='新潟';UPDATE jra_race_program SET venue='新潟';DELETE FROM jra_past_performances");
- const a=await scheduledAutomaticPrediction(db,now);assert.equal(a.target.venue,'新潟');assert.equal(a.status,'awaiting-prior-history');assert.equal(a.saved,0);const b=await scheduledAutomaticPrediction(db,now+60000);assert.equal(b.status,'no-due-race');sql.close();
+ const a=await scheduledAutomaticPrediction(db,now);assert.equal(a.target.venue,'新潟');assert.equal(a.status,'awaiting-prior-history');assert.equal(a.saved,0);assert.equal(a.missingHistoryDetails.length,2);assert.ok(a.missingHistoryDetails.every(r=>r.reason==='no-stored-prior-history'&&r.validFinishRows===0));assert.deepEqual(JSON.parse(sql.prepare('SELECT detail_json FROM lab_automatic_prediction_receipts_v1').get().detail_json).missingHistoryDetails,a.missingHistoryDetails);const b=await scheduledAutomaticPrediction(db,now+60000);assert.equal(b.status,'no-due-race');sql.close();
+});
+
+test('formal prediction hold distinguishes invalid stored finishes from absent histories without saving a partial forecast',async()=>{
+ const {sql,db}=await fixture();sql.exec("UPDATE jra_past_performances SET finish_position=NULL WHERE horse_name='HorseB'");
+ const a=await captureAutomaticPrediction(db,target,now);assert.deepEqual(a.evaluatedHistoryHorses,['HorseA']);assert.deepEqual(a.missingHistoryHorses,['HorseB']);assert.equal(a.missingHistoryDetails[0].reason,'no-valid-prior-finishes');assert.equal(a.missingHistoryDetails[0].storedPriorRows,2);assert.equal(a.missingHistoryDetails[0].validFinishRows,0);assert.ok(a.missingHistoryDetails[0].warnings.includes('sparse-prior-history'));assert.equal(a.saved,0);assert.equal((await readAutomaticPrediction(db,target)).available,false);sql.close();
+});
+
+test('opt-in GET reads stored hold details with one indexed read and never recalculates or writes a forecast',async()=>{
+ const {sql,db,queries}=await fixture();sql.exec('DELETE FROM jra_past_performances');await scheduledAutomaticPrediction(db,now);queries.length=0;
+ const defaultRead=await readAutomaticPrediction(db,target);assert.deepEqual(defaultRead,{ok:true,available:false});assert.equal(queries.length,1);queries.length=0;
+ const {default:app}=await import('../src/index-v3.49.0.js');const res=await app.fetch(new Request('https://test/v1/lab/automatic-prediction?date=2026-10-18&venue='+encodeURIComponent('京都')+'&race_no=11&include_pending=1'),{DB:db},{}),j=await res.json();assert.equal(res.status,200);assert.equal(j.available,false);assert.equal(j.pending.status,'awaiting-prior-history');assert.equal(j.pending.detail.missingHistoryDetails.length,2);assert.equal(queries.filter(q=>q.startsWith('SELECT status,next_attempt_at,detail_json')).length,1);assert.ok(queries.every(q=>q.startsWith('SELECT')));assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_automatic_predictions_v1').get().n,0);sql.close();
 });
 test('uncertain readback never reports successful save',async()=>{
  const {sql,db}=await fixture();let reads=0;const wrapped={prepare(q){if(q.startsWith('SELECT * FROM lab_automatic_predictions_v1')&&++reads>1)return{bind(){return{async first(){return null}}}};return db.prepare(q)}};

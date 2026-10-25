@@ -267,3 +267,13 @@ test('shared natural handoff can process another due card while the legacy-selec
  const waiting=await collectLiveHistory(db,{scheduledTime:FIXTURE_STAMP+61000},{now:()=>FIXTURE_STAMP+61000,cardCompletionFirst:true,cards:(d,input,deps)=>collectMissingOfficialCard(d,{date:selected.date},{...deps,discover:discoverSharedSelectedCard,fetcher:()=>assert.fail('private retry is not due')}),missing:()=>assert.fail('waiting acquisition owns this stage'),registered:()=>assert.fail('no repeated roster scan'),programs:()=>assert.fail('no fallthrough source request')});
  assert.equal(waiting.status,'awaiting-source-or-deadline');assert.equal(waiting.externalRequests,0);assert.equal(waiting.attempted,true);assert.equal(waiting.cardSelection.lane,'card');sql.close();
 });
+
+test('shared acquisition prioritizes upcoming races over already-started races even when archival collection is enabled',()=>{
+ const races=racesFixture(),past={...races[0]},future={...races[36]};
+ past.start=FIXTURE_STAMP-3600000;future.start=FIXTURE_STAMP+3600000;
+ past.enqueued=future.enqueued=FIXTURE_STAMP;
+ past.rootUrl=cardUrl(past);future.rootUrl=cardUrl(future);
+ const plan=planSharedPages([past,future],[],FIXTURE_STAMP,SHARED_PAGE_POLICY.parserVersion,{allowStartedCards:true});
+ assert.equal(plan.jobs[0].url,future.rootUrl);
+ assert.equal(plan.jobs[1].url,past.rootUrl);
+});

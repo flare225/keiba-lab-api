@@ -40,3 +40,10 @@ test('403 retains one-hour gate and a held gate prevents another source request'
 test('unhandled intermediate navigation is retained ahead of unrelated site menus',async()=>{
  const page=Array.from({length:100},(_,i)=>`<a href="/news/menu${i}.html">menu</a>`).join('')+html;const r=await cardDiscoveryFailureEvidence(page,index,source,{httpStatus:200,observedAt:new Date(stamp).toISOString(),charset:'utf-8',receivedBytes:Buffer.byteLength(page)});assert.equal(r.linkCounts['non-card-link'],100);assert.equal(r.linkSamples[0].reason,'unhandled-navigation');assert.ok(Buffer.byteLength(JSON.stringify(r))<=8192);
 });
+
+test('oversized card evidence retains the failing runner cells instead of only the document head',async()=>{
+ let seed=314159265;const noise=Array.from({length:20000},()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return(seed>>>0).toString(16).padStart(8,'0')}).join('');
+ const url='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202604080120261024/AA',body='<head>'+noise+'</head><table><tr><td class="waku">1</td><td class="num">1</td><td class="horse"><a>テスト馬</a>父：テスト 母：テスト</td><td class="jockey">年齢欠損 55kg 山田</td></tr></table>';
+ const r=await cardDiscoveryFailureEvidence(body,url,source,{httpStatus:200,observedAt:new Date(stamp).toISOString()});
+ assert.equal(r.fullBodyIncluded,false);assert.equal(r.cardInspection.sourceRowCount,1);assert.equal(r.cardInspection.parsedRunnerCount,0);assert.match(r.cardInspection.problemRows[0].connectionCell,/年齢欠損/);assert.match(r.cardInspection.problemRows[0].horseCell,/テスト馬/);assert.equal(r.bodySha256,await sha256(body));assert.ok(Buffer.byteLength(JSON.stringify(r))<=8192);
+});

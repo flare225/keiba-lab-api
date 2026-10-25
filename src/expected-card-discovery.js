@@ -25,6 +25,20 @@ export async function cardDiscoveryFailureEvidence(html,url,source,{httpStatus,o
  }
  samples.sort((a,b)=>Number(b.reason==='unhandled-navigation')-Number(a.reason==='unhandled-navigation'));samples.splice(12);
  const result={schema:'card-discovery-failure-v1',target,sourceUrl:clip(url,400),httpStatus,observedAt,charset,receivedBytes,decodedBytes:encode.encode(html).length,bodySha256:await sha256(html),hashBasis:'complete-decoded-html-utf8',fullBodyIncluded:false,parsedLinkCount:links.length,linkCounts:counts,linkSamples:samples,samplesTruncated:links.length>samples.length,excerpt:clip(html,1024),excerptOnly:true};
+ // Keep the actual rejected cells when a full race page cannot fit the envelope.
+ // This is bounded diagnostic evidence, never a replacement card or full HTML.
+ const cardMeta=metaFromRacecardUrl(url);
+ if(cardMeta&&cardMeta.date===target.date&&cardMeta.venue===target.venue&&cardMeta.raceNo===target.raceNo){
+  const inspection=inspectSourceCard(html),plain=v=>String(v||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim(),problemRows=[];
+  const rows=[...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(m=>m[1]).filter(row=>/父：/.test(plain(row))&&/母：/.test(plain(row)));
+  for(let i=0;i<Math.min(rows.length,36)&&problemRows.length<2;i++){
+   const row=rows[i],parsed=inspectSourceCard('<table><tr>'+row+'</tr></table>').raw;
+   if(parsed.length===1&&parsed[0].horseNo===i+1)continue;
+   const cell=name=>row.match(new RegExp('<td\\b[^>]*class=["\'][^"\']*\\b'+name+'\\b[^"\']*["\'][^>]*>([\\s\\S]*?)</td>','i'))?.[1]||'';
+   problemRows.push({sourceRow:i+1,parsedHorseNo:parsed[0]?.horseNo??null,numberCell:clip(cell('num'),120),frameCell:clip(cell('waku'),120),horseCell:clip(cell('horse'),350),connectionCell:clip(cell('jockey'),350),rowText:clip(plain(row),180)});
+  }
+  result.cardInspection={sourceRowCount:inspection.sourceRowCount,declaredCount:inspection.declaredCount,parsedRunnerCount:inspection.raw.length,horseNumbers:inspection.raw.slice(0,36).map(r=>r.horseNo),allHorseNumbersObserved:inspection.allHorseNumbersObserved,allFramesObserved:inspection.allFramesObserved,problemRows,problemRowsLimit:2,fullRowsIncluded:false};
+ }
  while(encode.encode(JSON.stringify(result)).length>8192&&samples.length){samples.pop();result.samplesTruncated=true;}
  // Keep a complete replayable decoded body only when compressed evidence fits
  // the same 8KiB envelope. Otherwise record the limit explicitly; never truncate

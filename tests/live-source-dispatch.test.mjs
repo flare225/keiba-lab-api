@@ -112,3 +112,13 @@ test('card completion preserves stops and falls back once only when cards have n
  }
  const calls=[];const r=await collectLiveHistory({}, {scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,cards:async()=>{calls.push('card');return{status:'complete',externalRequests:0}},missing:async()=>{calls.push('roster');return{status:'roster-saved',externalRequests:1}},registered:()=>assert.fail('no inventory after roster source')});assert.equal(r.status,'roster-saved');assert.deepEqual(calls,['card','roster']);
 });
+
+test('existing source coordinator passes the shared discoverer only when explicitly enabled',async()=>{
+ for(const enabled of [false,true]){
+  const {sql,db}=fixture();let stamp=Date.parse('2026-10-25T01:30:00Z'),context;
+  for(let i=0;i<3;i++){
+   await dispatchLiveSources({cron:'*/3 * * * *',scheduledTime:stamp},{DB:db,LAB_SHARED_PAGE_ACQUISITION:enabled?'true':'false'},{now:()=>stamp,archive:async()=>({status:'idle'}),results:async()=>({status:'idle'}),history:async(_,event,deps)=>{context=deps;return{status:'idle'}}});stamp+=180000;
+  }
+  assert.equal(typeof context.discover,enabled?'function':'undefined');sql.close();
+ }
+});

@@ -6,6 +6,7 @@
 - [10/18の取得→予想監査](docs/collection-audit-2026-10-18.md)
 - [初期からの振り返りと10/20の再開条件](docs/implementation-review-2026-10-20.md)
 - [失敗記録と継続判断ルール](docs/KEIBA_LABO_LESSONS_AND_RULES.md)
+- [10/26の作業・承認・本番実績記録](docs/work-log-2026-10-26.md)
 - [10/25の作業・承認・本番実績記録](docs/work-log-2026-10-25.md)（後日の記録がある場合は最新日付も読む）
 - 作業管理: https://github.com/flare225/keiba-lab-api/issues/178
 

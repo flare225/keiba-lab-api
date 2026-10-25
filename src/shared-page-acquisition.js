@@ -142,12 +142,12 @@ export async function runSharedPageStep(db,{scope,races},deps={}){
   const space=Number(storage.bytes)+SHARED_PAGE_POLICY.maxBytes<=SHARED_PAGE_POLICY.maxStoredBodyBytes;
   job=plan.jobs.find(j=>isCached(j)||(space&&Number(versions[j.url]||0)<SHARED_PAGE_POLICY.maxVersionsPerPage));
   if(!job)return{status:'source-storage-budget',externalRequests:0,scopeBytes:Number(storage.bytes)};cached=isCached(job);}
- if(cached&&!metaFromRacecardUrl(job.url)){try{return{...await parseStored(db,scope,job,job.row,stamp,deps),sourceUrl:job.url,externalRequests:0,reusedBody:true};}catch(e){if(quota(e))throw e;return{status:'cached-stage-failed',error:String(e.message||e),sourceUrl:job.url,externalRequests:0,saveMayHaveSucceeded:!!e.saveMayHaveSucceeded};}}
+ if(cached&&!metaFromRacecardUrl(job.url)){try{return{...await parseStored(db,scope,job,job.row,stamp,deps),sourceUrl:job.url,externalRequests:0,reusedBody:true,dependentRaces:job.races.map(key)};}catch(e){if(quota(e))throw e;return{status:'cached-stage-failed',error:String(e.message||e),sourceUrl:job.url,externalRequests:0,saveMayHaveSucceeded:!!e.saveMayHaveSucceeded};}}
  const token=crypto.randomUUID(),claim=await db.prepare("UPDATE lab_history_collection_budget SET locked_until=?,lock_token=? WHERE name='jra-history' AND locked_until<=? AND next_batch_at<=?").bind(stamp+120000,token,stamp,stamp).run();
  if(Number(claim.meta?.changes)!==1)return{status:'lease-unavailable',externalRequests:0};
  let delay=60000,quotaStopped=false,externalRequests=0,stored=!!cached;
  try{
-  if(cached)return{...await parseStored(db,scope,job,job.row,stamp,deps),sourceUrl:job.url,externalRequests:0,reusedBody:true};
+  if(cached)return{...await parseStored(db,scope,job,job.row,stamp,deps),sourceUrl:job.url,externalRequests:0,reusedBody:true,dependentRaces:job.races.map(key)};
   const request=jraPageRequest(job.url);externalRequests=1;const response=await deps.fetcher(request.url,request.options);
   if(!response.ok){if(isJraSourceBlocked(response.status))delay=3600000;throw Error('JRA取得 HTTP '+response.status);}
   if(response.url){const a=new URL(response.url),b=new URL(job.url);if(a.origin!==b.origin||a.pathname!==b.pathname||(a.searchParams.has('CNAME')&&a.searchParams.get('CNAME')!==b.searchParams.get('CNAME')))throw Error('Unexpected source redirect');}
@@ -202,5 +202,13 @@ export function createSharedSelectedCardDiscoverer({scope,races},dependencies={}
 export async function discoverSharedSelectedCard(db,source,delivery={}){
  const stamp=(delivery.now||Date.now)();
  const race={date:source.date,venue:source.venue,raceNo:source.raceNo,startAt:source.startAt,enqueuedAt:new Date(stamp).toISOString(),rootUrl:source.officialRosterDiscoveryUrl};
- return createSharedSelectedCardDiscoverer({scope:source.date,races:[race]},{fetcher:(...args)=>globalThis.fetch(...args),initializeStore:true,allowStartedCards:true,...delivery})(db,source,delivery);
+ const options={fetcher:(...args)=>globalThis.fetch(...args),initializeStore:true,allowStartedCards:true,...delivery};
+ if(!source.sharedInventory)return createSharedSelectedCardDiscoverer({scope:source.date,races:[race]},options)(db,source,delivery);
+ const inventory=source.sharedInventory.map(r=>({...r,enqueuedAt:new Date(stamp).toISOString()}));
+ const result=await runSharedPageStep(db,{scope:source.date,races:inventory},options);
+ const actual=inventory.find(r=>key(r)===(result.card?.raceKey||result.dependentRaces?.[0]))||inventory.find(r=>key(r)===key(source));
+ if(!actual)throw Error('Shared page result has no due race identity');
+ const attempted=!!(result.externalRequests||result.reusedBody||result.bodyStored||result.waitingRaces);
+ return{...result,attempted,ok:!result.error,target:{date:actual.date,venue:actual.venue,raceNo:actual.raceNo},officialCardsCreated:!!result.formalCardSaved,...(attempted?{cardSelection:{...delivery.previousCardSelection,lane:metaFromRacecardUrl(result.sourceUrl||actual.cardUrl||actual.rootUrl)?'card':'discovery',reason:'shared-page-deadline',target:key(actual),eligibleSharedRaces:inventory.length}}:{})};
 }
+discoverSharedSelectedCard.acceptsDueInventory=true;

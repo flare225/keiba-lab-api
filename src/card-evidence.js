@@ -34,10 +34,13 @@ export function inspectSourceCard(html){
 }
 export async function ensureEvidenceTable(db){await db.prepare(`CREATE TABLE IF NOT EXISTS lab_card_source_evidence (race_key TEXT PRIMARY KEY,source_url TEXT NOT NULL,source_sha256 TEXT NOT NULL,runner_sha256 TEXT NOT NULL,declared_count INTEGER,source_row_count INTEGER NOT NULL,parsed_count INTEGER NOT NULL,horse_numbers_observed INTEGER NOT NULL,frames_observed INTEGER NOT NULL,card_fetched_at TEXT NOT NULL,verified_at TEXT NOT NULL,count_basis TEXT NOT NULL DEFAULT 'unverified')`).run();}
 export function runnerFingerprint(runners){return JSON.stringify(runners.map(x=>({horseNo:Number(x.horseNo??x.horse_no),frameNo:x.frameNo??x.frame_no??null,name:x.name??x.horse_name})).sort((a,b)=>a.horseNo-b.horseNo));}
+export async function verifyCurrentCardEvidence(evidence,current,runners){
+ if(!evidence||!evidence.horse_numbers_observed||!evidence.frames_observed||evidence.declared_count!==runners.length||evidence.source_row_count!==runners.length||evidence.parsed_count!==runners.length||!current||evidence.card_fetched_at!==current.fetched_at||evidence.runner_sha256!==await sha256(runnerFingerprint(runners)))throw new Error('Prospective LOCK requires current official head count, source-observed horse/frame numbers and exact saved runner fingerprint');
+ return evidence;
+}
 export async function requireLockEvidence(db,race,runners){
  await ensureEvidenceTable(db);
  const evidence=await db.prepare('SELECT * FROM lab_card_source_evidence WHERE race_key=?').bind(race.race_key).first();
  const current=await db.prepare('SELECT fetched_at FROM jra_races WHERE race_key=?').bind(race.race_key).first();
- if(!evidence||!evidence.horse_numbers_observed||!evidence.frames_observed||evidence.declared_count!==runners.length||evidence.source_row_count!==runners.length||evidence.parsed_count!==runners.length||!current||evidence.card_fetched_at!==current.fetched_at||evidence.runner_sha256!==await sha256(runnerFingerprint(runners)))throw new Error('Prospective LOCK requires current official head count, source-observed horse/frame numbers and exact saved runner fingerprint');
- return evidence;
+ return verifyCurrentCardEvidence(evidence,current,runners);
 }

@@ -246,3 +246,12 @@ test('natural shared connection can retain a started card without creating a ret
  assert.equal(result.formalCardSaved,true);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,1);
  await ensureHistoryTable(db);sql.exec('CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,start_time TEXT,source_url TEXT)');sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(race.date,race.venue,race.raceNo,race.startAt.slice(11,16),race.rootUrl);assert.equal((await scheduledAutomaticPrediction(db,now+1000)).saved,0);assert.equal((await readAutomaticPrediction(db,race)).available,false);sql.close();
 });
+
+test('natural connection calls the Worker global fetch with its required receiver',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture()[0],original=globalThis.fetch,calls=[];
+ globalThis.fetch=function(url,init){if(this!==globalThis)throw Error('Illegal invocation: incorrect this');return fixtureFetcher(pageGraph([race]),calls)(url,init)};
+ try{
+  const result=await discoverSharedSelectedCard(db,{...race,officialRosterDiscoveryUrl:race.rootUrl,officialCardUrl:cardUrl(race)},{now:()=>FIXTURE_STAMP});
+  assert.equal(result.formalCardSaved,true);assert.deepEqual(calls,[cardUrl(race)]);
+ }finally{globalThis.fetch=original;sql.close();}
+});

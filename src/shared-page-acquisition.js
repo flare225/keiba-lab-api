@@ -4,7 +4,7 @@
 import {extractLinks,metaFromMeetingListUrl,metaFromRacecardUrl} from './index-v1.1.4.js';
 import {inspectSourceCard,runnerFingerprint,sha256} from './card-evidence.js';
 import {parseConfirmedPredraw} from './confirmed-predraw-roster.js';
-import {saveDrawnOfficialCard,isPublishedCardNavigation} from './expected-card-discovery.js';
+import {saveDrawnOfficialCard,isPublishedCardNavigation,cardDiscoveryFailureEvidence} from './expected-card-discovery.js';
 import {jraPageRequest,isJraSourceBlocked} from './jra-page-request.js';
 import {observedQuotaPause} from './scheduled-read-budget.js';
 
@@ -118,7 +118,7 @@ async function parseStored(db,scope,job,row,stamp,deps){
   const card=await saveDrawnOfficialCard(db,html,job.url,body.http_status,race,Number(row.observed_at),deps);
   result={...card,kind:'formal',runnerSha256:await sha256(runnerFingerprint(inspect.raw.map(r=>({...r,frameNo:inspect.frames.get(r.horseNo)}))))};
   }
- }else{const roster=parseConfirmedPredraw(html,job.url,race,{allowUnassignedConnections:true});result={kind:'predraw',raceKey:roster.raceKey,runnerCount:roster.runners.length};}
+ }else{try{const roster=parseConfirmedPredraw(html,job.url,race,{allowUnassignedConnections:true});result={kind:'predraw',raceKey:roster.raceKey,runnerCount:roster.runners.length};}catch(e){e.failureEvidence=await cardDiscoveryFailureEvidence(html,job.url,race,{httpStatus:body.http_status,observedAt:new Date(Number(row.observed_at)).toISOString()});throw e;}}
  await updateReceipt(db,scope,job.url,{...row,status:result.kind==='formal'?'formal-saved':'predraw',next_at:stamp+86400000,parser_version:version,findings_json:JSON.stringify({kind:result.kind,pages:[],cards:[]}),card_key:key(race),card_result_json:JSON.stringify(result),error:null});
  return{status:result.kind==='formal'?(result.newlySaved===false?'existing-card-reconciled':'official-card-saved'):'predraw-page-preserved',formalCardSaved:result.kind==='formal'&&result.newlySaved!==false,card:result,predictionRebuilt:false};
 }
@@ -163,7 +163,7 @@ export async function runSharedPageStep(db,{scope,races},deps={}){
  }catch(e){if(quota(e)){quotaStopped=true;throw e;}
   if(stored&&metaFromRacecardUrl(job.url)){const latest=await db.prepare(`SELECT * FROM ${PAGES} WHERE scope_key=? AND page_url=?`).bind(scope,job.url).first();await updateReceipt(db,scope,job.url,{...latest,status:'card-ready',next_at:stamp+3600000,error:String(e.message||e)});}
   if(!stored&&!e.saveMayHaveSucceeded)await updateReceipt(db,scope,job.url,{...job.row,status:'http-or-source-failed',next_at:stamp+3600000,last_attempt_at:stamp,error:String(e.message||e)});
-  return{status:'deferred',sourceUrl:job.url,error:String(e.message||e),externalRequests,bodyStored:stored,saveMayHaveSucceeded:!!e.saveMayHaveSucceeded};
+  return{status:'deferred',sourceUrl:job.url,error:String(e.message||e),externalRequests,bodyStored:stored,dependentRaces:job.races.map(key),...(e.failureEvidence?{failureEvidence:e.failureEvidence}:{}),saveMayHaveSucceeded:!!e.saveMayHaveSucceeded};
  }finally{if(!quotaStopped)await db.prepare("UPDATE lab_history_collection_budget SET locked_until=0,next_batch_at=?,lock_token=NULL WHERE name='jra-history' AND lock_token=?").bind((deps.now||Date.now)()+delay,token).run();}
 }
 

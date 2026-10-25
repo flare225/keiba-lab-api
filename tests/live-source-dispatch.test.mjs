@@ -2,6 +2,14 @@ import test from 'node:test';import assert from 'node:assert/strict';import {Dat
 import {dispatchLiveSources,collectLiveHistory,preferOfficialCards,cardCompletionPriorities} from '../src/live-source-dispatch.js';
 function fixture(){const sql=new DatabaseSync(':memory:');const db={prepare(q){const w=(a=[])=>({bind(...b){return w(b)},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}},async run(){const r=sql.prepare(q).run(...a);return{meta:{changes:r.changes}}}});return w()}};return{sql,db}}
 const start=Date.parse('2026-10-19T00:12:00Z');
+test('before publication card discovery yields to program recovery and existing roster history preparation',async()=>{
+ const stamp=Date.parse('2026-10-26T00:00:00Z');
+ for(const stage of ['program','program-cached','history']){
+  const calls=[];const result=await collectLiveHistory({}, {scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,cards:async(_,input)=>{calls.push(input.publicationWindowOnly?'publication-plan':'card-request');return input.publicationWindowOnly?{status:'awaiting-official-publication',externalRequests:0}:{status:'page-parsed',externalRequests:1}},missing:async()=>({status:'no-work',externalRequests:0}),registered:async()=>[{date:'2026-10-31'}],programs:async()=>stage==='history'?null:(calls.push(stage),{status:'verified-published-program',externalRequests:stage==='program'?1:0,...(stage==='program-cached'?{programRowsSaved:24,readbackVerified:24}:{})}),expected:async()=>{calls.push('history');return{status:'collected',externalRequests:1}}});
+  assert.deepEqual(calls,['publication-plan',stage]);assert.equal(result.externalRequests,stage==='program-cached'?0:1);if(stage==='program-cached')assert.equal(result.historyWorkStage,'acquisition');
+ }
+ const cached=await collectLiveHistory({}, {scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,cards:async(_,input)=>input.publicationWindowOnly?{status:'awaiting-official-publication',externalRequests:0}:{status:'page-parsed',externalRequests:0,attempted:true,reusedBody:true},missing:async()=>null,registered:async()=>[],programs:async()=>null,main:()=>assert.fail('cached acquisition must not fall through'),expected:()=>assert.fail('one completed stage only')});assert.equal(cached.status,'page-parsed');assert.equal(cached.historyWorkStage,'acquisition');
+});
 test('live dispatcher cannot starve results when card/history queue never empties',async()=>{
  const {sql,db}=fixture();let stamp=start;const seen=[];
  const deps={now:()=>stamp,archive:async()=>{seen.push('archive');return{ok:true,status:'idle',externalRequests:0}},results:async()=>{seen.push('results');return{ok:true,status:'collected',externalRequests:1}},history:async()=>{seen.push('history');return{ok:true,status:'cooldown',externalRequests:0}}};
@@ -89,7 +97,7 @@ test('a returned D1 pause from completion work never falls through to card acqui
 
 test('scheduled card completion mode uses its existing slot before history without excluding started cards',async()=>{
  let history=0;const stamp=Date.parse('2026-10-24T04:50:00Z');
- const r=await collectLiveHistory({prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}},{scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',missing:async()=>null,registered:async()=>[],cards:async(_,input)=>{assert.deepEqual(input,{date:'2026-10-24',includeFuture:true,completeDateFirst:true});return{status:'official-card-saved',externalRequests:1}},upcoming:async()=>{history++;assert.fail('card slot must not become history')},programs:()=>assert.fail('no second external batch')});
+ const r=await collectLiveHistory({prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}},{scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',missing:async()=>null,registered:async()=>[],cards:async(_,input)=>{assert.deepEqual(input,{date:'2026-10-24',includeFuture:true,completeDateFirst:true,publicationWindowOnly:true});return{status:'official-card-saved',externalRequests:1}},upcoming:async()=>{history++;assert.fail('card slot must not become history')},programs:()=>assert.fail('no second external batch')});
  assert.equal(r.status,'official-card-saved');assert.equal(history,0);assert.equal(r.externalRequests,1);
 });
 

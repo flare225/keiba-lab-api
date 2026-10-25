@@ -33,7 +33,7 @@ export async function scheduledMissingRoster(db,event,{now=Date.now}={}){return 
 
 // Priorities belong inside the history lane, never ahead of the common fair
 // dispatcher: a nonempty card/history queue must not suppress result collection.
-export async function collectLiveHistory(db,event,{now=Date.now,previousCardSelection=null,previousHistoryWorkStage=null,cardCompletionFirst=false,discover=null,cards=collectMissingOfficialCard,main=collectTodayMainHistory,upcoming=collectUpcomingOfficialHistory,expected=scheduledWeekendHistory,details=scheduledPriorDetails,registered=storedExpectedSources,programs=recoverMissingPrograms,missing=scheduledMissingRoster}={}){
+export async function collectLiveHistory(db,event,{now=Date.now,previousCardSelection=null,previousHistoryWorkStage=null,cardCompletionFirst=false,completionPriorityRaceKeys=[],discover=null,cards=collectMissingOfficialCard,main=collectTodayMainHistory,upcoming=collectUpcomingOfficialHistory,expected=scheduledWeekendHistory,details=scheduledPriorDetails,registered=storedExpectedSources,programs=recoverMissingPrograms,missing=scheduledMissingRoster}={}){
  // Stage history is separate from card-candidate fairness. It is carried in
  // the existing coordinator result, with no new table or periodic clock.
  const acquisition=r=>r&&(r.externalRequests||r.attempted||r.saveMayHaveSucceeded)?{...r,historyWorkStage:'acquisition'}:r;
@@ -47,7 +47,7 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
   if(!cardCompletionFirst){checkedUpcoming=true;const completion=await measureD1Operation(db,measured=>upcoming(measured,{now,previousCardSelection}),now);
   if(completion&&(completion.externalRequests||completion.attempted||completion.saveMayHaveSucceeded||['cooldown','lease-unavailable','shared-gate-unavailable','paused'].includes(completion.status)))return history(completion);}
  }
- const deps={now,previousCardSelection,...(typeof discover==='function'?{discover}:{})},today=jstDay(now()),until=new Date(Date.parse(today+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);
+ const deps={now,previousCardSelection,completionPriorityRaceKeys,...(typeof discover==='function'?{discover}:{})},today=jstDay(now()),until=new Date(Date.parse(today+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);
  // Complete cards before supplemental acquisition or its roster inventory read.
  // The existing card collector remains responsible for gate, lease and budget.
  const cardInput=cardCompletionFirst?{date:today,includeFuture:true,completeDateFirst:true}:{upcomingOnly:true,includeFuture:true};
@@ -72,6 +72,11 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
  if(Math.floor(Number(event.scheduledTime)/60000)%12===0)return details(db,deps);
  return remainder;
 }
+export function cardCompletionPriorities(value){
+ const completionPriorityRaceKeys=JSON.parse(value||'[]');
+ if(!Array.isArray(completionPriorityRaceKeys)||completionPriorityRaceKeys.length>72||new Set(completionPriorityRaceKeys).size!==completionPriorityRaceKeys.length||completionPriorityRaceKeys.some(k=>typeof k!=='string'||!/^\d{4}-\d{2}-\d{2}:(東京|京都|新潟|札幌|函館|福島|中山|中京|阪神|小倉):([1-9]|1[0-2])$/.test(k)))throw Error('Invalid card completion priorities');
+ return completionPriorityRaceKeys;
+}
 export async function dispatchLiveSources(event,env,{now=Date.now,archive=collectArchiveBatch,results=scheduledRichResult,history=collectLiveHistory}={}){
- return runSourceCoordinator(event,env,{now,jobs:{archive:()=>archive(env.DB,{now}),results:()=>results(env.DB,{now}),history:context=>history(env.DB,event,{now,previousCardSelection:context.previousCardSelection,previousHistoryWorkStage:context.previousHistoryWorkStage,cardCompletionFirst:true,...(env.LAB_SHARED_PAGE_ACQUISITION==='true'?{discover:discoverSharedSelectedCard}:{})})}});
+ return runSourceCoordinator(event,env,{now,jobs:{archive:()=>archive(env.DB,{now}),results:()=>results(env.DB,{now}),history:context=>history(env.DB,event,{now,previousCardSelection:context.previousCardSelection,previousHistoryWorkStage:context.previousHistoryWorkStage,cardCompletionFirst:true,completionPriorityRaceKeys:cardCompletionPriorities(env.LAB_CARD_COMPLETION_PRIORITIES),...(env.LAB_SHARED_PAGE_ACQUISITION==='true'?{discover:discoverSharedSelectedCard}:{})})}});
 }

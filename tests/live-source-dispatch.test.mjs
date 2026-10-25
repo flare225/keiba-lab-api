@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';
-import {dispatchLiveSources,collectLiveHistory,preferOfficialCards} from '../src/live-source-dispatch.js';
+import {dispatchLiveSources,collectLiveHistory,preferOfficialCards,cardCompletionPriorities} from '../src/live-source-dispatch.js';
 function fixture(){const sql=new DatabaseSync(':memory:');const db={prepare(q){const w=(a=[])=>({bind(...b){return w(b)},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}},async run(){const r=sql.prepare(q).run(...a);return{meta:{changes:r.changes}}}});return w()}};return{sql,db}}
 const start=Date.parse('2026-10-19T00:12:00Z');
 test('live dispatcher cannot starve results when card/history queue never empties',async()=>{
@@ -117,8 +117,13 @@ test('existing source coordinator passes the shared discoverer only when explici
  for(const enabled of [false,true]){
   const {sql,db}=fixture();let stamp=Date.parse('2026-10-25T01:30:00Z'),context;
   for(let i=0;i<3;i++){
-   await dispatchLiveSources({cron:'*/3 * * * *',scheduledTime:stamp},{DB:db,LAB_SHARED_PAGE_ACQUISITION:enabled?'true':'false'},{now:()=>stamp,archive:async()=>({status:'idle'}),results:async()=>({status:'idle'}),history:async(_,event,deps)=>{context=deps;return{status:'idle'}}});stamp+=180000;
+   await dispatchLiveSources({cron:'*/3 * * * *',scheduledTime:stamp},{DB:db,LAB_SHARED_PAGE_ACQUISITION:enabled?'true':'false',LAB_CARD_COMPLETION_PRIORITIES:'["2026-10-25:京都:3"]'},{now:()=>stamp,archive:async()=>({status:'idle'}),results:async()=>({status:'idle'}),history:async(_,event,deps)=>{context=deps;return{status:'idle'}}});stamp+=180000;
   }
-  assert.equal(typeof context.discover,enabled?'function':'undefined');sql.close();
+  assert.equal(typeof context.discover,enabled?'function':'undefined');assert.deepEqual(context.completionPriorityRaceKeys,['2026-10-25:京都:3']);sql.close();
  }
+});
+
+test('invalid completion priority configuration fails before database or source work',async()=>{
+ for(const value of ['{}','["2026-10-25:京都:13"]','["2026-10-25:京都:3","2026-10-25:京都:3"]'])assert.throws(()=>cardCompletionPriorities(value),/Invalid card completion priorities/);
+ let observed;await collectLiveHistory({}, {scheduledTime:start},{now:()=>start,cardCompletionFirst:true,completionPriorityRaceKeys:['2026-10-25:京都:3'],cards:async(_,input,deps)=>{observed=deps.completionPriorityRaceKeys;return{status:'official-card-saved',externalRequests:1}}});assert.deepEqual(observed,['2026-10-25:京都:3']);
 });

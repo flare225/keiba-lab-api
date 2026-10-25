@@ -294,6 +294,19 @@ test('shared acquisition prioritizes upcoming races over already-started races e
  assert.equal(plan.jobs[1].url,past.rootUrl);
 });
 
+test('explicit completion priorities select only due unsaved past cards without displacing future deadlines',()=>{
+ const stamp=Date.parse('2026-10-25T13:30:00Z'),races=racesFixture().filter(r=>r.date==='2026-10-25'&&((r.venue==='京都'&&[3,8,9,10].includes(r.raceNo))||(r.venue==='東京'&&r.raceNo===8))).map(r=>({...r,start:Date.parse(r.startAt),enqueued:stamp,cardUrl:cardUrl(r)}));
+ const tokyo=races.find(r=>r.venue==='東京');tokyo.start=Date.parse('2026-10-25T04:00:00Z');
+ const focus=races.filter(r=>r.venue==='京都').map(r=>`${r.date}:${r.venue}:${r.raceNo}`),kyoto3=races.find(r=>r.raceNo===3);
+ const deferred={page_url:cardUrl(kyoto3),status:'card-ready',next_at:stamp+3600000,body_sha:'saved',parser_version:SHARED_PAGE_POLICY.parserVersion};
+ const plan=(rs,rows=[])=>planSharedPages(rs,rows,stamp,SHARED_PAGE_POLICY.parserVersion,{allowStartedCards:true,completionPriorityRaceKeys:focus});
+ assert.equal(plan(races,[deferred]).jobs[0].races[0].venue,'京都');
+ assert.equal(plan(races,[deferred]).jobs[0].races[0].raceNo,8);
+ const future={...tokyo,raceNo:12,start:stamp+3600000,cardUrl:null,rootUrl:INDEX};assert.equal(plan([...races,future],[deferred]).jobs[0].url,INDEX);
+ const completed=races.map(r=>({...r,formalSaved:r.venue==='京都'}));assert.equal(plan(completed).jobs[0].races[0].venue,'東京');
+ assert.equal(plan(races,[deferred]).jobs.some(j=>j.races.some(r=>r.raceNo===3)),false);
+});
+
 // Reconstructs the observed cancellation cells only; other runner rows are synthetic.
 test('observed cancellation is not misclassified as predraw and no missing horse number is invented',async()=>{
  const {db,sql}=await fixtureDatabase(),race=racesFixture().find(r=>r.date==='2026-10-25'&&r.venue==='京都'&&r.raceNo===3);

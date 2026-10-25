@@ -255,3 +255,15 @@ test('natural connection calls the Worker global fetch with its required receive
   assert.equal(result.formalCardSaved,true);assert.deepEqual(calls,[cardUrl(race)]);
  }finally{globalThis.fetch=original;sql.close();}
 });
+
+test('shared natural handoff can process another due card while the legacy-selected page is deferred',async()=>{
+ const {db,sql}=await fixtureDatabase(),races=racesFixture(1).filter(r=>r.venue==='京都'&&[9,10].includes(r.raceNo)),selected=races.find(r=>r.raceNo===10),other=races.find(r=>r.raceNo===9),requests=[];
+ sql.exec('CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,start_time TEXT,source_url TEXT);CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,card_url TEXT,next_attempt_at INTEGER,status TEXT,error TEXT)');
+ for(const r of races){sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(r.date,r.venue,r.raceNo,r.startAt.slice(11,16),r.rootUrl);sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?,?)').run(`official-card:${r.date}:${r.venue}:${r.raceNo}:official-program`,cardUrl(r),FIXTURE_STAMP-1,'official-card-link-found',null);}
+ const until=FIXTURE_STAMP+3600000;sql.prepare('INSERT INTO lab_shared_page_receipts_v1(scope_key,page_url,status,next_at) VALUES(?,?,?,?)').run(selected.date,cardUrl(selected),'http-or-source-failed',until);
+ const result=await collectMissingOfficialCard(db,{date:selected.date},{now:()=>FIXTURE_STAMP,discover:discoverSharedSelectedCard,fetcher:fixtureFetcher(pageGraph(races),requests)});
+ assert.equal(result.formalCardSaved,true);assert.equal(result.target.raceNo,other.raceNo);assert.equal(result.cardSelection.target,`${other.date}:${other.venue}:${other.raceNo}`);assert.deepEqual(requests,[cardUrl(other)]);
+ assert.equal(sql.prepare('SELECT next_at FROM lab_shared_page_receipts_v1 WHERE page_url=?').get(cardUrl(selected)).next_at,until);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_runners').get().n,2);
+ const waiting=await collectLiveHistory(db,{scheduledTime:FIXTURE_STAMP+61000},{now:()=>FIXTURE_STAMP+61000,cardCompletionFirst:true,cards:(d,input,deps)=>collectMissingOfficialCard(d,{date:selected.date},{...deps,discover:discoverSharedSelectedCard,fetcher:()=>assert.fail('private retry is not due')}),missing:()=>assert.fail('waiting acquisition owns this stage'),registered:()=>assert.fail('no repeated roster scan'),programs:()=>assert.fail('no fallthrough source request')});
+ assert.equal(waiting.status,'awaiting-source-or-deadline');assert.equal(waiting.externalRequests,0);assert.equal(waiting.attempted,true);assert.equal(waiting.cardSelection.lane,'card');sql.close();
+});

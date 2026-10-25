@@ -104,6 +104,16 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  const meetingReceipt=waiting.find(row=>{const m=metaFromMeetingListUrl(row.card_url);return m?.date===targetDate&&m.venue===r.venue;});
  if(meetingReceipt)source.officialMeetingListUrl=meetingReceipt.card_url;
  if(meta?.date===targetDate&&meta.venue===r.venue&&meta.raceNo===r.raceNo)source.officialCardUrl=url;
+ if(deps.discover?.acceptsDueInventory){
+  source.sharedInventory=eligible.map(q=>{
+   const saved=(q===r?source.officialCardUrl:null)||receiptCards.get(identity(q))||witnessedUrl(q),m=metaFromRacecardUrl(saved);
+   const exact=m?.date===q.date&&m.venue===q.venue&&m.raceNo===q.raceNo;
+   const meeting=waiting.find(row=>{const x=metaFromMeetingListUrl(row.card_url);return x?.date===q.date&&x.venue===q.venue;});
+   return{date:q.date,venue:q.venue,raceNo:q.raceNo,startAt:`${q.date}T${q.startTime}:00+09:00`,rootUrl:!exact&&isPublishedCardNavigation(saved,q)?saved:meeting?.card_url||q.sourceUrl,...(exact?{cardUrl:saved}:{})};
+  });
+ }
  const result=await (deps.discover||discoverExpectedCard)(db,source,deps);
- return{...result,...(result.externalRequests?{cardSelection:selection}:{}),target:{date:targetDate,venue:r.venue,raceNo:r.raceNo},predictionRebuilt:false};
+ const actualTarget=result.target||{date:targetDate,venue:r.venue,raceNo:r.raceNo};
+ if(!eligible.some(q=>q.date===actualTarget.date&&q.venue===actualTarget.venue&&q.raceNo===actualTarget.raceNo))throw Error('Shared acquisition returned a target outside the due inventory');
+ return{...result,...(result.cardSelection?{cardSelection:result.cardSelection}:result.externalRequests?{cardSelection:selection}:{}),target:actualTarget,predictionRebuilt:false};
 }

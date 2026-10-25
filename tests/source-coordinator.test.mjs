@@ -16,3 +16,17 @@ test('fairness context reuses indexed prior history result, survives cooldown an
  for(let i=0;i<12;i++){await runSourceCoordinator({cron:SOURCE_CRON,scheduledTime:stamp},{DB:db},{now:()=>stamp,jobs});stamp+=600000;}
  assert.deepEqual(seen,[null,'card','card','discovery']);const plan=sql.prepare("EXPLAIN QUERY PLAN SELECT result_json FROM lab_bounded_pipeline_runs WHERE job='history' AND trigger_kind='scheduled' ORDER BY started_at DESC LIMIT 1").all();assert.ok(plan.some(x=>/lab_pipeline_job_started/.test(x.detail)));assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_bounded_pipeline_runs').get().n,12);sql.close();
 });
+
+test('pipeline status selects latest once per group rather than once per historical run',async()=>{
+ const {db,sql}=fixture();
+ await runSourceCoordinator({cron:SOURCE_CRON,scheduledTime:start},{DB:db},{now:()=>start,jobs:{archive:async()=>({status:'idle'})}});
+ const insert=sql.prepare('INSERT INTO lab_bounded_pipeline_runs(run_id,job,trigger_kind,started_at,status,result_json) VALUES(?,?,?,?,?,?)');
+ for(let i=0;i<2000;i++)insert.run('history'+i,'history','scheduled',start+i,'complete',JSON.stringify({n:i}));
+ insert.run('tie-z','history','scheduled',start+1999,'complete',JSON.stringify({n:'tie'}));
+ insert.run('manual','history','manual',start+2000,'complete',JSON.stringify({n:'manual'}));
+ let query;const observed={prepare(q){query=q;return db.prepare(q)}};
+ const result=await pipelineStatus(observed,start+3000);assert.equal(result.jobs.find(x=>x.job==='history').scheduled.result.n,'tie');assert.equal(result.jobs.find(x=>x.job==='history').manual.result.n,'manual');
+ assert.match(query,/FROM \(SELECT DISTINCT job,trigger_kind/);
+ const before=sql.prepare('SELECT p.* FROM lab_bounded_pipeline_runs p WHERE p.run_id=(SELECT q.run_id FROM lab_bounded_pipeline_runs q WHERE q.job=p.job AND q.trigger_kind=p.trigger_kind ORDER BY q.started_at DESC,q.run_id DESC LIMIT 1) ORDER BY p.job,p.trigger_kind').all();
+ assert.deepEqual(sql.prepare(query).all(),before);sql.close();
+});

@@ -283,3 +283,13 @@ test('failed shared card parsing preserves the actual race and bounded saved-bod
  assert.equal(result.failureEvidence.sourceUrl,cardUrl(actual));assert.equal(result.failureEvidence.httpStatus,200);assert.equal(result.failureEvidence.bodySha256,await sha256(drawnHtml(actual)));assert.equal(result.failureEvidence.target.raceNo,actual.raceNo);
  assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);sql.close();
 });
+
+test('shared acquisition prioritizes upcoming races over already-started races even when archival collection is enabled',()=>{
+ const races=racesFixture(),past={...races[0]},future={...races[36]};
+ past.start=FIXTURE_STAMP-3600000;future.start=FIXTURE_STAMP+3600000;
+ past.enqueued=future.enqueued=FIXTURE_STAMP;
+ past.rootUrl=cardUrl(past);future.rootUrl=cardUrl(future);
+ const plan=planSharedPages([past,future],[],FIXTURE_STAMP,SHARED_PAGE_POLICY.parserVersion,{allowStartedCards:true});
+ assert.equal(plan.jobs[0].url,future.rootUrl);
+ assert.equal(plan.jobs[1].url,past.rootUrl);
+});

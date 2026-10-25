@@ -6,6 +6,13 @@ import {targetInput} from './race-history-assessment-v3.31.0.js';
 // Published JRA link witnessed on 2026-10-22. This is a discovery input,
 // never a saved card: runners and numbering must still come from JRA fetch.
 const witnessedOfficialCards=[{date:'2026-10-25',venue:'京都',raceNo:11,url:'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202604091120261025/39'}];
+export function officialCardWindowOpen(date,stamp){
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(date||''))return false;
+ if(date===jstDay(stamp))return true;
+ const day=Date.parse(date+'T00:00:00Z');if(!Number.isFinite(day))return false;
+ const daysSinceThursday=(new Date(day).getUTCDay()+3)%7;
+ return stamp>=day-daysSinceThursday*86400000+5*3600000;
+}
 function witnessedUrl(target){
  const link=witnessedOfficialCards.find(x=>x.date===target.date&&x.venue===target.venue&&x.raceNo===target.raceNo);
  if(!link)return null;
@@ -40,9 +47,12 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  const blockedUntil=Math.max(Number(gate?.next_batch_at)||0,Number(gate?.locked_until)||0);
  if(blockedUntil>stamp)return{ok:true,status:'cooldown',externalRequests:0,nextBatchAt:new Date(blockedUntil).toISOString()};
  const until=input.includeFuture?new Date(Date.parse(date+'T00:00:00Z')+7*86400000).toISOString().slice(0,10):date;
- const plan=await missingOfficialCards(db,date,stamp,until,target);
+ const planKey=JSON.stringify([date,until,target]);
+ let plan=deps.programPlanCache?.get(planKey);
+ if(!plan){plan=await missingOfficialCards(db,date,stamp,until,target);deps.programPlanCache?.set(planKey,plan);}
  if(plan.nextBatchAt&&Date.parse(plan.nextBatchAt)>stamp)return{ok:true,status:'cooldown',externalRequests:0,nextBatchAt:plan.nextBatchAt};
  const candidates=plan.missing.filter(r=>(!input.upcomingOnly||(/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${r.date}T${r.startTime}:00+09:00`)>stamp))&&(!specified||(r.date===date&&r.venue===input.venue&&r.raceNo===Number(input.raceNo??input.race_no))));
+ if(input.publicationWindowOnly&&candidates.length&&!candidates.some(r=>officialCardWindowOpen(r.date,stamp)))return{ok:true,status:'awaiting-official-publication',externalRequests:0};
  // Upcoming cards first. Past cards may be stored, never used to recreate forecasts.
  candidates.sort((a,b)=>{
   const future=r=>/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${r.date}T${r.startTime}:00+09:00`)>stamp;

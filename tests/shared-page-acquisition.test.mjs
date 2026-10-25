@@ -268,6 +268,22 @@ test('shared natural handoff can process another due card while the legacy-selec
  assert.equal(waiting.status,'awaiting-source-or-deadline');assert.equal(waiting.externalRequests,0);assert.equal(waiting.attempted,true);assert.equal(waiting.cardSelection.lane,'card');sql.close();
 });
 
+test('a meeting URL parsed for one race is reused by another race without revisiting its calendar',()=>{
+ const literal='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01drl00042026040420261025%2F21';
+ const race=racesFixture().find(r=>r.date==='2026-10-25'&&r.venue==='新潟'&&r.raceNo===1),input={...race,start:Date.parse(race.startAt),enqueued:FIXTURE_STAMP};
+ const saved={page_url:INDEX,status:'parsed',next_at:0,body_sha:'already-saved-index',parser_version:SHARED_PAGE_POLICY.parserVersion,observed_at:FIXTURE_STAMP,findings_json:JSON.stringify({pages:[literal],cards:[]})};
+ assert.equal(planSharedPages([input],[saved],FIXTURE_STAMP).jobs[0].url,canonicalPublishedPage(literal));
+ for(const other of [{...input,venue:'京都'},{...input,date:'2026-10-24',rootUrl:calendar('2026-10-24')}])assert.equal(planSharedPages([other],[saved],FIXTURE_STAMP).jobs[0].url,other.rootUrl);
+});
+
+test('failed shared card parsing preserves the actual race and bounded saved-body evidence',async()=>{
+ const {db,sql}=await fixtureDatabase(),races=racesFixture(1).filter(r=>r.venue==='京都'&&[9,10].includes(r.raceNo)),selected=races.find(r=>r.raceNo===9),actual=races.find(r=>r.raceNo===10),inventory=races.map(r=>({...r,cardUrl:cardUrl(r)}));
+ const result=await discoverSharedSelectedCard(db,{...selected,officialRosterDiscoveryUrl:selected.rootUrl,sharedInventory:inventory},{now:()=>FIXTURE_STAMP,fetcher:fixtureFetcher(pageGraph(races)),inspectSourceCard:()=>({allHorseNumbersObserved:false,sourceRowCount:2,raw:[],declaredCount:2})});
+ assert.equal(result.status,'deferred');assert.deepEqual(result.target,{date:actual.date,venue:actual.venue,raceNo:actual.raceNo},JSON.stringify(result));
+ assert.equal(result.failureEvidence.sourceUrl,cardUrl(actual));assert.equal(result.failureEvidence.httpStatus,200);assert.equal(result.failureEvidence.bodySha256,await sha256(drawnHtml(actual)));assert.equal(result.failureEvidence.target.raceNo,actual.raceNo);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);sql.close();
+});
+
 test('shared acquisition prioritizes upcoming races over already-started races even when archival collection is enabled',()=>{
  const races=racesFixture(),past={...races[0]},future={...races[36]};
  past.start=FIXTURE_STAMP-3600000;future.start=FIXTURE_STAMP+3600000;

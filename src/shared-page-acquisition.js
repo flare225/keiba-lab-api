@@ -127,6 +127,9 @@ export async function runSharedPageStep(db,{scope,races},deps={}){
  const gate=await db.prepare("SELECT next_batch_at,locked_until FROM lab_history_collection_budget WHERE name='jra-history'").first();
  if(!gate)return{status:'shared-gate-unavailable',externalRequests:0};
  const blocked=Math.max(Number(gate.next_batch_at)||0,Number(gate.locked_until)||0);if(blocked>stamp)return{status:'cooldown',nextBatchAt:new Date(blocked).toISOString(),externalRequests:0};
+ // Opt-in natural initialization only after the unchanged quota/shared gate.
+ // No standalone writer or direct production SQL route is introduced.
+ if(deps.initializeStore===true)await initializeSharedPageStore(db);
  // Planning never needs saved card-result payloads, errors or old findings
  // attached to an unparsed replacement body. Keep those in the receipt only.
  const rows=(await db.prepare(`SELECT page_url,status,next_at,body_sha,CASE WHEN status='parsed' THEN findings_json ELSE NULL END findings_json,parser_version,observed_at,last_attempt_at,card_key FROM ${PAGES} WHERE scope_key=? ORDER BY page_url LIMIT ?`).bind(scope,SHARED_PAGE_POLICY.maxPages+1).all()).results||[];
@@ -199,5 +202,5 @@ export function createSharedSelectedCardDiscoverer({scope,races},dependencies={}
 export async function discoverSharedSelectedCard(db,source,delivery={}){
  const stamp=(delivery.now||Date.now)();
  const race={date:source.date,venue:source.venue,raceNo:source.raceNo,startAt:source.startAt,enqueuedAt:new Date(stamp).toISOString(),rootUrl:source.officialRosterDiscoveryUrl};
- return createSharedSelectedCardDiscoverer({scope:source.date,races:[race]},{fetcher:fetch,...delivery})(db,source,delivery);
+ return createSharedSelectedCardDiscoverer({scope:source.date,races:[race]},{fetcher:fetch,initializeStore:true,...delivery})(db,source,delivery);
 }

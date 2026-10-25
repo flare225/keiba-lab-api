@@ -210,6 +210,7 @@ test('existing Kyoto/Niigata candidate selector passes its receipt to shared con
   const before=sql.prepare('SELECT * FROM lab_expected_card_discovery').get();
   const pages=pageGraph([race]);pages.set(resumeUrl,pages.get(INDEX));
   const discover=discoverSharedSelectedCard,fetcher=fixtureFetcher(pages,requests);
+  sql.exec('DROP TABLE lab_shared_page_receipts_v1;DROP TABLE lab_shared_page_bodies_v1');
   reset();const first=await collectMissingOfficialCard(db,{date:race.date,venue,raceNo:1},{now:()=>now,discover,fetcher});
   assert.equal(first.status,'page-parsed');assert.deepEqual(requests,[resumeUrl]);assert.equal(stats.executed.filter(q=>/FROM lab_expected_card_discovery/.test(q)).length,1);
   now+=61000;const second=await collectMissingOfficialCard(db,{date:race.date,venue,raceNo:1},{now:()=>now,discover,fetcher});

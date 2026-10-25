@@ -11,10 +11,14 @@ async function ensure(db){
  await db.prepare(`CREATE TABLE IF NOT EXISTS ${RECEIPTS}(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_attempt_at INTEGER NOT NULL,detail_json TEXT NOT NULL)`).run();
  for(const action of ['UPDATE','DELETE'])await db.prepare(`CREATE TRIGGER IF NOT EXISTS automatic_prediction_no_${action.toLowerCase()} BEFORE ${action} ON ${TABLE} BEGIN SELECT RAISE(ABORT,'automatic prediction is immutable'); END`).run();
 }
-export async function readAutomaticPrediction(db,input){
+export async function readAutomaticPrediction(db,input,{includePending=false}={}){
  const t=targetInput(input);let row;
  try{row=await db.prepare(`SELECT * FROM ${TABLE} WHERE race_key=?`).bind(`${t.date}:${t.venue}:${t.raceNo}`).first()}catch(e){if(/no such table/i.test(String(e)))return{ok:true,available:false};throw e}
- if(!row)return{ok:true,available:false};
+ if(!row){
+  if(!includePending)return{ok:true,available:false};
+  let pending;try{pending=await db.prepare(`SELECT status,next_attempt_at,detail_json FROM ${RECEIPTS} WHERE race_key=?`).bind(`${t.date}:${t.venue}:${t.raceNo}`).first()}catch(e){if(!/no such table/i.test(String(e)))throw e;}
+  return{ok:true,available:false,pending:pending?{status:pending.status,nextAttemptAt:new Date(pending.next_attempt_at).toISOString(),detail:JSON.parse(pending.detail_json)}:null};
+ }
  if(await sha256(row.snapshot_json)!==row.snapshot_sha256)throw Error('自動事前予想のハッシュが一致しません。');
  const snapshot=JSON.parse(row.snapshot_json);
  if(snapshot.race.raceKey!==row.race_key||snapshot.savedAt!==row.saved_at||!await featureCapturedBeforeOfficialStart(db,snapshot.race,Date.parse(row.saved_at)))throw Error('自動事前予想の保存証跡が一致しません。');
@@ -35,8 +39,12 @@ export async function captureAutomaticPrediction(db,input,now=Date.now()){
  const detail=await db.prepare('SELECT 1 AS found FROM lab_race_result_details WHERE race_key=? LIMIT 1').bind(context.raceKey).first();
  if(outcome||detail)throw Error('対象結果が保存済みのため事前予想を作成しません。');
  const {histories,all}=await officialHistoryEvidence(db,context,null,await postRaceHistoryBatch(db,context));
- const missing=all.filter(r=>!r.assessment.available||!Number.isFinite(r.assessment.evidenceScore)).map(r=>r.horseName);
- if(missing.length)return{ok:true,status:'awaiting-prior-history',missingHistoryHorses:missing,saved:0,externalRequests:0};
+ const missing=all.filter(r=>!r.assessment.available||!Number.isFinite(r.assessment.evidenceScore));
+ if(missing.length)return{ok:true,status:'awaiting-prior-history',missingHistoryHorses:missing.map(r=>r.horseName),evaluatedHistoryHorses:all.filter(r=>!missing.includes(r)).map(r=>r.horseName),missingHistoryDetails:missing.map(r=>{
+  const h=histories.find(h=>h.horseName===r.horseName),warnings=h?.warnings||[];
+  const reason=warnings.includes('conflicting-history-identity')?'conflicting-history-identity':warnings.some(w=>w.endsWith('-table-unavailable'))?'history-table-unavailable':h?.summary?.storedStarts===0?'no-stored-prior-history':r.assessment.validFinishRows===0?'no-valid-prior-finishes':'assessment-unavailable';
+  return{horseNo:r.horseNo,horseName:r.horseName,reason,storedPriorRows:h?.summary?.storedStarts??null,selectedPriorRows:r.assessment.historyRows,validFinishRows:r.assessment.validFinishRows,warnings,notes:r.assessment.notes};
+ }),saved:0,externalRequests:0};
  const savedAt=new Date(now+Date.now()-started).toISOString();
  if(!await featureCapturedBeforeOfficialStart(db,t,Date.parse(savedAt)))throw Error('評価中に事前保存締切を過ぎました。');
  if(JSON.stringify(await card(db,context))!==JSON.stringify(runners))throw Error('評価中に出馬表が更新されました。次回再評価します。');

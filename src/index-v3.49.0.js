@@ -136,7 +136,7 @@ export default {
    if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
    try{
     let result;
-    if(request.method==='GET')result=await readAutomaticPrediction(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')});
+    if(request.method==='GET')result=await readAutomaticPrediction(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')},{includePending:u.searchParams.get('include_pending')==='1'});
     else if(request.method==='POST'){const b=await request.json();if(b.confirm!=='CAPTURE')throw Error('confirm CAPTURE is required');result=await captureAutomaticPrediction(env.DB,b);}
     else return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
     return Response.json({...result,version:VERSION},{headers});

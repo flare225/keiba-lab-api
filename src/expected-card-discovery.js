@@ -1,3 +1,4 @@
+import {resolveReviewedWithdrawal,saveWithdrawalEvidence} from './reviewed-withdrawal-card.js';
 import {ensureCollectionTables,officialUrl} from './history-collection-v3.37.0.js';
 import {extractLinks,metaFromMeetingListUrl,metaFromRacecardUrl,parseRace} from './index-v1.1.4.js';
 import {saveConfirmedPredraw} from './confirmed-predraw-roster.js';
@@ -57,12 +58,14 @@ export async function cardDiscoveryFailureEvidence(html,url,source,{httpStatus,o
 }
 
 export async function saveDrawnOfficialCard(db,html,url,responseStatus,source,stamp,deps){
- const inspect=(deps.inspectSourceCard||inspectSourceCard)(html);
+ const inspect=resolveReviewedWithdrawal((deps.inspectSourceCard||inspectSourceCard)(html),source,(deps.now||Date.now)());
  const race=(deps.parseRace||parseRace)({ok:true,status:responseStatus,url,body:html},source.date,source.venue,Number(source.raceNo));
- if(!inspect.allHorseNumbersObserved||!inspect.allFramesObserved||inspect.sourceRowCount!==race.runnerCount||inspect.declaredCount!==race.runnerCount||race.runnerCount<1||race.runnerCount>18||race.runners.length!==race.runnerCount||new Set(race.runners.map(r=>r.name)).size!==race.runnerCount||race.runners.some((r,i)=>r.horseNo!==i+1||!r.name))throw Error('Drawn official card failed runner/frame verification');
+ if(inspect.withdrawals)race.runners=inspect.raw;
+ if(!(inspect.allHorseNumbersObserved||inspect.numberSourcesVerified)||!inspect.allFramesObserved||inspect.sourceRowCount!==race.runnerCount||inspect.declaredCount!==race.runnerCount||race.runnerCount<1||race.runnerCount>18||race.runners.length!==race.runnerCount||new Set(race.runners.map(r=>r.name)).size!==race.runnerCount||race.runners.some((r,i)=>r.horseNo!==i+1||!r.name))throw Error('Drawn official card failed runner/frame verification');
  race.runners=race.runners.map(r=>({...r,frameNo:inspect.frames.get(r.horseNo)}));
 
  const raceKey=`${source.date}:${source.venue}:${source.raceNo}`;
+ if(inspect.withdrawals)await saveWithdrawalEvidence(db,raceKey,inspect.withdrawals,await sha256(html),(deps.now||Date.now)());
  const existing=await db.prepare('SELECT race_key,runner_count,fetched_at FROM jra_races WHERE race_date=? AND venue=? AND race_no=?').bind(source.date,source.venue,Number(source.raceNo)).first();
  let fetchedAt;
  if(existing){
@@ -81,7 +84,7 @@ export async function saveDrawnOfficialCard(db,html,url,responseStatus,source,st
  }
  await ensureEvidenceTable(db);
  await db.prepare('INSERT INTO lab_card_source_evidence (race_key,source_url,source_sha256,runner_sha256,declared_count,source_row_count,parsed_count,horse_numbers_observed,frames_observed,card_fetched_at,verified_at,count_basis) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET source_url=excluded.source_url,source_sha256=excluded.source_sha256,runner_sha256=excluded.runner_sha256,declared_count=excluded.declared_count,source_row_count=excluded.source_row_count,parsed_count=excluded.parsed_count,horse_numbers_observed=excluded.horse_numbers_observed,frames_observed=excluded.frames_observed,card_fetched_at=excluded.card_fetched_at,verified_at=excluded.verified_at,count_basis=excluded.count_basis')
-  .bind(raceKey,url,await sha256(html),await sha256(runnerFingerprint(race.runners)),race.runnerCount,inspect.sourceRowCount,race.runnerCount,1,1,fetchedAt,new Date(stamp).toISOString(),inspect.countBasis).run();
+  .bind(raceKey,url,await sha256(html),await sha256(runnerFingerprint(race.runners)),race.runnerCount,inspect.sourceRowCount,race.runnerCount,inspect.allHorseNumbersObserved?1:0,1,fetchedAt,new Date(inspect.withdrawals?(deps.now||Date.now)():stamp).toISOString(),inspect.withdrawals?'reviewed-withdrawal-notice':inspect.countBasis).run();
  await db.prepare("INSERT OR IGNORE INTO lab_history_collection_targets (race_key,date,venue,race_no,history_limit,status) VALUES (?,?,?,?,10,'pending')").bind(raceKey,source.date,source.venue,Number(source.raceNo)).run();
  return {raceKey,runnerCount:race.runnerCount,fetchedAt};
 }

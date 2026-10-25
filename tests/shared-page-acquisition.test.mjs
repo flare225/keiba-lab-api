@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';
 import {discoverSharedSelectedCard,createSharedSelectedCardDiscoverer,canonicalPublishedPage,parseSharedPage,runSharedPageStep,planSharedPages,SHARED_PAGE_POLICY} from '../src/shared-page-acquisition.js';
-import {sha256,runnerFingerprint,requireLockEvidence} from '../src/card-evidence.js';
+import {inspectSourceCard,sha256,runnerFingerprint,requireLockEvidence} from '../src/card-evidence.js';
 import {runWithScheduledReadBudget} from '../src/scheduled-read-budget.js';
 import {collectLiveHistory} from '../src/live-source-dispatch.js';
 import {collectMissingOfficialCard} from '../src/missing-official-cards.js';
@@ -292,4 +292,12 @@ test('shared acquisition prioritizes upcoming races over already-started races e
  const plan=planSharedPages([past,future],[],FIXTURE_STAMP,SHARED_PAGE_POLICY.parserVersion,{allowStartedCards:true});
  assert.equal(plan.jobs[0].url,future.rootUrl);
  assert.equal(plan.jobs[1].url,past.rootUrl);
+});
+
+// Reconstructs the observed cancellation cells only; other runner rows are synthetic.
+test('observed cancellation is not misclassified as predraw and no missing horse number is invented',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture().find(r=>r.date==='2026-10-25'&&r.venue==='京都'&&r.raceNo===3);
+ const html=`<h1>2026年10月25日 京都<img alt="3レース"></h1><p>芝1600m 出走頭数：9頭</p><table>${Array.from({length:9},(_,i)=>{const n=i+1;return `<tr><td class="waku"><img alt="枠${Math.min(n,8)}黄" /></td><td class="num">${n===5?'<span class="cap">取消</span>':n}</td><td class="horse"><a>${n===5?'シュプレヒコール':'テスト'+'アイウエオカキクケ'[i]}</a>父：テスト 母：テスト</td><td class="jockey">牡2 56kg <a>山田</a></td></tr>`}).join('')}</table>`;
+ const inspected=inspectSourceCard(html);assert.equal(inspected.sourceRowCount,9);assert.equal(inspected.raw.length,9);assert.equal(inspected.raw[4].horseNo,null);assert.equal(inspected.allHorseNumbersObserved,false);assert.deepEqual(inspected.cancelledRows,[{horseName:'シュプレヒコール',horseNo:null,frameNo:5,status:'取消',numberBasis:'not-shown-by-source'}]);
+ const result=await runSharedPageStep(db,{scope:race.date,races:[{...race,cardUrl:cardUrl(race)}]},{now:()=>FIXTURE_STAMP,fetcher:fixtureFetcher(new Map([[cardUrl(race),html]]))});assert.equal(result.status,'deferred');assert.match(result.error,/取消・除外馬/);assert.doesNotMatch(result.error,/pre-draw/);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);sql.close();
 });

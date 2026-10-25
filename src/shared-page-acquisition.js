@@ -77,9 +77,12 @@ export function planSharedPages(races,rows,stamp,parserVersion=SHARED_PAGE_POLIC
   if(!found)waiting++;
  }
  const priority=job=>{
-  const start=Math.min(...job.races.map(r=>r.start)),urgent=start-stamp<=12*3600000;
+  const upcoming=job.races.map(r=>r.start).filter(start=>start>stamp+300000);
+  const start=upcoming.length?Math.min(...upcoming):Math.min(...job.races.map(r=>r.start));
+  const urgent=upcoming.length>0&&start-stamp<=12*3600000;
+  const pastOnly=upcoming.length===0;
   const since=Number(job.row?.last_attempt_at)||Math.min(...job.races.map(r=>r.enqueued));
-  return[urgent?0:1,urgent?start:Math.min(start,since+SHARED_PAGE_POLICY.maxWaitMs),start,job.url];
+  return[pastOnly?2:urgent?0:1,urgent?start:Math.min(start,since+SHARED_PAGE_POLICY.maxWaitMs),start,job.url];
  };
  const compare=(a,b)=>{const x=priority(a),y=priority(b);for(let i=0;i<x.length;i++){if(x[i]!==y[i])return typeof x[i]==='number'?x[i]-y[i]:x[i].localeCompare(y[i]);}return 0;};
  return{jobs:[...jobs.values()].sort(compare),complete,waiting};

@@ -275,3 +275,11 @@ test('a meeting URL parsed for one race is reused by another race without revisi
  assert.equal(planSharedPages([input],[saved],FIXTURE_STAMP).jobs[0].url,canonicalPublishedPage(literal));
  for(const other of [{...input,venue:'京都'},{...input,date:'2026-10-24',rootUrl:calendar('2026-10-24')}])assert.equal(planSharedPages([other],[saved],FIXTURE_STAMP).jobs[0].url,other.rootUrl);
 });
+
+test('failed shared card parsing preserves the actual race and bounded saved-body evidence',async()=>{
+ const {db,sql}=await fixtureDatabase(),races=racesFixture(1).filter(r=>r.venue==='京都'&&[9,10].includes(r.raceNo)),selected=races.find(r=>r.raceNo===9),actual=races.find(r=>r.raceNo===10),inventory=races.map(r=>({...r,cardUrl:cardUrl(r)}));
+ const result=await discoverSharedSelectedCard(db,{...selected,officialRosterDiscoveryUrl:selected.rootUrl,sharedInventory:inventory},{now:()=>FIXTURE_STAMP,fetcher:fixtureFetcher(pageGraph(races)),inspectSourceCard:()=>({allHorseNumbersObserved:false,sourceRowCount:2,raw:[],declaredCount:2})});
+ assert.equal(result.status,'deferred');assert.deepEqual(result.target,{date:actual.date,venue:actual.venue,raceNo:actual.raceNo},JSON.stringify(result));
+ assert.equal(result.failureEvidence.sourceUrl,cardUrl(actual));assert.equal(result.failureEvidence.httpStatus,200);assert.equal(result.failureEvidence.bodySha256,await sha256(drawnHtml(actual)));assert.equal(result.failureEvidence.target.raceNo,actual.raceNo);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);sql.close();
+});

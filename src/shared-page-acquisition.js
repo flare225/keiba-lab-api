@@ -1,3 +1,4 @@
+import {resolveReviewedWithdrawal,hasReviewedWithdrawal} from './reviewed-withdrawal-card.js';
 // Opt-in shared acquisition. Activation requires explicit configuration and
 // separately approved store initialization; existing deployments stay disabled.
 // Network is injected explicitly; one delivery can fetch at most one page.
@@ -66,7 +67,7 @@ export function planSharedPages(races,rows,stamp,parserVersion=SHARED_PAGE_POLIC
    if(row?.status==='formal-saved'&&row.card_key===key(race)){complete++;found=true;break;}
    if(Number(row?.next_at)>stamp)continue;
    const parsedCard=row?.status==='parsed'&&key(metaFromRacecardUrl(url)||{})===key(race);
-   const cached=row?.body_sha&&(parsedCard||row.status==='body-stored'||row.parser_version!==parserVersion||row.status==='card-ready');
+   const cached=row?.body_sha&&(parsedCard||row.status==='body-stored'||row.parser_version!==parserVersion||row.status==='card-ready'||(row.status==='parse-failed'&&hasReviewedWithdrawal(race,stamp)));
    if(cached){add(url,race,depth);found=true;break;}
    if(row?.status==='parse-failed'&&row.parser_version===parserVersion)continue;
    if(!row?.body_sha){add(url,race,depth);found=true;break;}
@@ -108,8 +109,8 @@ async function parseStored(db,scope,job,row,stamp,deps){
  if(!deps.allowStartedCards&&(deps.now||Date.now)()>=race.start-300000)return{status:'deadline-passed',formalCardSaved:false,predictionRebuilt:false};
  const text=html.replace(/<[^>]*>/g,' ').replace(/\s+/g,' '),parts=race.date.split('-').map(Number);
  if(!text.includes(`${parts[0]}年${parts[1]}月${parts[2]}日`)||!text.includes(race.venue)||!new RegExp(`alt=["']${race.raceNo}レース["']`).test(html))throw Error('Card source header mismatch');
- const inspect=(deps.inspectSourceCard||inspectSourceCard)(html);let result;
- if(inspect.allHorseNumbersObserved){
+ const inspect=resolveReviewedWithdrawal((deps.inspectSourceCard||inspectSourceCard)(html),race,stamp);let result;
+ if(inspect.allHorseNumbersObserved||inspect.numberSourcesVerified){
   const existing=await db.prepare('SELECT race_key,fetched_at FROM jra_races WHERE race_date=? AND venue=? AND race_no=?').bind(race.date,race.venue,race.raceNo).first();
   if(existing){
    const evidence=await db.prepare('SELECT * FROM lab_card_source_evidence WHERE race_key=?').bind(existing.race_key).first(),saved=(await db.prepare('SELECT * FROM jra_runners WHERE race_key=? ORDER BY horse_no').bind(existing.race_key).all()).results||[];
@@ -140,7 +141,7 @@ export async function runSharedPageStep(db,{scope,races},deps={}){
  if(rows.length>SHARED_PAGE_POLICY.maxPages)return{status:'page-bound-reached',externalRequests:0};
  const plan=planSharedPages(inventory,rows,stamp,deps.parserVersion,{allowStartedCards:deps.allowStartedCards===true});let job=plan.jobs[0];
  if(!job)return{status:plan.complete===inventory.length?'complete':'awaiting-source-or-deadline',completeRaces:plan.complete,waitingRaces:plan.waiting,externalRequests:0};
- const isCached=j=>j.row?.body_sha&&((j.row.status==='parsed'&&j.races.some(r=>key(metaFromRacecardUrl(j.url)||{})===key(r)))||j.row.status==='body-stored'||j.row.status==='card-ready'||j.row.parser_version!==(deps.parserVersion||SHARED_PAGE_POLICY.parserVersion));let cached=isCached(job);
+ const isCached=j=>j.row?.body_sha&&((j.row.status==='parsed'&&j.races.some(r=>key(metaFromRacecardUrl(j.url)||{})===key(r)))||j.row.status==='body-stored'||j.row.status==='card-ready'||(j.row.status==='parse-failed'&&j.races.some(r=>hasReviewedWithdrawal(r,stamp)))||j.row.parser_version!==(deps.parserVersion||SHARED_PAGE_POLICY.parserVersion));let cached=isCached(job);
  if(rows.length===SHARED_PAGE_POLICY.maxPages&&!job.row)return{status:'page-bound-reached',externalRequests:0};
  if(!cached){const storage=await db.prepare(`SELECT COALESCE(SUM(bytes),0) bytes,COALESCE(json_group_object(page_url,versions),'{}') versions_json FROM (SELECT page_url,COUNT(*) versions,SUM(byte_length) bytes FROM ${BODIES} WHERE scope_key=? GROUP BY page_url)`).bind(scope).first(),versions=JSON.parse(storage.versions_json);
   const space=Number(storage.bytes)+SHARED_PAGE_POLICY.maxBytes<=SHARED_PAGE_POLICY.maxStoredBodyBytes;

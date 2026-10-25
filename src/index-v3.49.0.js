@@ -1,3 +1,4 @@
+import {readWithdrawalEvidence} from './reviewed-withdrawal-card.js';
 import {measureD1Operation} from './d1-operation-metrics.js';
 import {readEvidenceEvaluation,saveEvidenceEvaluation} from './evidence-evaluation-snapshots.js';
 import {rosterHistoryInventory} from './roster-history-inventory.js';
@@ -42,6 +43,14 @@ const historyInventories=new WeakMap();
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/history/race'&&request.method==='GET'){
+   const response=await app.fetch(request,env,ctx);if(!response.ok)return response;
+   const data=await response.json();if(!data.ok||!data.race?.raceKey)return Response.json(data,{status:response.status,headers:response.headers});
+   const withdrawals=await readWithdrawalEvidence(env.DB,data.race.raceKey);
+   data.withdrawals=withdrawals;data.withdrawnRunnerCount=withdrawals.length;data.activeRunnerCount=(data.runners?.length||0)-withdrawals.length;data.runners=data.runners?.map(r=>({...r,entryStatus:withdrawals.some(w=>w.horseNo===r.horseNo)?'cancelled':'declared'}));
+   return Response.json({...data,version:VERSION},{status:response.status,headers:response.headers});
+  }
+
   if(u.pathname==='/v1/lab/pipeline-status'&&request.method==='GET'&&u.searchParams.has('failure_job')){
    const job=u.searchParams.get('failure_job'),trigger=u.searchParams.get('trigger_kind')||'scheduled',headers={'cache-control':'no-store','access-control-allow-origin':'*'};
    if(!['archive','history','results','learning','prior-details'].includes(job)||!['scheduled','manual'].includes(trigger))return Response.json({ok:false,error:'Unsupported pipeline failure scope'},{status:400,headers});

@@ -4,7 +4,12 @@ import {scheduledCollection} from './history-collection-v3.37.0.js';
 import {runPipelineJob} from './pipeline-runs-v3.40.0.js';
 export const SOURCE_CRON='*/3 * * * *',LEARNING_CRON='0,10,20,30,40,50 * * * *';
 export const LEGACY_SOURCE_CRONS=['5,15,25,35,45,55 * * * *','2,12,22,32,42,52 * * * *','8,18,28,38,48,58 * * * *','45 * * * *','30 * * * *'];
-export async function pickSourceJob(db){let rows;try{rows=(await db.prepare("SELECT job,MAX(started_at) latest FROM lab_bounded_pipeline_runs WHERE job IN ('archive','results','history') GROUP BY job").all()).results||[]}catch(e){if(!/no such table/.test(String(e)))throw e;rows=[]}return ['archive','results','history'].map((job,i)=>({job,last:Number(rows.find(x=>x.job===job)?.latest||0),i})).sort((a,b)=>a.last-b.last||a.i-b.i)[0].job}
+export async function pickSourceJob(db){let rows;try{rows=(await db.prepare(`SELECT job,latest FROM (WITH RECURSIVE jobs(job) AS (VALUES('archive'),('results'),('history')),
+ kinds(job,trigger_kind) AS (
+  SELECT j.job,(SELECT MIN(p.trigger_kind) FROM lab_bounded_pipeline_runs p WHERE p.job=j.job) FROM jobs j
+  UNION ALL
+  SELECT k.job,(SELECT MIN(p.trigger_kind) FROM lab_bounded_pipeline_runs p WHERE p.job=k.job AND p.trigger_kind>k.trigger_kind) FROM kinds k WHERE k.trigger_kind IS NOT NULL
+ ) SELECT k.job,MAX((SELECT p.started_at FROM lab_bounded_pipeline_runs p WHERE p.job=k.job AND p.trigger_kind=k.trigger_kind ORDER BY p.started_at DESC LIMIT 1)) latest FROM kinds k WHERE k.trigger_kind IS NOT NULL GROUP BY k.job)`).all()).results||[]}catch(e){if(!/no such table/.test(String(e)))throw e;rows=[]}return ['archive','results','history'].map((job,i)=>({job,last:Number(rows.find(x=>x.job===job)?.latest||0),i})).sort((a,b)=>a.last-b.last||a.i-b.i)[0].job}
 export async function runSourceCoordinator(event,env,{trigger='scheduled',now=Date.now,jobs={archive:()=>collectArchiveBatch(env.DB),results:()=>scheduledRichResult(env.DB),history:()=>scheduledCollection(env.DB)}}={}){
  const job=await pickSourceJob(env.DB);let previousCardSelection=null,previousHistoryWorkStage=null;
  if(job==='history'){

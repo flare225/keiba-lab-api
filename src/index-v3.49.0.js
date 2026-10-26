@@ -1,5 +1,6 @@
 import {readWithdrawalEvidence} from './reviewed-withdrawal-card.js';
 import {readMissingRosterEvidence} from './missing-roster-evidence.js';
+import {readSharedPageEvidence} from './shared-page-evidence.js';
 import {measureD1Operation} from './d1-operation-metrics.js';
 import {readEvidenceEvaluation,saveEvidenceEvaluation} from './evidence-evaluation-snapshots.js';
 import {rosterHistoryInventory} from './roster-history-inventory.js';
@@ -44,6 +45,13 @@ const historyInventories=new WeakMap();
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/shared-page-evidence'){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
+   if(request.method!=='GET')return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
+   if(u.searchParams.get('confirm')!=='READ_STORED_SOURCE')return Response.json({ok:false,error:'explicit source read confirmation required'},{status:400,headers});
+   try{return Response.json({...await measureD1Operation(env.DB,db=>readSharedPageEvidence(db,{scope:u.searchParams.get('scope'),pageUrl:u.searchParams.get('page_url'),includeBody:u.searchParams.get('include_body')==='1'})),version:VERSION},{headers});}
+   catch(e){return Response.json({ok:false,error:String(e.message||e)},{status:409,headers});}
+  }
   if(u.pathname==='/v1/lab/missing-roster-evidence'){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
    if(request.method!=='GET')return Response.json({ok:false,error:'method not allowed'},{status:405,headers});

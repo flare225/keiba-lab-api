@@ -72,3 +72,12 @@
 - 直前の記録コミット `ecb063e9ff3d7cce8cad729f036b23d70438920f` に対応する `Node tests` run `40251778969` は `completed/success`。この成功を今回追加のテストコミットの成功とはみなさない。
 - **残る重要な構造的疑問**：schedulerの候補SELECTは `lab_prospective_seals` の存在を前提とし、保存側の `ensureProspectiveSealTables` は候補が選ばれた後に呼ばれる。表未作成の初回稼働では `seal-store-unavailable` となり、自然に初回LOCKへ進めない可能性がある。**本番で表が既にあるか未確認**。DDLを安易にcron冒頭で実行せず、既存表・本番承認・予算を確認してから局所対応する。
 - 次のWorkは本番の既存テーブル有無を最小READで確認できる承認済み経路を検討し、正式カード/独立予想の成立条件を優先して確認。ユーザー承認なく環境変数有効化・新トリガー作成・Worker公開をしない。
+
+
+## 未作成テーブル問題の実コード追跡（2026-10-26）
+1. `scheduledSavedAutomaticSeal` は有効時、最初の候補SELECTで `lab_automatic_predictions_v1`, `jra_race_program`, `lab_automatic_prediction_receipts_v1`, `lab_prospective_seals` を参照する。`lab_prospective_seals` 未作成だと **候補選択自体が失敗**し、後段の`sealSavedAutomaticPrediction`に到達しない。
+2. `sealSavedAutomaticPrediction` は先に `readSavedAutomaticSeal` を呼び、正式カード/予想が有効なら `ensureProspectiveSealTables` で `lab_model_locks` と `lab_prospective_seals` を `CREATE TABLE IF NOT EXISTS` する。続いて既存/自動LOCK用トリガーを作成する。**初回候補SELECTとテーブル作成の実行順序が逆**なのが初回起動ブロッカー。DDLは複数実行でD1書込予算・権限・既存テーブル保護に影響する。
+3. `readSavedAutomaticSeal` と `includePending` の無テーブルcatchは小文字限定 `/no such table/`。今回のscheduler本体だけは `/no such table/i` に変更済み。読取APIでも大文字のD1エラーが上がり得るが、正式なGETで例外を握り潰すかは別途設計判断が必要。
+4. **安全な対応の選択肢**：本番で既存sealテーブルの存在を確認できる場合は現状のまま安全検証を続行。未作成なら、承認済みのマイグレーションで必要なテーブルとトリガーを**一度だけ**作る方法を第一候補とする。cron毎回の無条件DDLは避ける。別案は候補SELECTの `NOT EXISTS` を外し、読取・idempotencyで既存sealを判定するが、余計なSQLや重複処理の恐れがあり、測定とテストなしに採用しない。
+5. **確認が必要なこと**：本番D1の`lab_model_locks`/`lab_prospective_seals`の有無とスキーマ、トリガーの有無、現在の環境変数値、既存sealと旧モデルLOCKの件数、実行に使える権限とD1上限。現時点では**実DB未確認**、テーブル未作成は条件付きの障害可能性であり確定障害ではない。
+6. `tests/saved-automatic-seal-queue-missing-store.test.mjs` の大文字回帰テストは現在のコードを再確認。最新CI成功は追加テストコミットの成功を意味しない。**未確認の修正を完了扱いしない**。

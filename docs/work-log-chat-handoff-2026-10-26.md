@@ -89,3 +89,17 @@
 - 本番DBの`lab_model_locks`/`lab_prospective_seals`の実在・スキーマ・トリガー有無は**未確認**。接続経路なしに未作成と断定せず、CREATE/ALTER/DELETE/本番環境変数変更は一切実施しない。
 - Work復活時に、既存の承認済みCloudflare接続で以下の読み取り専用SQLを**1回の照会で**実行する（接続が無い場合はユーザーに承認/接続を依頼）：`SELECT type,name,tbl_name,sql FROM sqlite_master WHERE (type='table' AND name IN ('lab_model_locks','lab_prospective_seals')) OR (type='trigger' AND tbl_name IN ('lab_model_locks','lab_prospective_seals')) ORDER BY type,name;`。結果のテーブル定義・トリガー名を確認してから不足分のみ対処。必要に応じてread quotaを見て延期する。
 - 今回は接続確認・実設定の読み取りのみ。DB read/writeは0、実レースへの影響0。
+
+
+
+## Work再開・追加修正と本番READ（2026-10-26 13:10 JST）
+- 指示を継続し、remote HEAD04b122005c3f81499d80669f1ff2671d7f2a4468と本書、AGENTS/目的/恒久ルール/当日台帳/Issue178最新引継ぎを照合。通常チャット追加のdisabled/missing-storeテスト4件を再利用し、LOCK関連13件成功を実行確認した。既存cron接続を再実装していない。
+- 実証した追加欠陥：readSavedAutomaticSealの本体・pending読取の2catchが小文字限定で、D1_ERROR: NO SUCH TABLEで未保存GETが例外になる。追加回帰を修正前に実行して1失敗、case-insensitiveへ2箇所だけ修正して成功。quota/database locked/no such columnは元例外を伝播することも検証。既存uppercaseテストのSQL書込検出regexの余分なescapeも修正した。
+- 変更対象src/saved-automatic-seal.js/tests/saved-automatic-seal-queue-missing-store.test.mjs。引継ぎ済みqueue/safety testは保持。新SQL/外部要求/DDL/頻度/採点/LOCK条件変更0。本番未反映。最新全体751/751ローカル成功（既存746+引継ぎ4+今回1）。合成SQLite/mock結果で本番LOCK成功ではない。
+- 本番READはbudget→pipeline→coverageの3GETのみ。DOMのJSONoktrueを確認、HTTP数値はこの経路では未測定。budget updated13:07:03.060 JST/UTC10-26/152152read/4422q/unknown0/quotaErrors0/pausedfalse。定期operationのみでaccount/画面/確認GET/bookkeepingを含む余裕とはしない。
+- 13:10頃coverageの公式対象48Rを抽出：10/31東京12/京都12、11/1東京12/京都12、番組48/48・名簿0/48・正式カード0/48・暫定予想0/48。APIの非開催新潟24仮想枠は不足数に加算しない。通常正式予想とLOCK累計は当該APIに集計なしで未測定。今回新規保存/独立予想SHA/画面/LOCK確認成功0。
+- history最新12:54:51.257〜51.775 JSTはcooldown/acquisition/external0、共有nextBatchAt13:18:56.291 JST。cardSelection内京都10/31 11Rは履歴値で、外部0なので新実取得対象とは報告しない。results13:00cooldown外部0、archive13:06idle外部0。時計だけでgate解除としない。
+- 名簿最新実取得は12:00:50.837〜53.385京都10/31 4R、HTTP200/外部1/開催同一性照合拒否/publication-unconfirmed/保存0。1896read/6write/12q/2419ms（名簿operationのみ、全history/accountではない）。東京3Rも11:42同段階停止。本文未読なので京都1の空テンプレートと同じ原因と断定しない。次のsource clock13:00は経過済みでもshared gate/lease/公平dispatcherを満たす自然枠のみ。
+- LOCK表・triggerの本番実在は未確認。GitHub/公開APIの既存経路には任意sqlite_master SELECTの実行機能を見つけられず、Cloudflare/D1専用connectorもなし。不存在を決めつけてDDLを前倒ししない。既存queueのseal-store-unavailableはfail-closedとして維持、cron毎回DDL追加0。環境変数の実値も未確認（ブランチ自体未公開）。
+- PR283は保存済みJRA共有本文を対象限定1SELECTで読む診断のみ。07:48のPublished-link bound exceeded本文を再取得せず確定するための候補。未マージ/未公開、上限緩和0。次に必要な本番承認はこの3ファイルのマージ/Worker1回であり、PR284のLOCK有効化・trigger作成まで含めない。
+- PR284のwriter/6trigger/既存2表利用案は引き続きDraft未公開、環境変数未変更、既存SHA/印/LOCK正本不変。新しい未来名簿が保存されるまでは全馬履歴・通常予想実データ検証へ進めない。取得本文の確定/公開待ちを区別し、推測データで予想を作らない。

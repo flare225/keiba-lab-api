@@ -46,10 +46,10 @@ async function ensureSavedAutomaticGuards(db){
 export async function readSavedAutomaticSeal(db,input,{includePending=false}={}){
  const t=targetInput(input);let row;
  try{row=await db.prepare(`SELECT a.snapshot_json original_json,a.snapshot_sha256 original_sha,a.saved_at,l.id lock_id,l.snapshot_json,l.sealed_at,s.id seal_id,s.snapshot_sha256,s.sealed_at metadata_sealed_at,s.runner_count,s.quality_json FROM lab_automatic_predictions_v1 a JOIN lab_model_locks l ON l.race_key=json_extract(a.snapshot_json,'$.race.storedCardKey') AND l.model_version=? AND l.track_condition=? AND l.seal_kind=? LEFT JOIN lab_prospective_seals s ON s.race_key=l.race_key AND s.model_version=l.model_version AND s.track_condition=l.track_condition AND s.seal_kind=l.seal_kind WHERE a.race_key=? LIMIT 1`).bind(AUTOMATIC_MODEL,TRACK,KIND,`${t.date}:${t.venue}:${t.raceNo}`).first();}
- catch(e){if(!/no such table/.test(String(e)))throw e;row=null;}
+ catch(e){if(!/no such table/i.test(String(e)))throw e;row=null;}
  if(!row){
   if(!includePending)return{ok:true,available:false,locked:false};
-  let receipt;try{receipt=await db.prepare("SELECT json_extract(detail_json,'$.savedAutomaticLock') lock_json FROM lab_automatic_prediction_receipts_v1 WHERE race_key=?").bind(`${t.date}:${t.venue}:${t.raceNo}`).first();}catch(e){if(!/no such table/.test(String(e)))throw e;}
+  let receipt;try{receipt=await db.prepare("SELECT json_extract(detail_json,'$.savedAutomaticLock') lock_json FROM lab_automatic_prediction_receipts_v1 WHERE race_key=?").bind(`${t.date}:${t.venue}:${t.raceNo}`).first();}catch(e){if(!/no such table/i.test(String(e)))throw e;}
   return{ok:true,available:false,locked:false,pending:receipt?.lock_json?JSON.parse(receipt.lock_json):null};
  }
  const snapshot=JSON.parse(row.snapshot_json),actual=await sha256(row.snapshot_json);

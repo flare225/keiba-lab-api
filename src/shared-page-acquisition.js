@@ -9,7 +9,7 @@ import {saveDrawnOfficialCard,isPublishedCardNavigation,cardDiscoveryFailureEvid
 import {jraPageRequest,isJraSourceBlocked} from './jra-page-request.js';
 import {observedQuotaPause} from './scheduled-read-budget.js';
 
-export const SHARED_PAGE_POLICY=Object.freeze({maxRaces:120,maxPages:256,maxDepth:4,maxLinks:256,maxBytes:1500000,maxStoredBodyBytes:16*1024*1024,maxVersionsPerPage:4,refreshMs:3600000,maxWaitMs:6*3600000,parserVersion:'shared-page-v1-local'});
+export const SHARED_PAGE_POLICY=Object.freeze({maxRaces:120,maxPages:256,maxDepth:4,maxLinks:256,maxBytes:1500000,maxStoredBodyBytes:16*1024*1024,maxVersionsPerPage:4,refreshMs:3600000,maxWaitMs:6*3600000,parserVersion:'shared-page-v2-supported-links'});
 const PAGES='lab_shared_page_receipts_v1',BODIES='lab_shared_page_bodies_v1';
 const quota=e=>e?.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e));
 const key=r=>`${r.date}:${r.venue}:${r.raceNo}`;
@@ -23,9 +23,11 @@ export function canonicalPublishedPage(value){
  u.hash='';u.searchParams.sort();return u.href;
 }
 export function parseSharedPage(html,url){
- const links=extractLinks(html,url);if(links.length>SHARED_PAGE_POLICY.maxLinks)throw Error('Published-link bound exceeded');
+ // Keep the existing 256 acquisition-page bound; CSS/general navigation are not jobs.
+ const links=new Set();
+ for(const link of extractLinks(html,url)){try{links.add(canonicalPublishedPage(link));}catch{continue;}if(links.size>SHARED_PAGE_POLICY.maxLinks)throw Error('Published-link bound exceeded');}
  const pages=[],cards=[];
- for(const link of links){let canonical;try{canonical=canonicalPublishedPage(link)}catch{continue;}
+ for(const canonical of links){
   const meta=metaFromRacecardUrl(canonical);
   if(meta){if(!meta.venue||meta.raceNo<1||meta.raceNo>12)continue;cards.push({...meta,url:canonical});}
   else if(new URL(canonical).pathname==='/JRADB/accessD.html')pages.push(canonical);

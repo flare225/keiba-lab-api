@@ -321,3 +321,32 @@ test('observed cancellation is not misclassified as predraw and no missing horse
  sql.exec('CREATE TABLE lab_race_result_details(race_key TEXT,horse_no INTEGER,finish_position INTEGER,finish_status TEXT,time_text TEXT,time_seconds REAL,margin TEXT,corner_positions TEXT,last3f REAL,popularity INTEGER,odds REAL,body_weight INTEGER,body_weight_change INTEGER,source_sha256 TEXT,fetched_at TEXT)');
  const {default:app}=await import('../src/index-v3.49.0.js');const read=await app.fetch(new Request('https://test/v1/lab/history/race?date=2026-10-25&venue='+encodeURIComponent('京都')+'&race_no=3'),{DB:db},{});const data=await read.json();assert.equal(read.status,200,JSON.stringify(data));assert.equal(data.runners.length,9);assert.equal(data.runners.find(r=>r.horseNo===5).entryStatus,'cancelled');assert.equal(data.withdrawals[0].horseNo,5);assert.equal(await sha256(runnerFingerprint(data.runners.map(r=>({...r,name:r.horseName})))),post.card.runnerSha256);sql.close();
 });
+
+test('observed 282-link JRA response ignores 207 non-acquisition links while retaining bounded published pages',async()=>{
+ const evidence=JSON.parse(await readFile(new URL('./fixtures/jra-shared-links-20261026.json',import.meta.url),'utf8'));
+ // Reconstruct only the observed URL set, not the original copyrighted HTML/body SHA.
+ const html=evidence.links.map(u=>`<a href="${u}">observed URL</a>`).join('');
+ const {extractLinks}=await import('../src/index-v1.1.4.js');assert.equal(extractLinks(html,evidence.pageUrl).length,282);
+ const findings=parseSharedPage(html,evidence.pageUrl);assert.equal(findings.pages.length,45);assert.equal(findings.cards.length,30);
+ assert.deepEqual([...new Set(findings.cards.map(c=>c.date))].sort(),['2026-10-24','2026-10-25']);
+ const target={...racesFixture()[0],date:'2026-10-31',start:Date.parse('2026-10-31T01:00:00Z'),enqueued:FIXTURE_STAMP,rootUrl:evidence.pageUrl};
+ const plan=planSharedPages([target],[{page_url:evidence.pageUrl,status:'parsed',body_sha:evidence.bodySha256,parser_version:SHARED_PAGE_POLICY.parserVersion,observed_at:FIXTURE_STAMP,findings_json:JSON.stringify(findings)}],FIXTURE_STAMP);
+ assert.ok(plan.jobs.every(j=>!findings.cards.some(c=>j.url===c.url))); // old-week cards cannot become future race input
+ const overflow=Array.from({length:257},(_,i)=>`<a href="https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dtest${i}/AA">page</a>`).join('');
+ assert.throws(()=>parseSharedPage(overflow,evidence.pageUrl),/bound exceeded/);
+});
+
+test('observed failed URL set is reparsed from the saved body on parser revision without external refetch or stale-week card save',async()=>{
+ const evidence=JSON.parse(await readFile(new URL('./fixtures/jra-shared-links-20261026.json',import.meta.url),'utf8'));
+ const html=evidence.links.map(u=>`<a href="${u}">observed URL</a>`).join('');
+ const f=await fixtureDatabase(),race={...racesFixture()[0],date:evidence.scope,startAt:evidence.scope+'T10:00:00+09:00',rootUrl:evidence.pageUrl};
+ const args={scope:evidence.scope,races:[race]},oldVersion='shared-page-v1-local';
+ const failed=await runSharedPageStep(f.db,args,{now:()=>FIXTURE_STAMP,fetcher:async()=>new Response(html),parserVersion:oldVersion,parser:()=>{throw Error('Published-link bound exceeded')}});
+ assert.equal(failed.bodyStored,true);assert.equal(failed.externalRequests,1);
+ const body=f.sql.prepare('SELECT * FROM lab_shared_page_bodies_v1').get();
+ const recovered=await runSharedPageStep(f.db,args,{now:()=>FIXTURE_STAMP+61000,fetcher:()=>assert.fail('cached body must not be fetched again')});
+ assert.equal(recovered.status,'page-parsed');assert.equal(recovered.externalRequests,0);assert.equal(recovered.discoveredCards,30);assert.equal(recovered.discoveredPages,45);assert.notEqual(SHARED_PAGE_POLICY.parserVersion,oldVersion);
+ assert.deepEqual(f.sql.prepare('SELECT * FROM lab_shared_page_bodies_v1').get(),body);
+ assert.equal(f.sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);
+ assert.equal(f.sql.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='lab_automatic_predictions_v1'").get().n,0);f.sql.close();
+});

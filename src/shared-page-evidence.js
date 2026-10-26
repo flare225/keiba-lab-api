@@ -17,6 +17,6 @@ export async function readSharedPageEvidence(db,{scope,pageUrl,includeBody=false
  for(const link of links){try{const u=canonicalPublishedPage(link);supportedRawLinkCount++;supported.add(u);if(metaFromRacecardUrl(u))cards.add(u);}catch{otherLinkCount++;if(other.length<8)other.push(link);}}
  const title=html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/<[^>]*>/g,' ').trim()||null;
  return{...result,integrityVerified:true,hashBasis:'complete-decoded-html-utf8',bodyBytes:bytes,receivedBytes:row.received_bytes,decodedCharset:row.charset,httpStatus:row.http_status,observedAt:new Date(Number(row.observed_at)).toISOString(),title,
-  extractedLinkCount:links.length,publishedLinkLimit:SHARED_PAGE_POLICY.maxLinks,existingParserWouldReject:links.length>SHARED_PAGE_POLICY.maxLinks,supportedRawLinkCount,supportedUniquePageCount:supported.size,cardLinkCount:cards.size,otherLinkCount,
+  extractedLinkCount:links.length,publishedLinkLimit:SHARED_PAGE_POLICY.maxLinks,linkLimitBasis:'supported-unique-acquisition-pages',existingParserWouldReject:supported.size>SHARED_PAGE_POLICY.maxLinks,supportedRawLinkCount,supportedUniquePageCount:supported.size,cardLinkCount:cards.size,otherLinkCount,
   supportedSamples:[...supported].slice(0,16),otherSamples:other,fullBodyIncluded:includeBody,...(includeBody?{bodyHtml:html}:{}),findingsWritten:false};
 }

@@ -25,10 +25,12 @@ export function parseConfirmedPredraw(html,url,target,{allowUnassignedConnection
  if(!runners.length||runners.length>18||cells!==runners.length||new Set(runners.map(r=>r.horse_name)).size!==runners.length)throw Error('Incomplete or duplicate confirmed roster');
  return {raceKey:`${target.date}:${target.venue}:${target.raceNo}`,sourceUrl:url,runners};
 }
-export async function saveConfirmedPredraw(db,html,url,target,options){
- const roster=parseConfirmedPredraw(html,url,target,options);
+export async function saveConfirmedPredraw(db,html,url,target,options={}){
+ const roster=parseConfirmedPredraw(html,url,target,options),observedAt=options.observedAt??new Date().toISOString();
+ if(!Number.isFinite(Date.parse(observedAt))||Date.parse(observedAt)>Date.now())throw Error('Invalid pre-draw observation time');
  await db.prepare('CREATE TABLE IF NOT EXISTS lab_confirmed_predraw_rosters(race_key TEXT PRIMARY KEY,source_url TEXT NOT NULL,source_sha256 TEXT NOT NULL,runners_json TEXT NOT NULL,checked_at TEXT NOT NULL)').run();
- await db.prepare('INSERT OR REPLACE INTO lab_confirmed_predraw_rosters VALUES(?,?,?,?,?)').bind(roster.raceKey,url,await sha256(html),JSON.stringify(roster.runners),new Date().toISOString()).run();
+ await db.prepare('INSERT OR REPLACE INTO lab_confirmed_predraw_rosters VALUES(?,?,?,?,?)').bind(roster.raceKey,url,await sha256(html),JSON.stringify(roster.runners),observedAt).run();
+ const read=await readConfirmedPredraw(db,target);if(!read||read.source_url!==url||read.source_sha256!==await sha256(html)||read.runners_json!==JSON.stringify(roster.runners)||read.checked_at!==observedAt)throw Error('Confirmed roster readback mismatch');
  return roster;
 }
 export async function readConfirmedPredraw(db,target){

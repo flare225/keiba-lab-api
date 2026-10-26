@@ -8,11 +8,14 @@ export function buildProvisionalPrediction(source,conditions,histories,now=Date.
  const today=new Date(now+9*3600000).toISOString().slice(0,10);
  if(source.date<=today)throw Error('暫定生成は翌日以降の開催に限定します。');
  if(!['芝','ダート','障害'].includes(conditions?.surface)||!Number.isInteger(Number(conditions?.distance))||Number(conditions.distance)<=0)throw Error('保存済み番組のコース・距離を確認できません。');
+ const confirmed=source.rosterBasis==='confirmed-predraw';
+ if(confirmed&&(source.provider!=='JRA'||source.confirmationVerified!==true))throw Error('枠順前名簿の確認根拠がありません。');
+ const preparation={stage:confirmed?'entries-confirmed-predraw':'entries-unconfirmed',label:confirmed?'暫定予想・枠順未確定':'暫定評価・出走未確定',entriesConfirmed:confirmed,candidateSetComplete:confirmed?true:null,provider:source.provider||null,kind:source.kind||null,sourceUrl:source.sourceUrl||null,observedAt:source.observedAt||null,sourceSnapshotId:source.snapshotId||null,sourceSha256:source.sourceSha256||null,officialCard:false,formalLockEligible:false};
  const race={date:source.date,venue:source.venue,surface:conditions.surface,distance:Number(conditions.distance)};
  const rows=rankAssessment(source.names.map(horseName=>({horseName,horseNo:null,frameNo:null,assessment:assessExpectedHistory(histories.get(horseName),race,null,'recent-three-v1')})));
  const marks=['◎','○','▲','△','☆'];
  for(const row of rows){row.score=row.assessment.evidenceScore;row.rank=row.referenceRank;row.mark=row.rank===null?null:(marks[row.rank-1]||'注');}
- return {ok:true,status:'provisional-expected-roster',generatedAt:new Date(now).toISOString(),modelVersion:'existing-safe-core-1.5-recent-three-v1',race:{...race,raceNo:source.raceNo,raceName:source.raceName},roster:{snapshotId:source.snapshotId,sourceUrl:source.sourceUrl,observedAt:source.observedAt},conditionsSourceUrl:conditions.source_url,runnerCount:rows.length,scoredRunners:rows.filter(r=>r.rank!==null).length,runners:rows,histories:source.names.map(name=>histories.get(name)),guardrails:{humanMarksUsed:false,officialCard:false,horseNumbersAssigned:false,locked:false,persisted:false,eligibleForLearning:false,targetResultUsed:false,noForcedTieBreak:true,externalRequests:0},notice:'想定名簿による暫定参考評価。登録除外・取消・枠順は未反映。同点は同順位・同じ印。netkeiba由来の履歴はJRA公式照合済みではありません。'};
+ return {ok:true,status:'provisional-expected-roster',preparation,generatedAt:new Date(now).toISOString(),modelVersion:'existing-safe-core-1.5-recent-three-v1',race:{...race,raceNo:source.raceNo,raceName:source.raceName},roster:{snapshotId:source.snapshotId,sourceUrl:source.sourceUrl,observedAt:source.observedAt},conditionsSourceUrl:conditions.source_url,runnerCount:rows.length,scoredRunners:rows.filter(r=>r.rank!==null).length,runners:rows,histories:source.names.map(name=>histories.get(name)),guardrails:{humanMarksUsed:false,officialCard:false,horseNumbersAssigned:false,locked:false,persisted:false,eligibleForLearning:false,targetResultUsed:false,noForcedTieBreak:true,externalRequests:0},notice:'想定名簿による暫定参考評価。登録除外・取消・枠順は未反映。同点は同順位・同じ印。netkeiba由来の履歴はJRA公式照合済みではありません。'};
 }
 export async function provisionalExpectedPrediction(db,source,now=Date.now()){
  if(!source)throw Error('想定名簿が保存されていません。');

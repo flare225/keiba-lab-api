@@ -4,12 +4,12 @@ import {resolveReviewedWithdrawal,hasReviewedWithdrawal} from './reviewed-withdr
 // Network is injected explicitly; one delivery can fetch at most one page.
 import {extractLinks,metaFromMeetingListUrl,metaFromRacecardUrl} from './index-v1.1.4.js';
 import {inspectSourceCard,runnerFingerprint,sha256} from './card-evidence.js';
-import {parseConfirmedPredraw} from './confirmed-predraw-roster.js';
+import {saveConfirmedPredraw} from './confirmed-predraw-roster.js';
 import {saveDrawnOfficialCard,isPublishedCardNavigation,cardDiscoveryFailureEvidence} from './expected-card-discovery.js';
 import {jraPageRequest,isJraSourceBlocked} from './jra-page-request.js';
 import {observedQuotaPause} from './scheduled-read-budget.js';
 
-export const SHARED_PAGE_POLICY=Object.freeze({maxRaces:120,maxPages:256,maxDepth:4,maxLinks:256,maxBytes:1500000,maxStoredBodyBytes:16*1024*1024,maxVersionsPerPage:4,refreshMs:3600000,maxWaitMs:6*3600000,parserVersion:'shared-page-v2-supported-links'});
+export const SHARED_PAGE_POLICY=Object.freeze({maxRaces:120,maxPages:256,maxDepth:4,maxLinks:256,maxBytes:1500000,maxStoredBodyBytes:16*1024*1024,maxVersionsPerPage:4,refreshMs:3600000,maxWaitMs:6*3600000,parserVersion:'shared-page-v3-predraw-preparation'});
 const PAGES='lab_shared_page_receipts_v1',BODIES='lab_shared_page_bodies_v1';
 const quota=e=>e?.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e));
 const key=r=>`${r.date}:${r.venue}:${r.raceNo}`;
@@ -126,7 +126,7 @@ async function parseStored(db,scope,job,row,stamp,deps){
   const card=await saveDrawnOfficialCard(db,html,job.url,body.http_status,race,Number(row.observed_at),deps);
   result={...card,kind:'formal',runnerSha256:await sha256(runnerFingerprint(inspect.raw.map(r=>({...r,frameNo:inspect.frames.get(r.horseNo)}))))};
   }
- }else{try{if(inspect.cancelledRows?.length){const error=Error('正式出馬表の取消・除外馬の馬番が原典に表示されていません。番号を推測せず保存を保留します: '+inspect.cancelledRows.map(r=>r.horseName||'不明').join('、'));error.cancelledCardUnresolved=true;throw error;}const roster=parseConfirmedPredraw(html,job.url,race,{allowUnassignedConnections:true});result={kind:'predraw',raceKey:roster.raceKey,runnerCount:roster.runners.length};}catch(e){e.failureEvidence=await cardDiscoveryFailureEvidence(html,job.url,race,{httpStatus:body.http_status,observedAt:new Date(Number(row.observed_at)).toISOString()});throw e;}}
+ }else{try{if(inspect.cancelledRows?.length){const error=Error('正式出馬表の取消・除外馬の馬番が原典に表示されていません。番号を推測せず保存を保留します: '+inspect.cancelledRows.map(r=>r.horseName||'不明').join('、'));error.cancelledCardUnresolved=true;throw error;}const roster=await saveConfirmedPredraw(db,html,job.url,race,{allowUnassignedConnections:true,observedAt:new Date(Number(row.observed_at)).toISOString()});result={kind:'predraw',raceKey:roster.raceKey,runnerCount:roster.runners.length};}catch(e){e.failureEvidence=await cardDiscoveryFailureEvidence(html,job.url,race,{httpStatus:body.http_status,observedAt:new Date(Number(row.observed_at)).toISOString()});throw e;}}
  await updateReceipt(db,scope,job.url,{...row,status:result.kind==='formal'?'formal-saved':'predraw',next_at:stamp+86400000,parser_version:version,findings_json:JSON.stringify({kind:result.kind,pages:[],cards:[]}),card_key:key(race),card_result_json:JSON.stringify(result),error:null});
  return{status:result.kind==='formal'?(result.newlySaved===false?'existing-card-reconciled':'official-card-saved'):'predraw-page-preserved',formalCardSaved:result.kind==='formal'&&result.newlySaved!==false,card:result,predictionRebuilt:false};
 }

@@ -14,3 +14,15 @@ test('stored prior rows flow through the real batch scorer, persistence and inde
  const allDb={prepare(q){const wrap=(a=[])=>({bind(...v){return wrap(v)},async run(){return{meta:{changes:sql.prepare(q).run(...a).changes}}},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}}});return wrap()}};
  const source={...t,names:['保存馬'],age:3,snapshotId:'registered:local-fixture'};const saved=await saveProvisionalPrediction(allDb,t,()=>provisionalExpectedPrediction(allDb,source,now),now);assert.equal(saved.saved,1);assert.equal(saved.snapshot.runners[0].mark,'◎');assert.equal(saved.snapshot.runners[0].assessment.provenance,'stored-db');assert.equal(saved.snapshot.guardrails.locked,false);assert.deepEqual((await readProvisionalPrediction(allDb,t)).snapshot,saved.snapshot);sql.close();
 });
+
+test('unconfirmed and confirmed predraw snapshots coexist by source SHA without replacing prior evaluation',async()=>{
+ const {sql,db}=fixture(),{provisionalStorageKey}=await import('../src/provisional-prediction-snapshots.js');
+ const old=await saveProvisionalPrediction(db,t,async()=>sample(),now),sha='a'.repeat(64),version={...t,basis:'confirmed-predraw',sourceSha256:sha};
+ const make=()=>({...sample(),preparation:{stage:'entries-confirmed-predraw',sourceSha256:sha},runners:[{...sample().runners[0],score:80}]});
+ const fresh=await saveProvisionalPrediction(db,version,async()=>make(),now+1000);assert.equal(fresh.saved,1);assert.equal(sql.prepare('SELECT count(*) n FROM lab_provisional_predictions_v1').get().n,2);
+ assert.equal((await readProvisionalPrediction(db,t,{exact:true})).snapshotSha256,old.snapshotSha256);assert.equal((await readProvisionalPrediction(db,t)).snapshotSha256,fresh.snapshotSha256);assert.equal((await readProvisionalPrediction(db,version)).snapshotSha256,fresh.snapshotSha256);assert.notEqual(old.snapshotSha256,fresh.snapshotSha256);
+ assert.equal((await readProvisionalPrediction(db,{...version,sourceSha256:'b'.repeat(64)})).available,false);
+ assert.throws(()=>provisionalStorageKey({...version,sourceSha256:'bad'}));assert.throws(()=>sql.exec('UPDATE lab_provisional_predictions_v1 SET saved_at=\'changed\''),/immutable/);
+ const {default:app}=await import('../src/index-v3.49.0.js');const url='https://test/v1/lab/provisional-prediction-snapshot?date='+t.date+'&venue='+encodeURIComponent(t.venue)+'&race_no='+t.raceNo+'&basis=confirmed-predraw&source_sha256='+sha;
+ const result=await app.fetch(new Request(url),{DB:db},{}),body=await result.json();assert.equal(result.status,200);assert.equal(body.snapshotSha256,fresh.snapshotSha256);assert.equal(body.snapshot.guardrails.locked,false);sql.close();
+});

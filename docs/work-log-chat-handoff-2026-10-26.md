@@ -81,3 +81,11 @@
 4. **安全な対応の選択肢**：本番で既存sealテーブルの存在を確認できる場合は現状のまま安全検証を続行。未作成なら、承認済みのマイグレーションで必要なテーブルとトリガーを**一度だけ**作る方法を第一候補とする。cron毎回の無条件DDLは避ける。別案は候補SELECTの `NOT EXISTS` を外し、読取・idempotencyで既存sealを判定するが、余計なSQLや重複処理の恐れがあり、測定とテストなしに採用しない。
 5. **確認が必要なこと**：本番D1の`lab_model_locks`/`lab_prospective_seals`の有無とスキーマ、トリガーの有無、現在の環境変数値、既存sealと旧モデルLOCKの件数、実行に使える権限とD1上限。現時点では**実DB未確認**、テーブル未作成は条件付きの障害可能性であり確定障害ではない。
 6. `tests/saved-automatic-seal-queue-missing-store.test.mjs` の大文字回帰テストは現在のコードを再確認。最新CI成功は追加テストコミットの成功を意味しない。**未確認の修正を完了扱いしない**。
+
+
+## 本番DBテーブル存在確認の接続経路調査（2026-10-26）
+- GitHub `wrangler.jsonc` を実読。Worker `keiba-lab-api`、D1 binding `DB`、database_name `keiba-lab`、cron `*/3 * * * *` 等を確認。ファイルの `vars` には `LAB_SAVED_AUTOMATIC_LOCK` の設定が見当たらず、**本番環境での変数値を示す証拠ではない**（Dashboard secrets/variables は別管理され得る）。
+- この通常チャットの利用可能な接続ツールを探索したが、Cloudflare D1に対する直接の読み取りSQL実行ツールは見つからなかった。GitHubのコード・設定確認はできるが、**本番D1 `sqlite_master` の結果を取得したとは主張できない**。
+- 本番DBの`lab_model_locks`/`lab_prospective_seals`の実在・スキーマ・トリガー有無は**未確認**。接続経路なしに未作成と断定せず、CREATE/ALTER/DELETE/本番環境変数変更は一切実施しない。
+- Work復活時に、既存の承認済みCloudflare接続で以下の読み取り専用SQLを**1回の照会で**実行する（接続が無い場合はユーザーに承認/接続を依頼）：`SELECT type,name,tbl_name,sql FROM sqlite_master WHERE (type='table' AND name IN ('lab_model_locks','lab_prospective_seals')) OR (type='trigger' AND tbl_name IN ('lab_model_locks','lab_prospective_seals')) ORDER BY type,name;`。結果のテーブル定義・トリガー名を確認してから不足分のみ対処。必要に応じてread quotaを見て延期する。
+- 今回は接続確認・実設定の読み取りのみ。DB read/writeは0、実レースへの影響0。

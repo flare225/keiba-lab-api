@@ -2,7 +2,9 @@ import {REMAINING_SPECIAL_REVIEWED} from './remaining-special-reviewed-history.j
 import {ADDITIONAL_WEEK_REVIEWED} from './additional-week-reviewed-history.js';
 import {NIIGATA_ADDITIONAL_ROSTER_SEEDS} from './niigata-additional-rosters.js';
 import {LUMIERE_ROSTER_SEED} from './lumiere-reviewed-history.js';
-import {saveExpectedRoster} from './expected-roster-registry.js';
+import {saveExpectedRoster,validateExpectedRoster} from './expected-roster-registry.js';
+import {sha256} from './card-evidence.js';
+import {UPCOMING_REVIEWED_ROSTERS} from './upcoming-reviewed-rosters.js';
 // Only source-reviewed records committed with the application may be imported
 // without an owner write token. Request payloads never supply names or evidence.
 export const EXPECTED_ROSTER_SEEDS=[
@@ -180,11 +182,26 @@ export const EXPECTED_ROSTER_SEEDS=[
       ]
     }
   }
-, LUMIERE_ROSTER_SEED, ...NIIGATA_ADDITIONAL_ROSTER_SEEDS, ...ADDITIONAL_WEEK_REVIEWED.map(c=>c.seed), ...REMAINING_SPECIAL_REVIEWED.map(c=>c.seed)
+, LUMIERE_ROSTER_SEED, ...NIIGATA_ADDITIONAL_ROSTER_SEEDS, ...ADDITIONAL_WEEK_REVIEWED.map(c=>c.seed), ...REMAINING_SPECIAL_REVIEWED.map(c=>c.seed), ...UPCOMING_REVIEWED_ROSTERS
 ];
 export async function importExpectedRosterSeed(db,snapshotId,stamp=Date.now(),seeds=EXPECTED_ROSTER_SEEDS){
  if(typeof snapshotId!=='string'||!snapshotId||snapshotId.length>150)throw Error('公開コードに登録した名簿IDが必要です。');
  const seed=seeds.find(s=>s.snapshotId===snapshotId);
  if(!seed) return{ok:true,status:'source-reviewed-seed-not-available',storedRunners:0,externalRequests:0};
  return{...await saveExpectedRoster(db,seed.record,stamp),status:'source-reviewed-roster-imported'};
+}
+
+// Called only after the existing hourly claim. One reviewed record at most;
+// no source HTTP, new clock/table, or unreviewed request payload.
+export async function prepareReviewedRoster(db,from,to,stamp,seeds=EXPECTED_ROSTER_SEEDS){
+ const candidates=seeds.filter(s=>s.naturalPreparation===true&&s.record.date>=from&&s.record.date<=to&&Date.parse(s.record.observedAt)<=stamp).sort((a,b)=>a.record.date.localeCompare(b.record.date)||a.record.raceNo-b.record.raceNo||a.record.venue.localeCompare(b.record.venue)).slice(0,120);
+ if(!candidates.length)return{status:'no-reviewed-candidate',saved:0,externalRequests:0};
+ const identified=await Promise.all(candidates.map(async s=>({seed:s,body:JSON.stringify(validateExpectedRoster(s.record,stamp))})));
+ for(const s of identified)s.hash=await sha256(s.body);
+ let rows=[];try{rows=(await db.prepare('SELECT snapshot_id,record_json FROM lab_expected_roster_registry WHERE snapshot_id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(identified.map(s=>s.hash))).all()).results||[];}catch(e){if(!/no such table/i.test(String(e)))throw e;}
+ for(const row of rows)if(await sha256(row.record_json)!==row.snapshot_id)throw Error('照合済み候補名簿の保存ハッシュが一致しません。');
+ const stored=new Set(rows.map(r=>r.snapshot_id)),next=identified.find(s=>!stored.has(s.hash));
+ if(!next)return{status:'reviewed-candidates-already-stored',saved:0,externalRequests:0};
+ const result=await importExpectedRosterSeed(db,next.seed.snapshotId,stamp,seeds);
+ return{...result,target:`${next.seed.record.date}:${next.seed.record.venue}:${next.seed.record.raceNo}`,saved:result.idempotent?0:1,candidateSetComplete:null,entriesConfirmed:false};
 }

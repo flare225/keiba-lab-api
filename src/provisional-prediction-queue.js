@@ -1,6 +1,7 @@
 import {storedProvisionalSources} from './confirmed-predraw-history-source.js';
 import {provisionalExpectedPrediction,repairStoredProgramConditions} from './provisional-expected-prediction.js';
 import {saveProvisionalPrediction,readProvisionalPrediction,provisionalStorageKey} from './provisional-prediction-snapshots.js';
+import {prepareReviewedRoster} from './expected-roster-seeds.js';
 // One candidate per hour, all JRA venues; no upstream network calls.
 export async function scheduledProvisionalPrediction(db,now=Date.now(),deps={}){
  await db.prepare('CREATE TABLE IF NOT EXISTS lab_provisional_queue_v1(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_at INTEGER NOT NULL,error TEXT)').run();
@@ -9,17 +10,18 @@ export async function scheduledProvisionalPrediction(db,now=Date.now(),deps={}){
  const hour=Math.floor(now/3600000)*3600000;
  const claim=await db.prepare("UPDATE lab_provisional_clock_v1 SET next_at=? WHERE name='queue' AND (next_at<=? OR (next_at>=? AND next_at<?))").bind(hour+3600000,now,hour,hour+60000).run();if(Number(claim.meta?.changes)!==1)return{status:'not-due',externalRequests:0};
  const today=new Date(now+9*3600000).toISOString().slice(0,10),from=new Date(Date.parse(today+'T00:00:00Z')+86400000).toISOString().slice(0,10),to=new Date(Date.parse(today+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);
+ const rosterPreparation=await(deps.prepareRoster||prepareReviewedRoster)(db,from,to,now);
  const sources=await(deps.sources||storedProvisionalSources)(db,from,to,now),keys=sources.map(s=>provisionalStorageKey(s));
  const receipts=(await db.prepare('SELECT * FROM lab_provisional_queue_v1 WHERE race_key IN (SELECT value FROM json_each(?))').bind(JSON.stringify(keys)).all()).results||[],byKey=new Map(receipts.map(r=>[r.race_key,r]));
  let saved=[];try{saved=(await db.prepare('SELECT race_key FROM lab_provisional_predictions_v1 WHERE race_key IN (SELECT value FROM json_each(?))').bind(JSON.stringify(keys)).all()).results||[];}catch(e){if(!/no such table/i.test(String(e)))throw e;}
  const exists=new Set(saved.map(r=>r.race_key));
  const due=sources.filter(s=>s.date>=from&&s.date<=to).filter(s=>{const k=provisionalStorageKey(s),r=byKey.get(k);return Number(r?.next_at||0)<=now&&(!exists.has(k)||r?.status==='pending-readback')}).sort((a,b)=>Number(byKey.get(provisionalStorageKey(a))?.next_at||0)-Number(byKey.get(provisionalStorageKey(b))?.next_at||0)||a.date.localeCompare(b.date)||a.raceNo-b.raceNo||a.venue.localeCompare(b.venue));
- const source=due[0];if(!source)return{status:'no-due-registered-roster',externalRequests:0};const k=provisionalStorageKey(source);
+ const source=due[0];if(!source)return{status:'no-due-registered-roster',rosterPreparation,externalRequests:0};const k=provisionalStorageKey(source);
  try{
- const result=exists.has(k)?{...await readProvisionalPrediction(db,source,{exact:true}),saved:0}:await saveProvisionalPrediction(db,source,async()=>{const repair=await(deps.repair||repairStoredProgramConditions)(db,source);const prediction=await(deps.build||provisionalExpectedPrediction)(db,source,now);if(prediction.scoredRunners===0)throw Error('過去走不足のため暫定順位を生成できません。');return{...prediction,programRepair:repair};},now);
+ const result=exists.has(k)?{...await readProvisionalPrediction(db,source,{exact:true}),saved:0}:await saveProvisionalPrediction(db,source,async()=>{const repair=await(deps.repair||repairStoredProgramConditions)(db,source);const prediction=await(deps.build||provisionalExpectedPrediction)(db,source,now);if(prediction.scoredRunners===0&&!(prediction.race?.raceType==='debut'&&prediction.runners?.length&&prediction.runners.every(r=>r.score===null&&r.rank===null&&r.mark===null)))throw Error('過去走不足のため暫定順位を生成できません。');return{...prediction,programRepair:repair};},now);
  if(!result.integrityVerified)throw Error('Saved provisional readback not verified');
  await db.prepare("INSERT INTO lab_provisional_queue_v1 VALUES(?,'verified',?,NULL) ON CONFLICT(race_key) DO UPDATE SET status='verified',next_at=excluded.next_at,error=NULL").bind(k,now+86400000).run();
- return{status:'verified',target:k,basis:source.basis||'expected-roster',sourceSha256:source.sourceSha256||null,saved:result.saved,snapshotSha256:result.snapshotSha256,integrityVerified:true,externalRequests:0};
+ return{status:'verified',target:k,basis:source.basis||'expected-roster',sourceSha256:source.sourceSha256||null,saved:result.saved,evaluationStatus:result.snapshot?.evaluationStatus||null,rosterPreparation,snapshotSha256:result.snapshotSha256,integrityVerified:true,externalRequests:0};
  }catch(e){if(e.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;
- const status=e.saveMayHaveSucceeded?'pending-readback':'awaiting-data';await db.prepare('INSERT INTO lab_provisional_queue_v1 VALUES(?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET status=excluded.status,next_at=excluded.next_at,error=excluded.error').bind(k,status,now+2*3600000,String(e.message||e)).run();return{status,target:k,error:String(e.message||e),saveMayHaveSucceeded:!!e.saveMayHaveSucceeded,externalRequests:0,nextAttemptAt:new Date(now+2*3600000).toISOString()};}
+ const status=e.saveMayHaveSucceeded?'pending-readback':'awaiting-data';await db.prepare('INSERT INTO lab_provisional_queue_v1 VALUES(?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET status=excluded.status,next_at=excluded.next_at,error=excluded.error').bind(k,status,now+2*3600000,String(e.message||e)).run();return{status,target:k,error:String(e.message||e),rosterPreparation,saveMayHaveSucceeded:!!e.saveMayHaveSucceeded,externalRequests:0,nextAttemptAt:new Date(now+2*3600000).toISOString()};}
 }

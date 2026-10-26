@@ -57,3 +57,10 @@
 - 先に追加した `tests/saved-automatic-seal-queue-missing-store.test.mjs` は `D1_ERROR: no such table: ...` を再現する。上記修正は大文字の `NO SUCH TABLE` にも対応するが、その追加テストは未作成。新規CI/テスト結果未確認。
 - 実施：提案ブランチの1ファイル局所修正、GitHubコミット。未実施：mainマージ、Worker公開、環境変数設定、D1照会/書込、実レースLOCK検証。
 - **次のWork最優先：** 提案PRのCI実行結果を取得し、scheduler接続済みという最新事実を前提に、本番有効化前の残る安全条件・DDL・DB消費・未来レースの正式カード/予想保存状況を確認する。未接続として二重実装しない。
+
+
+## GitHub Actions実測（通常チャット継続確認）
+- commit `e9eea8eb9b938a716b9f4128b918a9305c58a21b` に対するPR-triggered GitHub Actions `Node tests` run **40251643053** は `completed/success`。job **121344646795** (`test`) は `completed/success`、`Syntax check active Worker` と `Run test suite` の各stepも `success`。job logsの個別テスト数はまだ未読のため件数を推測しない。
+- 取得時の `main...proposal/saved-automatic-lock-readback` 比較は **ahead 7 / behind 0**、変更12ファイル（この時点のheadには直前の本記録更新コミットも含む）。PRブランチのCIであり、main CI・本番Worker・実DB保存・LOCK成功とは区別。
+- 本番書込/デプロイ/環境変数変更は今回0。新規の公式カード・名簿・予想・LOCK保存件数も未測定。
+- 次の確認：最新headに対応するActionsがあるかを確認し、run/jobとコミットSHAを対応付ける。CIが古いheadの成功なら最新headの成功と混同しない。

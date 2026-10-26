@@ -1,5 +1,7 @@
 import {readWithdrawalEvidence} from './reviewed-withdrawal-card.js';
 import {readMissingRosterEvidence} from './missing-roster-evidence.js';
+import {readSavedAutomaticSeal} from './saved-automatic-seal.js';
+import {scheduledSavedAutomaticSeal} from './saved-automatic-seal-queue.js';
 import {measureD1Operation} from './d1-operation-metrics.js';
 import {readEvidenceEvaluation,saveEvidenceEvaluation} from './evidence-evaluation-snapshots.js';
 import {rosterHistoryInventory} from './roster-history-inventory.js';
@@ -144,7 +146,14 @@ export default {
    if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
    try{
     let result;
-    if(request.method==='GET')result=await readAutomaticPrediction(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')},{includePending:u.searchParams.get('include_pending')==='1'});
+    if(request.method==='GET'){
+     const target={date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')};
+     result=await readAutomaticPrediction(env.DB,target,{includePending:u.searchParams.get('include_pending')==='1'});
+     if(result.available&&u.searchParams.get('include_lock')==='1'){
+      try{const {snapshot,...lock}=await readSavedAutomaticSeal(env.DB,target,{includePending:true});result.lock=lock;}
+      catch(e){if(e.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;result.lock={ok:false,available:false,locked:false,status:'verification-failed'};}
+     }
+    }
     else if(request.method==='POST'){const b=await request.json();if(b.confirm!=='CAPTURE')throw Error('confirm CAPTURE is required');result=await captureAutomaticPrediction(env.DB,b);}
     else return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
     return Response.json({...result,version:VERSION},{headers});
@@ -300,6 +309,8 @@ export default {
   const budgetEnv={...env,DB:db};
   if(event.cron==='*/3 * * * *'){
    try{await scheduledAutomaticPrediction(db);}catch(e){console.error('automatic-prediction',String(e));}
+   // Explicit activation approval is separate from deploying the read adapter.
+   if(env.LAB_SAVED_AUTOMATIC_LOCK==='true')try{console.info('saved-automatic-lock',JSON.stringify(await scheduledSavedAutomaticSeal(db,{enabled:true})));}catch(e){if(e.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;console.error('saved-automatic-lock',String(e));}
    await dispatchLiveSources(event,budgetEnv);
    await collectLockedMarkResults(db);
    try{await scheduledAutomaticCandidates(db);}catch(e){console.error('automatic-learning-candidate',String(e));}

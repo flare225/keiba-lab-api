@@ -149,3 +149,22 @@
 - 今回本番GET/POST/直接D1/外部強制取得/merge/deploy/env変更0。14:13基準program48/roster0/formal0/provisional0は前回値で最新値へ流用しない。最新自然historyと予想/LOCK累計は今回未測定。gate前回14:48:57.519JST、時計のみで解除扱いしない。
 - 未解決：特別登録PDF/accessT等を自動名簿化する共通経路は今回追加していない。登録候補実データが揃わなければstage1入力は増えない。正式カード/履歴がないまま架空評価を保存しない。LOCK284は別未公開、本番lab_model_locks/lab_prospective_seals/trigger存在とLAB_SAVED_AUTOMATIC_LOCK設定は未確認でCREATE/変更しない。
 - 次の作業：承認対象はAPI286の12file・Worker1回とUI110の2file・Vercel1回（現段階未承認）。自然historyで既存保存bodyの解析→predraw既存store保存→履歴補完→毎時暫定snapshotの別版保存→basis/sourceSHA指定独立GET/SHA→通常UIを段階別に確認。正式公開後は既存正式カード/通常予想経路を使い、LOCKは別の正当条件を確認。PR284/モデル切替/新LOCKの同時公開は含めない。
+
+## 2026-10-26 15時台 — PR286/API・PR110/UIの明示承認公開
+- ユーザー最新指示「天皇賞・秋は木曜日に枠順確定するから想定出馬表のみ…そこも踏まえて作業承認」。API286/12fileとUI110/2file、各1回公開の承認として実施。天皇賞秋は木曜確定前の想定/登録段階として扱い、正式カード0を障害や未達と即断しない。登録/確定枠順前/正式を分離、暫定LOCK禁止を維持。
+- 最終照合：API head cd054b68a2d7a695a76a06480658ecbe03068a9c/12file、CI743/743、UI head5bd375d1c0bcd9ec71cbc7c1962273ae29b53c44/2file、CI201/201+63/63一致。差分は前項記録どおり。ready化後expected_head_sha指定でmerge。
+- API merge70cc1be4996d29ba2d2348c9c0ec3c4b5802dbb3。既存push公開Actions40277163065/job121422248197 success、公開直前743/743/fail0。2026-10-26 14:59:08.392JST Worker49b9da63-99f3-4a19-9de4-38b2ea7b3642、14:59:23.809 deploy-check oktrue/version3.49.63/scope release-identity-only/databaseVerifiedfalse。追加手動起動・追加deployなし。
+- UI mergee26b97db5a88bb920e95ef1d6068096b09c8b3f3。Git連携production dpl_AfEDdR2RaotxUmcsyTYwhHuLDtmZ READY、14:58:51.739JST ready（build開始14:58:45.476）。Vercelmeta main+mergeSHA一致、production alias keiba-lab-apl.vercel.app。UI公開は今回1回のみ、追加create/promoteなし。
+- 許可済みBrowser診断GET：scheduled-read-budget1、pipeline-status1、provisional-coverage1。上流強制取得/POST/直接D1/LOCK変更/モデル変更/新LOCKwriter公開0。
+- budgetは14:55:10.512JST更新の実測値：UTC10/26、213738read/6131query/unknown0/quotaErrors0/pausedfalse、collection209109/learning4629。これは予定処理/認可学習の観測範囲のみ、account全体・画面/手動GET/台帳を含まない。新公開より前の予算値なのでPR286単体性能にしない。
+- 14:59:45.419JST pipeline最新historyは公開前14:42:49.340〜49.521、cooldown/external0/next14:48:57.519、historyWorkStageacquisition、targetOct31京都11/eligibleCards8/discovery27(untried6/retry21/continuation6/reexploration15)/shared24。古い期限経過だけで解除・停止・新修正失敗と判断しない。archive14:54awaiting-published-card-links/external0、results14:48cooldown/external0も公開前。
+- 公開直後coverageは既定3場72slotを返すが、対象は東京/京都48Rのみfilterして集計：Oct31Tokyo/Kyoto各program12・roster0・正式0・provisional0、Nov1Tokyo/Kyotoも同じ。合計program48/48・名簿0/48・正式0/48・暫定0/48。非開催新潟24slotのprogram-missingを不足対象に加算しない。通常正式予想・LOCK累計はmetadata未集計につき未測定。新規snapshot/独立GET/SHA/browser/LOCK成功加算0。
+- coverage最新14時通常no-due-registered-rosterは公開前（31read1write7q1334ms）、比較no-due-comparison7read1write8q1572msも公開前。PR286の追加候補SELECTを実行した証拠ではない。source最新13:48source-not-due/external0/1read0write4q714msは既報で新成果に数えない。
+- 公開成功と本番予想準備成功は別。次の公開後自然history/毎時15時評価で新parserとpredraw保存経路の到達を確認する。入力が未公開/未保存なら予想を捏造しない。正式カード前に特別登録/想定名簿の出典検証を進め、正式公開後は既存正式予想経路へ渡す。LOCK284/スキーマ/環境フラグ変更は今回の公開に含めない。
+
+- 公開後の自然実行を15:01:20.761JST pipeline再読取で確認。history15:00:49.380〜52.211 acquisition、実外部targetOct31京都5/補助netkeiba/external1/HTTP400/fetch-failed/saveMayHaveSucceededfalse/次16:00:50.343JST。選択診断cardSelectionはOct31京都11/shared-page-deadlineのまま、実外部targetとは別（選択候補を取得成功としない）。gate期限後の実外部1はその枠の許可を証明するが、最新sharednextBatchAt自体はこの返却にない。403解消や未来カード未公開の証拠とはしない。新body/card/predraw保存0、強制retryなし。
+- 当該sourceoperationだけ1900read/5write/11q/1739ms、うち候補結合1880read。writeはreceipt/clock/gate等で名簿5件ではない。account全体と混同しない。既存HTTP400を解析緩和で保存しない。本文は新失敗応答に未収録、根拠なく未公開と断定しない。
+- 15時通常暫定自然run provisional-prediction:1792994403213/trigger scheduled、15:00:05.083〜05.741、no-due-registered-roster/external0、新保存0。32read/1write/8q/582ms。新SQL SELECT * FROM lab_confirmed_predraw_rosters WHERE race_key>=? AND race_key<? ORDER BY race_key LIMIT120 が1read/0writeで実行されたため新接続の本番到達は証明。候補名簿は0なので評価保存成功とはしない。旧14時31read/7qから追加1read/1qだが入力/時刻条件が異なり全体削減率を主張しない。
+- 15時比較evidence-evaluation:1792994403213は15:00:05.950〜06.564/no-due-comparison/external0、新保存0、7read1write8q534ms。instr(race_key,':predraw:')除外SQLも実行確認。shadow昇格なし。
+- 自然枠後coverage再読取1回：対象東京/京都の土日各12R、program各12/roster0/provisional0のまま。名簿0/48・正式カード0/48・暫定0/48、新規独立GET/SHA0/browser0/LOCK成功加算0。正式カード0は現時点の公開段階と取得状況を分ける。通常正式予想/LOCK累計未測定。今回diagnosticGET合計5（budget1/pipeline2/coverage2）、同応答のDOM集計は再GETなし。数値HTTPstatusは上流receiptの400、BrowserGETのHTTP数値自体は未測定(JSONok)。
+- 残停止工程：候補入力が未保存で評価キューに評価対象なし。JRA登録PDF全頭の照合と共通登録入力経路は未完了。今回の公開で「確定枠順前名簿が保存された後に評価へ渡らない」接続欠陥を修正したが、現時点でその実名簿取得/保存成功は0。木曜前の登録・想定入力整備と、保存済みJRA本文の次自然解析結果を優先して追う。無効本文を正規名簿扱いしない。LOCK284は引き続き未公開・未有効化確認で、暫定LOCKは行わない。

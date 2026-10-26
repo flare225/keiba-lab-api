@@ -48,3 +48,12 @@
 - **優先順位：** 10/31・11/1の正式カード→独立予想→正式LOCK完成を最優先。A/Bの追加開発がこの本線を遅らせる場合は延期。保存済み履歴・番組・名簿を再利用し、外部取得やD1追加消費を最小化する。
 - **現在の実装制約：** 既存 `prepareSavedAutomaticSealInput` は正式カードと保存済み予想の全馬一致を要求するため、A/Bをそのまま正式LOCKできない。この検証を緩めない。A/Bを実装するなら別ステータス・別保存/読取経路として設計し、実装とテスト後に本番導入の承認を求める。
 - **検証条件：** 暫定/正式の表示ラベルが混同されないこと、馬番未確定時の買い目抑止、出走取消・馬名同定・日付跨ぎの扱い、正式版への移行時に旧版を保持すること、発走後の再生成を事前予想と偽らないこと。
+
+
+## 通常チャット追加実装・再確認（2026-10-26、Work再開前）
+- `src/index-v3.49.0.js` を候補ブランチで再確認。importは3・4行目、既存scheduler接続は313行目付近：`env.LAB_SAVED_AUTOMATIC_LOCK==='true'` のときだけ `scheduledSavedAutomaticSeal(db,{enabled:true})` を呼ぶ。したがって「cron未接続」は古い残件記述。**接続コードは存在するが、環境変数の本番設定・実行成功は未確認**。本番有効化を勝手に行わない。
+- `tests/saved-automatic-seal-input.test.mjs` の既存テストは、未来日2日・元SHA保持・正式カード変更/結果/締切・既存LOCK保護・原子性・readback不確実時の再書込禁止・GET include_lock・自然schedulerのdisabledなどを既にカバーしている。追加テストが重複している可能性があるためWorkはテストを整理してから増やす。
+- `src/saved-automatic-seal-queue.js` の missing-table 判定は元々小文字の `/no such table/` で、D1の例外が大文字表記を返す場合に通常例外として上がり得た。**commit `e9eea8eb9b938a716b9f4128b918a9305c58a21b`** で `/no such table/i` に局所修正。SQL実行数・対象選択・保存条件・既存LOCKには変更なし。
+- 先に追加した `tests/saved-automatic-seal-queue-missing-store.test.mjs` は `D1_ERROR: no such table: ...` を再現する。上記修正は大文字の `NO SUCH TABLE` にも対応するが、その追加テストは未作成。新規CI/テスト結果未確認。
+- 実施：提案ブランチの1ファイル局所修正、GitHubコミット。未実施：mainマージ、Worker公開、環境変数設定、D1照会/書込、実レースLOCK検証。
+- **次のWork最優先：** 提案PRのCI実行結果を取得し、scheduler接続済みという最新事実を前提に、本番有効化前の残る安全条件・DDL・DB消費・未来レースの正式カード/予想保存状況を確認する。未接続として二重実装しない。

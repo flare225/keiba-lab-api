@@ -42,3 +42,8 @@ test('failed response body is capped and marked partial while 403 cooldown remai
  assert.equal(r.status,'source-blocked');assert.equal(r.failureEvidence.bodyComplete,false);assert.equal(r.failureEvidence.rawBytesStored,65536);assert.equal(r.failureEvidence.maxRawBytes,65536);assert.equal(calls,1);assert.equal(sql.prepare('SELECT next_batch_at FROM lab_history_collection_budget').get().next_batch_at,now+3600000);
  const read=await readMissingRosterEvidence(db,{...target,includeBody:true});assert.equal(read.bodyHtml.length,65536);assert.equal(read.bodySha256,await sha256(body.slice(0,65536)));assert.notEqual(read.bodySha256,await sha256(body));assert.equal(read.responseEvidence.bodyComplete,false);assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);sql.close();
 });
+
+test('a captured zero-byte HTTP400 is distinct from discarded evidence and independently hashes as empty',async()=>{
+ const {db,sql}=fixture();await collectMissingRoster(db,target,{now:()=>now,fetcher:async()=>new Response('',{status:400,headers:{'content-type':'text/html; charset=UTF-8'}})});
+ const read=await readMissingRosterEvidence(db,{...target,includeBody:true});assert.equal(read.bodyAvailable,true);assert.equal(read.bodyEmpty,true);assert.equal(read.bodyHtml,'');assert.equal(read.bodyBytes,0);assert.equal(read.integrityVerified,true);assert.equal(read.bodySha256,await sha256(''));assert.equal(read.responseEvidence.bodyComplete,true);assert.equal(read.responseEvidence.rawBytesStored,0);assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);sql.close();
+});

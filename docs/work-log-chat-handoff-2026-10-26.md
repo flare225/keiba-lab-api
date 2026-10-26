@@ -226,3 +226,27 @@
 - 次に必要な承認：PR288の7fileをmerge・Worker1回公開し、既存毎時枠で照合済み実候補10頭を既存registrywriterへ渡す本番接続。承認後、自然処理のrosterPreparation.saved/ID/全頭数→expected-runners独立GET/内容/SHA→不足履歴→暫定評価/保留状態を検証。ソースを未確定候補として扱い、全登録馬/正式出走馬へ昇格しない。京都/東京新馬のHTTP400本文は新自然応答が得られた時だけ解析、共有ゲート期限前の強制取得/POSTなし。登録/想定の自動ページ取得拡張はこのPRに含めず残件として保持。
 
 - CI実測：PR288 job121444481942 success、checkout e938474（head4fe92b40をbase3e4f3b52へmerge）、tests748/pass748/fail0。CI成功は本番保存成功ではない。
+
+## 2026-10-26 16時台 — PR288最終確認・明示承認による自然名簿writer接続公開
+- 最新ユーザー承認：PR288の変更/CI/既存名簿writer互換性を確認し、安全ならmerge/Worker公開。自然処理で想定/登録候補→DB保存→独立READを確認し、他レースを止めない。新馬/一般戦/正式/LOCKを区別、gate/cooldown/D1を維持。
+- 最終head4fe92b40fe0815e0b204b58c1c652b902d81bac7、7file66add11del一致、CI121444481942で748/748成功。変更は既存writerの毎時接続/明示future reviewedseed/新馬全頭保留snapshot/必要回帰fixtureのみ。新規外部HTTP/clock/schema/正式LOCK経路/採点式変更なし。一般戦でscoredRunners0は既存awaiting-dataを維持し、先に保存した名簿は破棄しない。
+- writer互換性：saveExpectedRosterを再利用し出典/観測日時/未来対象/馬名年齢/未割当番号検証を維持。registryは既存append-onlytrigger、snapshotIDは正規recordJSONのSHA、sourceSHAは照合sourceTextのSHA。新seedはJRA選抜紹介10頭であって全特別登録・確定出走馬ではない。旧seedはnaturalPreparationopt-inなしで自動再importしない。新馬保留snapshotはrank/score/marknull、正式LOCK/学習対象false。既存保存版は上書きしない。
+- ready化→expectedhead付きmerge成功、merge88c9c93b52a1cda1effca7fd182828c14baf56fa。Worker公開は既存push workflowに任せ手動起動しない。
+- 東京Oct31 1Rの追加指示を反映：既に取得した本文をメモリから再解析し、本番再GET/外部再取得0で確認。observed10/26 07:12:52.722JST、sourcenetkeiba shutuba race_id202605041001、本文SHAc19301424ea2eeff7cafb240d7b7e2cc8a4b4e4a7c1144efc60f7500c36b37d0、保存APIのintegrityVerifiedtrue。HorseList0/horseprofilelink0/対象日なし/title空。本文の「出馬表掲載開始後よりご覧いただけます」は予想オッズ説明の文脈で、当該レースの名簿未公開を直接証明する表示ではない。
+- 東京1Rは未公開を第一候補とする正常な公開確認待ち（既存statuspublication-unconfirmed）で管理し、確定未公開とは断定しない。馬情報が本文にないため、解析条件を緩和しても正しい名簿にはならない。想定出馬表全体が未公開か、空の汎用template応答かは未確定。新馬戦の履歴不足とは別。旧エラー説明は履歴証跡として保持、無意味な再取得なし。
+- 今回budgetGET1：UTC10/26、更新16:18:55.326JST、265951read/7684q/unknown0/quotaErrors0/pausedfalse、collection259816/learning6135。予定処理/認可学習の観測だけで、account全体・手動画面・台帳除外。余裕や削減率を断定しない。
+- 自然名簿準備接続は既存0時分毎時枠のclaim後に動作し、公開時刻が16時枠より後なので次の候補は17時自然枠（実行前に成功扱いしない）。外部HTTPを使わない既存DBwriter接続なので、外部403待機を迂回するfetchはしない。D1上限/予定予算停止時は実行停止する。
+
+- 初回公開40285369892/job121447645723は失敗。ログ確定：checkout88c9c93一致・公開直前748/748成功。その後 npx --no-install wrangler --version が未導入を検出→actionが既定wrangler3.90.0の npm i を開始→16:30:22.832JSTにnpm終了コード1で停止。Uploaded/Deployed/VersionIDの出力なし、deployコマンド/本番送信前の導入段階で停止。初回のnpx missingはfallback導入へ進む検出であり、最終失敗はnpm i。npm内部の詳細原因はこのjobログにないため推測しない。
+- 追加の本番公開成功は0回のままなので、同一承認SHA88c9c93の失敗deployjobだけを1回再実行（job121451562689）。ソース/設定/取得枠/資格情報を変更せず、二重公開・別PR公開なし。再失敗時は連続retryせず公開基盤の追加証拠/修正を別承認とする。
+- 16:31:10.116JST pipelineGET1で新自然historyを確認：16:30:50.086〜53.866、実対象Oct31東京5R(新馬)、source https://race.netkeiba.com/race/shutuba.html?race_id=202605041005、GET/manualredirect、外部1/HTTP400/saveMayHaveSucceededfalse/次個別17:30:51.358JST。PR288未公開時のPR287実績であり、新名簿保存成功やPR288効果ではない。
+- PR287のfailureEvidence保存が本番到達：responseURLはrequestURLと一致、content-typetext/html;charset=UTF-8、observed16:30:51.358JST、rawBytesStored0/bodyCompletetrue。保存decoded本文SHAは空文字SHA e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855。400本文は「取り落とし」ではなく今回の応答が完全0bytes。これだけで未公開/不正要求/サイト側拒否を断定しない。京都5Rではなく東京5Rが選ばれたことを明記。
+- 当該sourceoperationだけ1902read5write11q2343ms、account/台帳/確認GETは除外。write5はclock/gate/receiptで馬5頭ではない。
+- 新対象東京5Rのみsource-evidence独立GET1：sourceURL/expectedURL/保存program4回東京10日5R一致、responseEvidenceとSHA保持、2read0write1q177ms。既存READは文字列長>0を本文存在とするためbodyAvailablefalseとなり、空文字の再hash経路を通らない欠陥を実データで発見。現在本番の独立SHA再計算成功とは報告しない。
+- 追加局所修正を本番未反映で準備：空文字列と未保存nullを区別し、bodyEmptytrue/bytes0/独立再hashを行う。src/missing-roster-evidence.js+tests/missing-roster-evidence.test.mjsの2file7add2del、local30ece50、remote branchfix/empty-supplementary-evidence-readback commitd6a5b4d39c08b17303c072793b2c41b08a4791ba。追加SQL/HTTP/書込0。旧READでfalseを再現→局所12/12、全体749/749成功。今回はbranch保存のみ、新PR/merge/deployなし。PR288の再実行checkoutへ混入しない。
+- 今回本番READは現時点budget1/pipeline1/新東京5Rsource-evidence1=3GET。名簿/評価/LOCK新規成功加算0。公開待ちで既存runtimePR287の処理を止めず、未公開/空応答を解析緩和して登録しない。
+
+- retryjob121451562689 success。exactmerge88c9c93/直前748/748、16:34:38.141JST Worker公開成功、versionID16282d3a-88f0-421b-81db-e4fb39695822。16:34:53.529deploy-check ok/version3.49.63/scope release-identity-only/databaseVerifiedfalse。承認の実公開1回を使用済み、追加公開なし。初回は送信前失敗のため実公開は今回1回のみ。
+- 公開後coverage1回（16:36頃）：Tokyo/Kyoto Oct31/Nov1の4group各program12/roster0/provisional0、合計番組48/名簿0/暫定0/正式カード0（全名簿false）。次hourlyclaim17:00JST。直近16時no-dueは公開前32read1write8q1887msでPR288性能ではない。診断GET累計4、17時自然枠未実行の段階でDB保存成功とはしない。
+- 待機中に別の取得可能な一般戦実データを準備（本番未反映）：Oct31京都9R北野特別11頭/東京10R国立特別12頭を公開netkeiba本文で馬名・年齢のみ照合。source https://race.netkeiba.com/race/shutuba.html?race_id=202608041009 および https://race.netkeiba.com/race/shutuba.html?race_id=202605041010&rf=race_submenu 、observed16:38:46JST。補助想定候補でJRA確定・正式・登録全頭とは扱わない。騎手/斤量/第三者印/オッズは取り込まず、枠馬番null。新馬のHTTP400で一般戦準備を止めない。
+- 上記は既存reviewedseedデータ2件と既存writer試験のloop拡張のみ（2file17add7del）、localfae8990/remote5643e5fae76bb095ec6674d88795f66bd1697395、branchproposal/ordinary-reviewed-rosters。ローカル748/748、3レース計33候補の隔離保存→appREAD→内容/SHA/重複再INSERT0確認。新規採点/SQL/HTTP/clock/writer追加なし。branch保存のみ、PR/CI/merge/本番公開0。実HTML全体保存/元HTMLSHAは未取得、sourceText照合記録と区別。追加データの本番反映は別承認待ち。

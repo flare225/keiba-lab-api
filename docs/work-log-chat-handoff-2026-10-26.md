@@ -106,3 +106,16 @@
 
 ### 再開修正CIの実測
 - head403abf918a7a12a735bc14a132f213b5dc7905b1のPR検証job121393826190はsuccess。checkout e0bbb06（head403abf9とmain05dcb83の検証merge）、ログでtests751/pass751/fail0を確認した。mainマージやWorker公開ではない。Issue178 comment6408043104へ実作業差分を記録済み。
+
+
+## 14:02 PR283承認公開・実JRA本文の上限停止確定と局所修正
+- ユーザー承認をPR283の3file49add/head12232fd49990825bbe29c0d16e720c1ec097443c・Worker1回へ限定適用。CI739/739をログ照合しmerge211d911ee7531149dac5686fd4cc244ebbea7970。公開40272096259/job121406910243 success、exactmerge checkout/公開直前739成功、14:02:32.710 JST Worker9829a8a1-58aa-442c-b56d-34a4e6a6887c。14:02:48.077 deploy-check ok/version3.49.63/release-identity-only/databaseVerifiedfalse。承認1回使用済み、PR284/LOCK有効化/DDL/モデル変更/追加公開なし。
+- 本番READはbudget1/当該保存本文診断1/pipeline1の計3。DOM JSONoktrue、今回GETのHTTP数値は未測定。budget UTC10/26/updated14:01:08.837 JST、184827read/5385q/unknown0/quotaErrors0/pausedfalse（account/手動/画面/台帳を含まず）。
+- scope10/31・保存済みpw01d5000A4/F9の全文を読取。APIavailable/integrityVerifiedtrue、復号HTML111855UTF8bytes、保存SHA9b7d55553daf74ecfcdf136c9dd7463c1a8c69f86d603b012ed840d85dcd9b06。元応答HTTP200、受信108060bytes、復号shift_jis、observed07:48:52.999 JST。APIが全文再hash、ブラウザ評価ではcrypto.subtle未提供でclient別再hashは未完了（再GETせず）。原HTTPbytesのSHAとは別。2read/0write/1q/281ms、外部0。
+- 確定原因：CSS/一般nav/profile/結果等207を含む全282リンクへ256上限を先に適用していた。canonical許可対象は75（30cards/45pages）。取得対象外のリンクで共有parserを停止させていた。正式カード未公開と同一視しない。
+- 別の制約：実本文タイトル『今週の出走馬一覧（50音順）』、個別30リンクの日付は全て10/24・25。scope10/31で保存されても本文内容が来週対象とは限らない。この修正だけで未来名簿取得が保証されるとはしない。既存日付/場/R一致判定を維持、前週カード/結果を未来予想へ混入しない。元HTML全文は再配布せず、抽出された282URL集合だけfixtureへ保存（元本文/SHAを再現したとは言わない）。
+- local094a752/remote8d15de8b1c42891183464af9764a78756ffdcdac、Draft PR285 https://github.com/flare225/keiba-lab-api/pull/285 、5file39add7del：src/shared-page-acquisition.js、src/shared-page-evidence.js、tests/shared-page-acquisition.test.mjs、tests/shared-page-evidence.test.mjs、tests/fixtures/jra-shared-links-20261026.json。
+- 既存256上限をunique canonical取得対象へ適用。parserVersionをshared-page-v2-supported-linksへ変更し、既存失敗本文を取得せず再解析可能にする。SQL文/DDL/外部枠/頻度/ゲート/403pause/lease/予算/予想/LOCK不変。旧版の解析済みnavigationも対象選択時に保存本文の再解析となるため既存READ/receipt更新負荷は発生するが、新しいSQL文やHTTP枠は追加しない。保存済み正式カードは完了除外を維持。本番D1量/削減率未測定。
+- 実本文由来URL集合で修正前Published-link bound exceededを再現→修正後45pages/30cards。旧parse-failedを追加HTTP0で再解析、保存本文とSHA不変、formal/forecast保存0、未来対象に前週カードを選ばないことを確認。257許可対象は引続き拒否。ローカル741/741、PR CIjob121408256023のログで741/741・fail0成功（対象head8d15de8、現main211d911の検証merge）。本番取得成功とは区別。
+- 公開後最新自然history14:06:49.490〜49.733 JST cooldown/acquisition/外部0/共有nextBatchAt14:48:57.519 JST。直近公開戻り値だけではゲート延長元HTTP/receipt不明、403と推測しない。時刻だけで解除としない。coverageは今回は再GETせず、最新全体件数は13:10の前報（番組48/48、名簿/正式/暫定各0/48）。今回カード/通常予想/LOCKの新規保存確認0、予想独立SHA/画面新規0。
+- 必要な次承認はPR285のマージ/Worker1回のみ。今回のPR283承認を拡大しない。公開後は自然担当の保存本文再解析（HTTP0）→対象日リンク→公開済み名簿/カード保存→独立GETを工程別に確認する。PR284の本番表/trigger/環境変数は未確認・未導入で、LOCK有効化とは別承認。Issue178 comment6408681865へ途中実測を記録済み。

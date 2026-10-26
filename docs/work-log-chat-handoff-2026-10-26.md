@@ -119,3 +119,16 @@
 - 実本文由来URL集合で修正前Published-link bound exceededを再現→修正後45pages/30cards。旧parse-failedを追加HTTP0で再解析、保存本文とSHA不変、formal/forecast保存0、未来対象に前週カードを選ばないことを確認。257許可対象は引続き拒否。ローカル741/741、PR CIjob121408256023のログで741/741・fail0成功（対象head8d15de8、現main211d911の検証merge）。本番取得成功とは区別。
 - 公開後最新自然history14:06:49.490〜49.733 JST cooldown/acquisition/外部0/共有nextBatchAt14:48:57.519 JST。直近公開戻り値だけではゲート延長元HTTP/receipt不明、403と推測しない。時刻だけで解除としない。coverageは今回は再GETせず、最新全体件数は13:10の前報（番組48/48、名簿/正式/暫定各0/48）。今回カード/通常予想/LOCKの新規保存確認0、予想独立SHA/画面新規0。
 - 必要な次承認はPR285のマージ/Worker1回のみ。今回のPR283承認を拡大しない。公開後は自然担当の保存本文再解析（HTTP0）→対象日リンク→公開済み名簿/カード保存→独立GETを工程別に確認する。PR284の本番表/trigger/環境変数は未確認・未導入で、LOCK有効化とは別承認。Issue178 comment6408681865へ途中実測を記録済み。
+
+
+## 14:11 PR285承認公開・公開後の検証条件
+- 最新ユーザー条件付き承認をPR285のhead8d15de8b1c42891183464af9764a78756ffdcdac/5file39add7delに限定適用。最終diffはshared-page-acquisitionのcanonicalリンク境界+parser版、shared-page-evidenceの同じ境界表示、2既存testと実URL集合fixtureのみ。CIjob121408256023で検証merge32f8e2b/741pass0failを再読してmerge3881facd183aa44813f3b19eb81b601481b92a1d。本番のゲート/403待機/lease/SQL文/取得枠/schema/採点/予想/LOCK変更0。
+- 公開Actions40272873178/job121409297769 success、exactmerge checkout・公開直前741/741success。2026-10-26 14:11:39.692 JST Worker3d47b835-3f65-4d56-b698-2e7f397489ba、14:11:55.052 deploy-check oktrue/version3.49.63/scope release-identity-only/databaseVerifiedfalse。main NodeCI40272873149 success。承認の公開1回使用済み、手動workflow/再公開0。PR284とLOCK用env/triggerは未導入のまま。
+- 保存済み実HTML全文（既にブラウザへ読み込み済み、追加GET0）で抽出と新境界を読取専用再現。全282→canonical75、pages45/cards30、cards10/24=16・10/25=14・未来対象0。元保存SHA9b7d55553daf74ecfcdf136c9dd7463c1a8c69f86d603b012ed840d85dcd9b06。これはブラウザ内の解析再現で、自然cronによる再解析receipt保存・正式カードDB保存ではない。元本文/SHA/予想/LOCKに変更0。
+- 公開後READはbudget1→pipeline1→coverage1の3回。JSONoktrue、今回HTTP数値はDOM読取で未測定。budget UTC10/26、updated14:06:57.262 JST、186106read/5455query/unknown0/quotaErrors0/pausedfalse。account/手動/画面/台帳量は未測定、内部量から全体余裕を断定しない。
+- pipeline checked14:12:43.155 JST、latesthistory14:06:49.490〜49.733は公開前cooldown/acquisition/external0/next14:48:57.519 JST。新Workerの自然history起動は未観測。cardSelection京都11は過去履歴で今回実取得ではない。共有gateはcached再解析より先に確認する既存コードなので、保存本文だけでもこの待機を迂回しない。次回担当がhistoryとなる時刻は公平dispatcherに依存し、期限到来だけで再開/成功としない。
+- coverage14:13頃の公式48Rは10/31東京12/京都12・11/1東京12/京都12の番組48/48、各場の名簿/正式カード/暫定予想は全て0/12、合計各0/48。非開催新潟の24仮想slotは除外。通常正式予想/LOCK全体件数はAPI集計なしで未測定。今回新規カード/通常予想/LOCK保存確認0、予想独立GET/SHA新規0、browser一致新規0。前週正式カードを今週の成果へ加算しない。
+- 追加で得た既存source記録：13:30:51.219〜53.784（PR285公開前）、東京10/31 4R、sourcehttps://race.netkeiba.com/race/shutuba.html?race_id=202605041004、netkeiba HTTP400/external1/statusfetch-failed/saveMayHaveSucceededfalse。1898read/5write/11q/2390msは名簿operationのみ。nextAttempt14:30:51.394 JST、共有gate14:48とは別。HTTP200の同一性照合拒否やJRA403とは混同しない。source最新13:48はsource-not-due/外部0。14:00通常no-due-registered-roster・比較no-due-comparisonは公開前でPR285効果ではない。
+- 停止工程：新公開の自然取得担当がまだ未実行、取得系全体はsharedcooldown。既存全文の解析修正は実証済みだが、それが未来対象URL/名簿公開へ到達するか未実証。正式カード/全馬履歴がないまま架空評価やLOCKを保存しない。既存LOCKへの原子接続案PR284は今回の公開範囲外、正式予想保存とLOCKは別扱い。
+- 次の具体的確認：shared期限後の自然historyでparserVersion/reusedBody/externalRequests/sourceURL/対象日/エラー/保存件数を取得。成功した新対象だけカードGET・全馬/取消・runnerSHA→通常予想GET/SHA→既存認可LOCK状態→画面を確認。新規0ならURL公開/選択/取得/同一性/保存の停止工程を記録する。連続poll/強制取得/POST/直接D1/追加公開は実施しない。
+- Issue178 comment6408762039へ承認範囲/公開ID/本番未達/残条件を記録。現時点で本番機能完成とは報告しない。

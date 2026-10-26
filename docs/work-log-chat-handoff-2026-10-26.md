@@ -103,3 +103,6 @@
 - LOCK表・triggerの本番実在は未確認。GitHub/公開APIの既存経路には任意sqlite_master SELECTの実行機能を見つけられず、Cloudflare/D1専用connectorもなし。不存在を決めつけてDDLを前倒ししない。既存queueのseal-store-unavailableはfail-closedとして維持、cron毎回DDL追加0。環境変数の実値も未確認（ブランチ自体未公開）。
 - PR283は保存済みJRA共有本文を対象限定1SELECTで読む診断のみ。07:48のPublished-link bound exceeded本文を再取得せず確定するための候補。未マージ/未公開、上限緩和0。次に必要な本番承認はこの3ファイルのマージ/Worker1回であり、PR284のLOCK有効化・trigger作成まで含めない。
 - PR284のwriter/6trigger/既存2表利用案は引き続きDraft未公開、環境変数未変更、既存SHA/印/LOCK正本不変。新しい未来名簿が保存されるまでは全馬履歴・通常予想実データ検証へ進めない。取得本文の確定/公開待ちを区別し、推測データで予想を作らない。
+
+### 再開修正CIの実測
+- head403abf918a7a12a735bc14a132f213b5dc7905b1のPR検証job121393826190はsuccess。checkout e0bbb06（head403abf9とmain05dcb83の検証merge）、ログでtests751/pass751/fail0を確認した。mainマージやWorker公開ではない。Issue178 comment6408043104へ実作業差分を記録済み。

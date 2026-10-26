@@ -1,6 +1,6 @@
 import {storedProvisionalSources} from './confirmed-predraw-history-source.js';
 import {provisionalExpectedPrediction,repairStoredProgramConditions} from './provisional-expected-prediction.js';
-import {saveProvisionalPrediction,readProvisionalPrediction,provisionalStorageKey} from './provisional-prediction-snapshots.js';
+import {saveProvisionalPrediction,readProvisionalPrediction,provisionalStorageKey,provisionalEvaluationFingerprint} from './provisional-prediction-snapshots.js';
 import {prepareReviewedRoster} from './expected-roster-seeds.js';
 // One candidate per hour, all JRA venues; no upstream network calls.
 export async function scheduledProvisionalPrediction(db,now=Date.now(),deps={}){
@@ -15,13 +15,24 @@ export async function scheduledProvisionalPrediction(db,now=Date.now(),deps={}){
  const receipts=(await db.prepare('SELECT * FROM lab_provisional_queue_v1 WHERE race_key IN (SELECT value FROM json_each(?))').bind(JSON.stringify(keys)).all()).results||[],byKey=new Map(receipts.map(r=>[r.race_key,r]));
  let saved=[];try{saved=(await db.prepare('SELECT race_key FROM lab_provisional_predictions_v1 WHERE race_key IN (SELECT value FROM json_each(?))').bind(JSON.stringify(keys)).all()).results||[];}catch(e){if(!/no such table/i.test(String(e)))throw e;}
  const exists=new Set(saved.map(r=>r.race_key));
- const due=sources.filter(s=>s.date>=from&&s.date<=to).filter(s=>{const k=provisionalStorageKey(s),r=byKey.get(k);return Number(r?.next_at||0)<=now&&(!exists.has(k)||r?.status==='pending-readback')}).sort((a,b)=>Number(byKey.get(provisionalStorageKey(a))?.next_at||0)-Number(byKey.get(provisionalStorageKey(b))?.next_at||0)||a.date.localeCompare(b.date)||a.raceNo-b.raceNo||a.venue.localeCompare(b.venue));
+ const due=sources.filter(s=>s.date>=from&&s.date<=to).filter(s=>{const k=provisionalStorageKey(s),status=byKey.get(k)?.status;return Number(byKey.get(k)?.next_at||0)<=now&&(!exists.has(k)||status==='pending-readback'||status==='history-updated'||/^revision-readback:[a-f0-9]{64}$/.test(status||''))}).sort((a,b)=>Number(byKey.get(provisionalStorageKey(a))?.next_at||0)-Number(byKey.get(provisionalStorageKey(b))?.next_at||0)||a.date.localeCompare(b.date)||a.raceNo-b.raceNo||a.venue.localeCompare(b.venue));
  const source=due[0];if(!source)return{status:'no-due-registered-roster',rosterPreparation,externalRequests:0};const k=provisionalStorageKey(source);
  try{
- const result=exists.has(k)?{...await readProvisionalPrediction(db,source,{exact:true}),saved:0}:await saveProvisionalPrediction(db,source,async()=>{const repair=await(deps.repair||repairStoredProgramConditions)(db,source);const prediction=await(deps.build||provisionalExpectedPrediction)(db,source,now);if(prediction.scoredRunners===0&&!(prediction.race?.raceType==='debut'&&prediction.runners?.length&&prediction.runners.every(r=>r.score===null&&r.rank===null&&r.mark===null)))throw Error('過去走不足のため暫定順位を生成できません。');return{...prediction,programRepair:repair};},now);
+ let result;
+ const pendingRevision=/^revision-readback:([a-f0-9]{64})$/.exec(byKey.get(k)?.status||'');
+ if(exists.has(k)&&pendingRevision)result={...await readProvisionalPrediction(db,{...source,revisionSha256:pendingRevision[1]},{exact:true}),saved:0,evaluationChanged:true};
+ else if(exists.has(k)&&byKey.get(k)?.status==='history-updated'){
+  const previous=await readProvisionalPrediction(db,source);
+  const repair=await(deps.repair||repairStoredProgramConditions)(db,source),prediction={...await(deps.build||provisionalExpectedPrediction)(db,source,now),programRepair:repair};
+  if(prediction.scoredRunners===0&&!(prediction.race?.raceType==='debut'&&prediction.runners?.length&&prediction.runners.every(r=>r.score===null&&r.rank===null&&r.mark===null)))throw Error('過去走不足のため暫定順位を生成できません。');
+  const revisionSha256=await provisionalEvaluationFingerprint(prediction),previousFingerprint=await provisionalEvaluationFingerprint(previous.snapshot||{});
+  if(previous.available&&revisionSha256===previousFingerprint)result={...previous,saved:0,evaluationChanged:false};
+  else try{result={...await saveProvisionalPrediction(db,{...source,revisionSha256},async()=>prediction,now),evaluationChanged:true};}catch(e){if(e.saveMayHaveSucceeded)e.pendingRevisionSha256=revisionSha256;throw e;}
+ }else if(exists.has(k))result={...await readProvisionalPrediction(db,source,{exact:true}),saved:0};
+ else result=await saveProvisionalPrediction(db,source,async()=>{const repair=await(deps.repair||repairStoredProgramConditions)(db,source);const prediction=await(deps.build||provisionalExpectedPrediction)(db,source,now);if(prediction.scoredRunners===0&&!(prediction.race?.raceType==='debut'&&prediction.runners?.length&&prediction.runners.every(r=>r.score===null&&r.rank===null&&r.mark===null)))throw Error('過去走不足のため暫定順位を生成できません。');return{...prediction,programRepair:repair};},now);
  if(!result.integrityVerified)throw Error('Saved provisional readback not verified');
  await db.prepare("INSERT INTO lab_provisional_queue_v1 VALUES(?,'verified',?,NULL) ON CONFLICT(race_key) DO UPDATE SET status='verified',next_at=excluded.next_at,error=NULL").bind(k,now+86400000).run();
- return{status:'verified',target:k,basis:source.basis||'expected-roster',sourceSha256:source.sourceSha256||null,saved:result.saved,evaluationStatus:result.snapshot?.evaluationStatus||null,rosterPreparation,snapshotSha256:result.snapshotSha256,integrityVerified:true,externalRequests:0};
+ return{status:'verified',target:k,basis:source.basis||'expected-roster',sourceSha256:source.sourceSha256||null,saved:result.saved,evaluationChanged:result.evaluationChanged??null,evaluationStatus:result.snapshot?.evaluationStatus||null,rosterPreparation,snapshotSha256:result.snapshotSha256,integrityVerified:true,externalRequests:0};
  }catch(e){if(e.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;
- const status=e.saveMayHaveSucceeded?'pending-readback':'awaiting-data';await db.prepare('INSERT INTO lab_provisional_queue_v1 VALUES(?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET status=excluded.status,next_at=excluded.next_at,error=excluded.error').bind(k,status,now+2*3600000,String(e.message||e)).run();return{status,target:k,error:String(e.message||e),rosterPreparation,saveMayHaveSucceeded:!!e.saveMayHaveSucceeded,externalRequests:0,nextAttemptAt:new Date(now+2*3600000).toISOString()};}
+ const status=e.pendingRevisionSha256?`revision-readback:${e.pendingRevisionSha256}`:e.saveMayHaveSucceeded?'pending-readback':'awaiting-data';await db.prepare('INSERT INTO lab_provisional_queue_v1 VALUES(?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET status=excluded.status,next_at=excluded.next_at,error=excluded.error').bind(k,status,now+2*3600000,String(e.message||e)).run();return{status:e.saveMayHaveSucceeded?'pending-readback':status,target:k,error:String(e.message||e),pendingRevisionSha256:e.pendingRevisionSha256||null,rosterPreparation,saveMayHaveSucceeded:!!e.saveMayHaveSucceeded,externalRequests:0,nextAttemptAt:new Date(now+2*3600000).toISOString()};}
 }

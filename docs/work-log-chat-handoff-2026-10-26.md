@@ -186,3 +186,21 @@
 - 次工程：PR287のCI/最終差分を確認してWorker公開1回の承認が必要。公開後、既存の自然枠で得た応答だけを保存し、source-evidence単一READで本文/SHA/要求URLと番組一致/公開表示/対象馬一覧を検証。正しい名簿が実在した場合のみ既存saveExpectedRoster→独立READへ進める。誤応答・非公開ページは保存名簿に昇格しない。既存成功データの再取得・新LOCK・モデル変更・未承認公開は行わない。
 
 - CI実測：PR287 head53d1eb56…、job121425951008 success、checkout d46b2bb（53d1eb56をd38e985へmerge）、tests745/pass745/fail0。PR最終差分3file40add5del/head一致。マージ/公開は未実施。
+
+## 2026-10-26 15時台 — PR287条件確認・承認済みWorker公開1回
+- ユーザー明示承認：PR287の差分/CI/保存安全性が問題なければ、HTTP400診断情報保存に限定してmerge/Worker公開。想定/登録名簿保存を優先し、自然取得だけで実応答を検証。
+- 最終head53d1eb56fbbe7c3d609ddc72bf47ce2af8d50800一致、3file40add5del。対象src/missing-roster-acquisition.js、src/missing-roster-evidence.js、tests/missing-roster-evidence.test.mjsのみ。CI job121425951008の745/745成功を再確認。
+- 安全性：非2xxの受信済み本文をraw64KiBまで既存失敗UPSERTへ限定保存、decoded本文SHA/完全か部分か/要求と応答metadataを保持。追加HTTP/SQL件数/schema0。エラーHTMLを名簿へ昇格しない。本文payloadによるD1物理書込増加は本番未測定。要求URL/GET/manualredirect/timeout/名簿解析条件/gate/lease/403429503pause/毎時枠/正式予想/LOCKは不変。既存成功予想を変更しない。
+- ready化後expectedhead指定merge成功、merge08f71d3fbdef1a20af91a2dbc5a6fe5bb253a85e。
+- 公開Actions40278866890/job121427456164成功、exactmergecheckout08f71d3をログ確認、公開直前tests745/pass745/fail0。15:17:08.176JST Worker63312380-22b9-467f-a4d2-898c9f48b818、15:17:23.719 deploy-check oktrue/version3.49.63/scope release-identity-only/databaseVerifiedfalse。承認公開1回使用済み、追加手動起動/再公開なし。
+- budgetGET1：UTC10/26・更新15:13:05.674JST・227583read/6575q/unknown0/quotaErrors0/pausedfalse(collection222171/learning5412)。これは定期処理/認可学習の観測範囲、account全体・手動/画面・台帳除外。PR287性能測定ではない。
+- pipelineGET1(15:18:11.209JST)：history最新は公開前15:00:49.380〜52.211の京都Oct31 5R HTTP400/external1/次16:00:50.343JST。archive15:12awaiting-published-card-links外部0、results15:06京都Oct18 3R全馬不一致外部1も公開前。これらを新公開の成功/失敗にしない。
+- 新公開source-evidenceGET1：京都5R実sourceURL https://race.netkeiba.com/race/shutuba.html?race_id=202608041005 と、保存済みprogram(year2026/京都code08/meeting4/day10/R5)から生成したexpectedURLが一致(sourceUrlMatchestrue)。ただし当該サイト側の実対象/公開を証明するものではない。旧HTTP400/bodyAvailablefalse/bodySHA/observedAtnull/next16:00:50.343JSTを確認。2read0write1q168ms（このGETのみ）。新コードが旧本文を復元したとは報告しない。
+- 次の自然枠で京都5Rが選ばれる保証はない。期限到来は実行資格であり、既存公平選択/未試行候補/ゲート/leaseを守る。HTTP400の分類は新応答本文が得られるまで未確定。未公開・不正要求・サイト側拒否を推測しない。
+
+- 公開後の最初の自然historyを15:18:59.355JSTに確認：15:18:50.167〜57.180 acquisition/source-unconfirmed、実targetdateOct26のprogram-recovery、externalRequests1/JRA program HTTP403/saveMayHaveSucceededfalse。診断cardSelectiontargetOct31京都11と実際の要求対象は別。京都5Rの新HTTP取得ではなく、HTTP400の原因/本文を今回取得できた証拠ではない。results/archiveは既存公平dispatcherを維持。
+- 403後の共有gateをGET missing-official-cards?date=2026-10-31 1回で確認：nextBatchAt2026-10-26T07:18:56.990Z=16:18:56.990JST。個別京都5R next16:00:50.343より後なので、少なくとも共有gate条件を満たすまで外部取得不可。期限経過だけで解除・成功としない。連続retry/POST/直接D1/外部サイトへの別要求0。
+- 同じmissing-official-cards応答はOct31東京12+京都12が正式カードmissing、京都5Rsourcecalendar1031/start12:25。土曜正式0/24を現在の公開前段階として記録。Nov1/名簿/予想の累計は今回再集計しておらず、前回値を最新にしない。新規想定/登録名簿・正式カード・予想・LOCK保存成功加算0、新規本文保存/独立SHA成功0。旧receiptの独立READ1件は名簿保存成功ではない。
+- 今回本番診断GETはbudget1/pipeline2/京都5Rsource-evidence1/gate含むmissing-official-cards1=5。同応答DOM集計は再GETではない。GET自身のHTTP数値は未測定、JSONok。上流HTTP400/403は保存済み実行記録の数値。budgetと京都5RGET以外の確認GET/全historyaccount消費は未測定。
+- 現在の停止理由：①京都5Rは公開前旧400本文が廃棄され原因分類未確定、②新自然枠が別program回収で403となり共有gate16:18:56.990まで待機、③まだ正規名簿入力の保存成功なし。400を未公開と断定せず、403を京都5Rの応答と混同しない。
+- 次の自然枠で新しい受信が実施された場合のみ、京都5Rの観測時刻/URL/HTTP/responseEvidence/bodyComplete/保存decoded本文SHAを独立GETし再hash、対象日/場/R/候補全馬を照合。正しい名簿なら既存saveExpectedRoster→独立READへ進める。別対象が選ばれたらその通り記録する。次回選択は保証しない。追加公開・ゲート変更は自動実施しない。

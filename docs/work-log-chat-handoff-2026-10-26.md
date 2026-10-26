@@ -64,3 +64,11 @@
 - 取得時の `main...proposal/saved-automatic-lock-readback` 比較は **ahead 7 / behind 0**、変更12ファイル（この時点のheadには直前の本記録更新コミットも含む）。PRブランチのCIであり、main CI・本番Worker・実DB保存・LOCK成功とは区別。
 - 本番書込/デプロイ/環境変数変更は今回0。新規の公式カード・名簿・予想・LOCK保存件数も未測定。
 - 次の確認：最新headに対応するActionsがあるかを確認し、run/jobとコミットSHAを対応付ける。CIが古いheadの成功なら最新headの成功と混同しない。
+
+
+## 優先順位順の継続実装（2026-10-26 通常チャット）
+- **P0：来週の本番正式カード/名簿/履歴/独立予想**。今回この経路の本番保存件数は測定せず、進捗を推定しない。既存の10/31・11/1 48番組保存という過去観測と混同しない。
+- **P1：本番導入候補の自動LOCK安全性**。実装済みの小文字無テーブル判定を大文字にも対応させたcommit `e9eea8eb` の再発防止として、`tests/saved-automatic-seal-queue-missing-store.test.mjs` に **大文字 `D1_ERROR: NO SUCH TABLE`** の回帰テストを追加。commit `5766d98525c0a324df34ffcc7b501a9c8ff4b22a`。対象SQL1回、書込0、`retryWrite=false`、`sealed=0` を検証する内容。**新コミットのCIは未確認**。
+- 直前の記録コミット `ecb063e9ff3d7cce8cad729f036b23d70438920f` に対応する `Node tests` run `40251778969` は `completed/success`。この成功を今回追加のテストコミットの成功とはみなさない。
+- **残る重要な構造的疑問**：schedulerの候補SELECTは `lab_prospective_seals` の存在を前提とし、保存側の `ensureProspectiveSealTables` は候補が選ばれた後に呼ばれる。表未作成の初回稼働では `seal-store-unavailable` となり、自然に初回LOCKへ進めない可能性がある。**本番で表が既にあるか未確認**。DDLを安易にcron冒頭で実行せず、既存表・本番承認・予算を確認してから局所対応する。
+- 次のWorkは本番の既存テーブル有無を最小READで確認できる承認済み経路を検討し、正式カード/独立予想の成立条件を優先して確認。ユーザー承認なく環境変数有効化・新トリガー作成・Worker公開をしない。

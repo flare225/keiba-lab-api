@@ -1,4 +1,22 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {scheduledProvisionalPrediction} from '../src/provisional-prediction-queue.js';import {markProvisionalHistoryUpdated,readProvisionalPrediction} from '../src/provisional-prediction-snapshots.js';
+test('pre-deploy collected history catches up once at the existing daily deadline and preserves original snapshot',async()=>{
+ const {db,sql}=fixture();const source={...sources[1],snapshotId:'registered:test'};let score=80,builds=0;
+ const one={sources:async()=>[source],repair:async()=>({repaired:0}),build:async()=>{builds++;return{ok:true,status:'provisional-expected-roster',race:source,runnerCount:1,scoredRunners:1,histories:[],runners:[{horseName:'test',horseNo:null,frameNo:null,rank:1,score,mark:'◎'}],guardrails:{humanMarksUsed:false,officialCard:false,locked:false,eligibleForLearning:false}};}};
+ await scheduledProvisionalPrediction(db,now,one);const original=await readProvisionalPrediction(db,source,{exact:true});score=90;
+ sql.exec('CREATE TABLE lab_history_collection_receipts(race_key TEXT,horse_name TEXT,status TEXT,rows_found INTEGER,checked_at INTEGER,PRIMARY KEY(race_key,horse_name))');
+ sql.prepare('INSERT INTO lab_history_collection_receipts VALUES(?,?,?,?,?)').run('expected:'+source.snapshotId,'test','checked',3,now+3600000);
+ assert.equal((await scheduledProvisionalPrediction(db,now+3600000,one)).status,'no-due-registered-roster');assert.equal(builds,1);
+ const revised=await scheduledProvisionalPrediction(db,now+86400000,one);assert.equal(revised.saved,1);assert.equal(revised.evaluationChanged,true);assert.equal(builds,2);
+ assert.equal((await readProvisionalPrediction(db,source,{exact:true})).snapshotSha256,original.snapshotSha256);
+ assert.equal((await scheduledProvisionalPrediction(db,now+2*86400000,one)).status,'no-due-registered-roster');assert.equal(builds,2);assert.equal(sql.prepare('SELECT count(*) n FROM lab_provisional_predictions_v1').get().n,2);
+ // A later receipt whose inputs are unchanged is acknowledged without a new
+ // revision or another daily rebuild of those same already-considered rows.
+ sql.prepare('UPDATE lab_history_collection_receipts SET checked_at=?').run(now+2*86400000+3600000);
+ const same=await scheduledProvisionalPrediction(db,now+2*86400000+7200000,one);assert.equal(same.saved,0);assert.equal(same.evaluationChanged,false);
+ assert.equal((await scheduledProvisionalPrediction(db,now+3*86400000+7200000,one)).status,'no-due-registered-roster');assert.equal(builds,3);
+ sql.close();
+});
+test('a revision build failure keeps the history update eligible for the existing two-hour retry',async()=>{const {db,sql}=fixture();const one={...deps,sources:async()=>[sources[1]]};await scheduledProvisionalPrediction(db,now,one);await markProvisionalHistoryUpdated(db,sources[1],now+3600000);const failed=await scheduledProvisionalPrediction(db,now+3600000,{...one,build:async()=>{throw Error('temporarily missing conditions')}});assert.equal(failed.status,'history-updated');assert.equal((await scheduledProvisionalPrediction(db,now+7200000,one)).status,'no-due-registered-roster');assert.equal((await scheduledProvisionalPrediction(db,now+3*3600000,one)).status,'verified');assert.equal(sql.prepare('SELECT count(*) n FROM lab_provisional_predictions_v1').get().n,1);sql.close();});
 function fixture(){const sql=new DatabaseSync(':memory:');return{sql,db:{prepare(q){const w=(a=[])=>({bind(...x){return w(x)},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}},async run(){return{meta:{changes:sql.prepare(q).run(...a).changes}}}});return w()}}};}
 const now=Date.parse('2026-10-21T01:00:00Z');const sources=['新潟','東京','京都'].map((venue,i)=>({date:'2026-10-25',venue,raceNo:i+1,raceKey:`2026-10-25:${venue}:${i+1}`}));
 const deps={sources:async()=>sources,repair:async()=>({repaired:0}),build:async(db,s)=>{if(s.venue==='新潟')throw Error('conditions missing');return{ok:true,status:'provisional-expected-roster',race:s,runnerCount:1,runners:[{horseName:s.venue,horseNo:null,frameNo:null,rank:1,score:90,mark:'◎'}],guardrails:{humanMarksUsed:false,officialCard:false,locked:false,eligibleForLearning:false}};}};

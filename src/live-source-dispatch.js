@@ -22,7 +22,10 @@ export function preferOfficialCards(rosters,stamp){
  return rosters.some(r=>officialCardWindowOpen(r.date,stamp));
 }
 
-export async function scheduledMissingRoster(db,event,{now=Date.now}={}){return runPipelineJob(db,'missing-roster','scheduled',()=>measureD1Operation(db,m=>collectMissingRoster(m,null,{now})),{scheduledTime:event.scheduledTime});}
+export async function scheduledMissingRoster(db,event,{now=Date.now,resumeOnly=false}={}){
+ if(resumeOnly)return measureD1Operation(db,m=>collectMissingRoster(m,null,{now,resumeOnly}),now);
+ return runPipelineJob(db,'missing-roster','scheduled',()=>measureD1Operation(db,m=>collectMissingRoster(m,null,{now})),{scheduledTime:event.scheduledTime});
+}
 
 // Priorities belong inside the history lane, never ahead of the common fair
 // dispatcher: a nonempty card/history queue must not suppress result collection.
@@ -36,7 +39,14 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
   const gate=await db.prepare("SELECT next_batch_at,locked_until FROM lab_history_collection_budget WHERE name='jra-history'").first();
   if(!gate)return{ok:true,status:'shared-gate-unavailable',externalRequests:0};
   const blocked=Math.max(Number(gate.next_batch_at)||0,Number(gate.locked_until)||0);
-  if(blocked>now())return{ok:true,status:'cooldown',nextBatchAt:new Date(blocked).toISOString(),externalRequests:0};
+  if(blocked>now()){
+   // A cached OWN receipt needs no external slot. Give only this narrowly
+   // bounded local resume check a chance; fresh requests remain blocked by the
+   // collector's normal shared-gate/lease/source-clock checks.
+   const resume=await missing(db,event,{now,resumeOnly:true});
+   if(resume&&resume.status!=='no-resumable-own-receipt')return acquisition({...resume,attempted:true});
+   return{ok:true,status:'cooldown',nextBatchAt:new Date(blocked).toISOString(),externalRequests:0,...(resume?{resumeCheck:{status:resume.status,metrics:resume.metrics}}:{})};
+  }
   if(!cardCompletionFirst){checkedUpcoming=true;const completion=await measureD1Operation(db,measured=>upcoming(measured,{now,previousCardSelection}),now);
   if(completion&&(completion.externalRequests||completion.attempted||completion.saveMayHaveSucceeded||['cooldown','lease-unavailable','shared-gate-unavailable','paused'].includes(completion.status)))return history(completion);}
  }

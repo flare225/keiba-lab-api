@@ -76,6 +76,12 @@ test('completion turn observes shared gate/lease before history planning and per
   assert.equal(result.status,'cooldown');assert.equal(result.externalRequests,0);assert.equal(reads,1);
  }
 });
+test('cooldown checks only for a resumable cached OWN receipt before returning',async()=>{
+ const stamp=Date.parse('2026-10-23T14:30:00Z');let options;
+ const result=await collectLiveHistory({prepare(){return{async first(){return{next_batch_at:stamp+3600000,locked_until:0}}}}},{scheduledTime:stamp},{now:()=>stamp,previousHistoryWorkStage:'acquisition',missing:async(_db,_event,input)=>{options=input;return{status:'no-resumable-own-receipt',externalRequests:0,metrics:{rowsRead:0,queries:1}}},cards:()=>assert.fail('cooldown must stop other acquisition'),upcoming:()=>assert.fail('cooldown must stop history')});
+ assert.equal(options.resumeOnly,true);assert.equal(typeof options.now,'function');
+ assert.equal(result.status,'cooldown');assert.equal(result.externalRequests,0);assert.equal(result.resumeCheck.status,'no-resumable-own-receipt');assert.deepEqual(result.resumeCheck.metrics,{rowsRead:0,queries:1});
+});
 test('no due history falls back to one card attempt without a repeated history scan',async()=>{
  const stamp=Date.parse('2026-10-23T14:30:00Z');let history=0,cards=0;const r=await collectLiveHistory({prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}},{scheduledTime:stamp},{now:()=>stamp,previousCardSelection:{lane:'card'},previousHistoryWorkStage:'acquisition',missing:async()=>null,registered:async()=>[{date:'2026-10-24'}],upcoming:async()=>{history++;return null},cards:async()=>{cards++;return{status:'official-card-link-found',externalRequests:1,cardSelection:{lane:'discovery'}}},programs:()=>assert.fail('one request')});
  assert.equal(history,1);assert.equal(cards,1);assert.equal(r.historyWorkStage,'acquisition');

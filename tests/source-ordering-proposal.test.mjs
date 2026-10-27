@@ -53,7 +53,7 @@ test('72-slot metadata replay excludes the 21 saved rosters and advances across 
  // placeholder rows do not represent entrant data or production persistence.
  const saved={'2026-10-24:東京':[9,10,11],'2026-10-25:東京':[9,10,11],'2026-10-24:京都':[9,10,11],'2026-10-25:京都':[8,9,10,11,12],'2026-10-24:新潟':[1,9,10,11],'2026-10-25:新潟':[9,10,11]};
  for(const date of ['2026-10-24','2026-10-25'])for(const venue of ['東京','京都','新潟'])for(let n=1;n<=12;n++){
-  const key=`${date}:${venue}:${n}`;sql.prepare('INSERT INTO jra_race_program(program_key,race_date,venue,meeting_no,day_no,race_no) VALUES(?,?,?,?,?,?)').run(key,date,venue,4,8,n);
+  const key=`${date}:${venue}:${n}`;sql.prepare('INSERT INTO jra_race_program(program_key,race_date,venue,meeting_no,day_no,race_no,fetched_at) VALUES(?,?,?,?,?,?,?)').run(key,date,venue,4,8,n,new Date(stamp).toISOString());
   if(saved[`${date}:${venue}`].includes(n))sql.prepare('INSERT INTO lab_expected_roster_registry VALUES(?,?,?,?,?)').run(key,key,'metadata-only-placeholder','metadata-only-placeholder',new Date(stamp).toISOString());
  }
  sql.prepare("UPDATE lab_history_collection_budget SET next_batch_at=? WHERE name='jra-history'").run(stamp+3600000);
@@ -61,7 +61,7 @@ test('72-slot metadata replay excludes the 21 saved rosters and advances across 
  assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,21);
  const selected=[];for(let i=0;i<4;i++){
   const r=await collectMissingRoster(db,null,{now:()=>stamp,fetcher:()=>assert.fail('metadata replay must never fetch')});assert.equal(r.status,'cooldown');selected.push(r.target);
-  sql.prepare("INSERT INTO lab_missing_roster_sources_v1(race_key,status,next_at) VALUES(?,'source-blocked',?)").run(r.target,stamp+3600000);
+  sql.prepare("INSERT INTO lab_missing_roster_sources_v1(race_key,status,next_at) VALUES(?,'source-blocked',?) ON CONFLICT(race_key) DO UPDATE SET next_at=excluded.next_at,status=excluded.status").run(r.target,stamp+3600000);
  }
- assert.deepEqual(selected,['2026-10-24:東京:1','2026-10-24:京都:2','2026-10-24:新潟:2','2026-10-24:東京:2']);sql.close();
+ assert.deepEqual(selected,['2026-10-24:京都:1','2026-10-24:東京:1','2026-10-24:京都:2','2026-10-24:新潟:2']);sql.close();
 });

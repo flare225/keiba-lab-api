@@ -57,7 +57,7 @@ test('72-slot metadata replay excludes the 21 saved rosters and advances across 
   if(saved[`${date}:${venue}`].includes(n))sql.prepare('INSERT INTO lab_expected_roster_registry VALUES(?,?,?,?,?)').run(key,key,'metadata-only-placeholder','metadata-only-placeholder',new Date(stamp).toISOString());
  }
  sql.prepare("UPDATE lab_history_collection_budget SET next_batch_at=? WHERE name='jra-history'").run(stamp+3600000);
- sql.exec("CREATE TABLE lab_missing_roster_sources_v1(race_key TEXT PRIMARY KEY,status TEXT,next_at INTEGER,body_html TEXT,body_sha256 TEXT,observed_at TEXT,error TEXT);INSERT INTO lab_missing_roster_sources_v1(race_key,status,next_at) VALUES('2026-10-24:京都:1','fetch-failed',1)");
+ sql.exec("CREATE TABLE lab_missing_roster_sources_v1(race_key TEXT PRIMARY KEY,status TEXT,next_at INTEGER,source_url TEXT,body_html TEXT,body_sha256 TEXT,observed_at TEXT,error TEXT);INSERT INTO lab_missing_roster_sources_v1(race_key,status,next_at) VALUES('2026-10-24:京都:1','fetch-failed',1)");
  assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,21);
  const selected=[];for(let i=0;i<4;i++){
   const r=await collectMissingRoster(db,null,{now:()=>stamp,fetcher:()=>assert.fail('metadata replay must never fetch')});assert.equal(r.status,'cooldown');selected.push(r.target);

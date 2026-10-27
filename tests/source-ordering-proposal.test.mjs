@@ -8,7 +8,7 @@ import {ensureCollectionTables} from '../src/history-collection-v3.37.0.js';
 import {saveExpectedRoster} from '../src/expected-roster-registry.js';
 
 const stamp=Date.parse('2026-10-22T00:30:50.951Z');
-const html='<a href="?kaisai_date=20261024">date</a><a href="?race_id=202605040801">1R</a><div>4回 東京 8日目</div><table><tr class="HorseList"><td><a href="https://db.netkeiba.com/horse/2024000001/">隔離試験馬</a></td><td>牡2</td></tr></table>';
+const html='<div>10/24(土) 東京 1R</div><a>競馬新聞</a><table><thead><tr><th>馬名</th><th>年齢</th></tr></thead><tbody><tr class="HorseList"><td><a href="https://own.netkeiba.com/db/horse.html?id=2024000001">隔離試験馬</a></td><td>牡2</td></tr></tbody></table><p>※結果・成績・オッズなどは主催者発表を確認</p>';
 async function fixture(){
  const sql=new DatabaseSync(':memory:'),queries=[];
  const db={prepare(q){const wrap=(args=[])=>({bind(...a){return wrap(a)},async run(){queries.push(q);return{meta:{changes:Number(sql.prepare(q).run(...args).changes)}}},async first(){queries.push(q);return sql.prepare(q).get(...args)||null},async all(){queries.push(q);return{results:sql.prepare(q).all(...args)}}});return wrap()}};

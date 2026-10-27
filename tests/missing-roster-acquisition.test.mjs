@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {collectMissingRoster,parseSupplementaryRoster,supplementaryRosterUrl} from '../src/missing-roster-acquisition.js';
 const now=Date.parse('2026-10-21T02:00:00Z'),p={race_date:'2026-10-24',venue:'東京',race_no:1,meeting_no:4,day_no:8},url='https://race.netkeiba.com/race/shutuba.html?race_id=202605040801';
 const html='<a href="?kaisai_date=20261024">date</a><a href="?race_id=202605040801">1R</a><div>4回 東京 8日目</div><table><tr class="HorseList"><td><a href="https://db.netkeiba.com/horse/2024000001/">試験馬</a></td><td>牡2</td></tr></table>';
-function fixture(gate=0){const sql=new DatabaseSync(':memory:');sql.exec(`CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,meeting_no INTEGER,day_no INTEGER,race_label TEXT);INSERT INTO jra_race_program VALUES('2026-10-24','東京',1,4,8,'2歳未勝利');CREATE TABLE jra_races(race_date TEXT,venue TEXT,race_no INTEGER,runner_count INTEGER);CREATE TABLE lab_expected_roster_registry(snapshot_id TEXT PRIMARY KEY,race_key TEXT,record_json TEXT,source_sha256 TEXT,stored_at TEXT);CREATE TABLE lab_history_collection_budget(name TEXT PRIMARY KEY,next_batch_at INTEGER,locked_until INTEGER,lock_token TEXT);INSERT INTO lab_history_collection_budget VALUES('jra-history',${gate},0,NULL)`);const db={prepare(q){const w=(a=[])=>({bind(...v){return w(v)},async run(){return{meta:{changes:sql.prepare(q).run(...a).changes}}},async first(){return sql.prepare(q).get(...a)||null}});return w()}};return{sql,db};}
+function fixture(gate=0){const sql=new DatabaseSync(':memory:');sql.exec(`CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,meeting_no INTEGER,day_no INTEGER,race_label TEXT);INSERT INTO jra_race_program VALUES('2026-10-24','東京',1,4,8,'2歳未勝利');CREATE TABLE jra_races(race_date TEXT,venue TEXT,race_no INTEGER,race_key TEXT,runner_count INTEGER);CREATE TABLE jra_runners(race_key TEXT,horse_no INTEGER);CREATE TABLE lab_expected_roster_registry(snapshot_id TEXT PRIMARY KEY,race_key TEXT,record_json TEXT,source_sha256 TEXT,stored_at TEXT);CREATE TABLE lab_history_collection_budget(name TEXT PRIMARY KEY,next_batch_at INTEGER,locked_until INTEGER,lock_token TEXT);INSERT INTO lab_history_collection_budget VALUES('jra-history',${gate},0,NULL)`);const db={prepare(q){const w=(a=[])=>({bind(...v){return w(v)},async run(){return{meta:{changes:sql.prepare(q).run(...a).changes}}},async first(){return sql.prepare(q).get(...a)||null}});return w()}};return{sql,db};}
 test('supplementary identity requires matching date and meeting, never invented names',()=>{assert.equal(supplementaryRosterUrl(p),url);assert.equal(parseSupplementaryRoster(html,p,url)[0].horseName,'試験馬');assert.throws(()=>parseSupplementaryRoster(html.replace('20261024','20261025'),p,url));assert.throws(()=>parseSupplementaryRoster(html.replace('4回 東京','3回 東京'),p,url));assert.throws(()=>parseSupplementaryRoster(html.replace('HorseList','Unknown'),p,url));});
 test('one bounded source request saves an immutable expected roster and respects hourly cadence',async()=>{const {db,sql}=fixture();let calls=0;const deps={now:()=>now,fetcher:async()=>{calls++;return new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}})}};const r=await collectMissingRoster(db,null,deps);assert.equal(r.status,'roster-saved',JSON.stringify(r));assert.equal(r.storedRunners,1);assert.equal(r.independentRosterReadback,true);assert.equal(r.formalCardSaved,false);await collectMissingRoster(db,null,deps);assert.equal(calls,1);assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,1);sql.close();});
 test('shared cooldown makes no request; 403 pauses the shared gate and records a bounded retry',async()=>{let calls=0;const a=fixture(now+1000);assert.equal((await collectMissingRoster(a.db,null,{now:()=>now,fetcher:async()=>{calls++;throw Error('unexpected')}})).status,'cooldown');assert.equal(calls,0);a.sql.close();const b=fixture();const r=await collectMissingRoster(b.db,null,{now:()=>now,fetcher:async()=>new Response('',{status:403})});assert.equal(r.status,'source-blocked');assert.equal(r.httpStatus,403);assert.equal(b.sql.prepare('SELECT next_batch_at FROM lab_history_collection_budget').get().next_batch_at,now+3600000);assert.equal(b.sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);b.sql.close();});
@@ -29,4 +29,44 @@ test('reconciliation rejects a hash-valid roster for a different target without 
  const before=sql.prepare('SELECT * FROM lab_expected_roster_registry').get();
  await assert.rejects(collectMissingRoster(db,null,{now:()=>now,fetcher:()=>assert.fail('no fetch on conflicting saved target')}),/対象・頭数不一致/);
  assert.equal(sql.prepare('SELECT status FROM lab_missing_roster_sources_v1').get().status,'pending-roster-readback');assert.deepEqual(sql.prepare('SELECT * FROM lab_expected_roster_registry').get(),before);sql.close();
+});
+
+
+test('partial official runner rows do not exclude an unsaved candidate roster',async()=>{
+ const {db,sql}=fixture();const key='2026-10-24:東京:1';
+ sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?)').run('2026-10-24','東京',1,key,3);
+ sql.prepare('INSERT INTO jra_runners VALUES(?,?)').run(key,1);
+ let calls=0;const r=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>{calls++;return new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}})}});
+ assert.equal(r.status,'roster-saved',JSON.stringify(r));assert.equal(r.target,key);assert.equal(r.newRosterRaces,1);assert.equal(calls,1);
+ assert.equal(sql.prepare('SELECT runner_count FROM jra_races WHERE race_key=?').get(key).runner_count,3);
+ assert.equal(sql.prepare('SELECT count(*) n FROM jra_runners WHERE race_key=?').get(key).n,1);
+ assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,1);
+ sql.close();
+});
+
+test('complete official card still excludes candidate roster acquisition',async()=>{
+ const {db,sql}=fixture();const key='2026-10-24:東京:1';
+ sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?)').run('2026-10-24','東京',1,key,1);
+ sql.prepare('INSERT INTO jra_runners VALUES(?,?)').run(key,1);
+ let calls=0;const r=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>{calls++;return new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}})}});
+ assert.equal(r.status,'no-due-missing-roster');assert.equal(r.externalRequests,0);assert.equal(calls,0);
+ assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);
+ sql.close();
+});
+
+test('an existing expected roster is not fetched or saved a second time',async()=>{
+ const {db,sql}=fixture();let calls=0;
+ const first=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>{calls++;return new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}})}});
+ assert.equal(first.status,'roster-saved');const before=sql.prepare('SELECT snapshot_id,record_json,stored_at FROM lab_expected_roster_registry').get();
+ const second=await collectMissingRoster(db,null,{now:()=>now+3600000,fetcher:()=>{calls++;throw Error('unexpected refetch')}});
+ assert.equal(second.status,'no-due-missing-roster');assert.equal(second.externalRequests,0);assert.equal(calls,1);
+ assert.deepEqual(sql.prepare('SELECT snapshot_id,record_json,stored_at FROM lab_expected_roster_registry').get(),before);
+ sql.close();
+});
+
+test('an active shared lease still blocks roster acquisition without an external request',async()=>{
+ const {db,sql}=fixture();sql.prepare("UPDATE lab_history_collection_budget SET locked_until=? WHERE name='jra-history'").run(now+1000);
+ let calls=0;const r=await collectMissingRoster(db,null,{now:()=>now,fetcher:()=>{calls++;throw Error('unexpected request')}});
+ assert.equal(r.status,'cooldown');assert.equal(r.externalRequests,0);assert.equal(calls,0);
+ sql.close();
 });

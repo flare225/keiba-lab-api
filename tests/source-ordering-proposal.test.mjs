@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {collectLiveHistory} from '../src/live-source-dispatch.js';
-import {collectMissingRoster} from '../src/missing-roster-acquisition.js';
+import {collectMissingRoster,expectedRosterSourceUrl} from '../src/missing-roster-acquisition.js';
 import {recoverMissingPrograms} from '../src/program-recovery.js';
 import {ensureCollectionTables} from '../src/history-collection-v3.37.0.js';
 import {saveExpectedRoster} from '../src/expected-roster-registry.js';
@@ -31,6 +31,20 @@ test('shared cooldown blocks both external sources without shortening or claimin
  const before=sql.prepare('SELECT * FROM lab_history_collection_budget').get();let programs=0;
  const r=await collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,programs:()=>{programs++;assert.fail('cannot try another external source')},missing:(db,event,deps)=>collectMissingRoster(db,null,{...deps,fetcher:()=>assert.fail('gate must prevent fetch')})});
  assert.equal(r.status,'cooldown');assert.equal(programs,0);assert.deepEqual(sql.prepare('SELECT * FROM lab_history_collection_budget').get(),before);t.diagnostic(JSON.stringify({localQueries:queries.length,externalRequests:0,d1RowsRead:'unmeasured'}));sql.close();
+});
+test('history cooldown resumes an exact saved OWN receipt without a new HTTP request',async t=>{
+ const {db,sql,queries}=await fixture(),gate=stamp+3600000,url=expectedRosterSourceUrl(sql.prepare('SELECT * FROM jra_race_program').get());
+ sql.exec('CREATE TABLE lab_missing_roster_sources_v1(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_at INTEGER NOT NULL,source_url TEXT,http_status INTEGER,body_sha256 TEXT,body_html TEXT,observed_at TEXT,error TEXT)');
+ const html='<div>10/24(土) 東京 1R</div><a>競馬新聞</a><table><thead><tr><th>馬名</th><th>年齢</th></tr></thead><tbody><tr class="HorseList"><td><a href="https://own.netkeiba.com/db/horse.html?id=2024000001">隔離試験馬</a></td><td>牡2</td></tr></tbody></table><p>※結果・成績・オッズなどは主催者発表を確認</p>';
+ const digest=await (await import('../src/card-evidence.js')).sha256(html),observed=new Date(stamp).toISOString();
+ sql.prepare('INSERT INTO lab_missing_roster_sources_v1 VALUES(?,?,?,?,?,?,?,?,?)').run('2026-10-24:東京:1','source-received',gate,url,200,digest,html,observed,null);
+ sql.prepare("UPDATE lab_history_collection_budget SET next_batch_at=?,locked_until=0 WHERE name='jra-history'").run(gate);
+ const original=sql.prepare('SELECT next_batch_at,locked_until,lock_token FROM lab_history_collection_budget WHERE name=?').get('jra-history');queries.length=0;let external=0;
+ const r=await collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,previousHistoryWorkStage:'acquisition',missing:(db,event,deps)=>collectMissingRoster(db,null,{...deps,resumeOnly:true,fetcher:()=>{external++;throw Error('must not fetch')}}),cards:()=>assert.fail('cached roster should finish before card/history work'),upcoming:()=>assert.fail('cached roster should finish before history work')});
+ assert.equal(r.status,'roster-saved');assert.equal(r.target,'2026-10-24:東京:1');assert.equal(r.externalRequests,0);assert.equal(r.historyWorkStage,'acquisition');assert.equal(external,0);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_expected_roster_registry').get().n,1);assert.equal(sql.prepare('SELECT status FROM lab_missing_roster_sources_v1').get().status,'roster-saved');
+ const after=sql.prepare('SELECT next_batch_at,locked_until,lock_token FROM lab_history_collection_budget WHERE name=?').get('jra-history');assert.equal(after.next_batch_at,original.next_batch_at);assert.equal(after.locked_until,0);assert.equal(after.lock_token,null);
+ t.diagnostic(JSON.stringify({sqlStatements:queries.length,externalRequests:external,scope:'isolated SQLite fixture'}));sql.close();
 });
 test('persisted roster readback recovers during external cooldown without refetch, INSERT or gate mutation',async t=>{
  const {db,sql,queries}=await fixture();

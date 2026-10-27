@@ -63,11 +63,11 @@ export function parseSupplementaryRoster(html,program,url){
  }
  if(!runners.length||runners.length>100||new Set(runners.map(r=>r.horseName)).size!==runners.length)throw Error('補助出馬表の名簿公開を確認できません。');return runners;
 }
-export async function collectMissingRoster(db,input=null,{now=Date.now,fetcher=fetch}={}){
+export async function collectMissingRoster(db,input=null,{now=Date.now,fetcher=fetch,resumeOnly=false}={}){
  const stamp=now(),today=new Date(stamp+9*3600000).toISOString().slice(0,10),until=new Date(Date.parse(today)+7*86400000).toISOString().slice(0,10);if(input)targetInput(input);
  await db.prepare('CREATE TABLE IF NOT EXISTS lab_missing_roster_sources_v1(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_at INTEGER NOT NULL,source_url TEXT,http_status INTEGER,body_sha256 TEXT,body_html TEXT,observed_at TEXT,error TEXT)').run();
- await db.prepare('CREATE TABLE IF NOT EXISTS lab_missing_roster_clock_v1(name TEXT PRIMARY KEY,next_at INTEGER NOT NULL)').run();await db.prepare("INSERT OR IGNORE INTO lab_missing_roster_clock_v1 VALUES('source',0)").run();
- const clock=await db.prepare("SELECT next_at FROM lab_missing_roster_clock_v1 WHERE name='source'").first();
+ if(!resumeOnly){await db.prepare('CREATE TABLE IF NOT EXISTS lab_missing_roster_clock_v1(name TEXT PRIMARY KEY,next_at INTEGER NOT NULL)').run();await db.prepare("INSERT OR IGNORE INTO lab_missing_roster_clock_v1 VALUES('source',0)").run();}
+ const clock=resumeOnly?null:await db.prepare("SELECT next_at FROM lab_missing_roster_clock_v1 WHERE name='source'").first();
  const pending=await db.prepare("SELECT race_key FROM lab_missing_roster_sources_v1 WHERE status='pending-roster-readback' AND next_at<=? ORDER BY next_at LIMIT 1").bind(stamp).first();
  if(pending){
   const stored=await db.prepare('SELECT snapshot_id,record_json,stored_at FROM lab_expected_roster_registry WHERE race_key=? ORDER BY stored_at DESC LIMIT 1').bind(pending.race_key).first();
@@ -79,13 +79,25 @@ export async function collectMissingRoster(db,input=null,{now=Date.now,fetcher=f
    return{status:'roster-reconciled',target:pending.race_key,snapshotId:stored.snapshot_id,snapshotSha256:stored.snapshot_id,savedAt:stored.stored_at,storedRunners:runners.length,newRosterRaces:0,externalRequests:0,independentRosterReadback:true,formalCardSaved:false};
   }
  }
- // Keep published official cards first from Thursday afternoon onward.
- if([4,5,6,0].includes(new Date(stamp+9*3600000).getUTCDay())&&(new Date(stamp+9*3600000).getUTCDay()!==4||new Date(stamp+9*3600000).getUTCHours()>=15))return{status:'official-card-priority',externalRequests:0};
- const filter=input?' AND p.race_date=? AND p.venue=? AND p.race_no=?':'';
- const args=[today,until,stamp,...(input?[input.date,input.venue,Number(input.raceNo??input.race_no)]:[])];
- const p=await db.prepare(`SELECT p.*,q.body_html,q.body_sha256,q.observed_at,q.source_url receipt_source_url,q.status source_status FROM jra_race_program p LEFT JOIN lab_missing_roster_sources_v1 q ON q.race_key=p.race_date||':'||p.venue||':'||p.race_no WHERE p.race_date>? AND p.race_date<=? AND (COALESCE(q.next_at,0)<=? OR q.status IN ('source-received','pending-roster-readback')) AND NOT EXISTS(SELECT 1 FROM lab_expected_roster_registry r WHERE r.race_key=p.race_date||':'||p.venue||':'||p.race_no) AND NOT EXISTS(SELECT 1 FROM jra_races r WHERE r.race_date=p.race_date AND r.venue=p.venue AND r.race_no=p.race_no AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key))${filter} ORDER BY COALESCE(q.next_at,0),p.race_date,p.race_no,p.venue LIMIT 1`).bind(...args).first();if(!p)return{status:'no-due-missing-roster',externalRequests:0};
+ // Cached, exact-source OWN receipts are local work. They may resume while the
+ // external source clock/shared next-batch is waiting, but still pass the same
+ // race identity, immutable writer, shared-gate row and lease checks below.
+ let p;
+ if(resumeOnly){
+  const ownId="'https://own.netkeiba.com/race/shutuba.html?race_id='||substr(p.race_date,1,4)||CASE p.venue WHEN '札幌' THEN '01' WHEN '函館' THEN '02' WHEN '福島' THEN '03' WHEN '新潟' THEN '04' WHEN '東京' THEN '05' WHEN '中山' THEN '06' WHEN '中京' THEN '07' WHEN '京都' THEN '08' WHEN '阪神' THEN '09' WHEN '小倉' THEN '10' END||printf('%02d',p.meeting_no)||printf('%02d',p.day_no)||printf('%02d',p.race_no)";
+  p=await db.prepare(`SELECT p.*,q.body_html,q.body_sha256,q.observed_at,q.source_url receipt_source_url,q.status source_status FROM lab_missing_roster_sources_v1 q JOIN jra_race_program p ON q.race_key=p.race_date||':'||p.venue||':'||p.race_no WHERE q.status IN ('source-received','pending-roster-readback') AND q.body_html IS NOT NULL AND length(q.body_html)>0 AND q.source_url LIKE 'https://own.netkeiba.com/race/shutuba.html?race_id=%' AND q.source_url=${ownId} AND p.race_date>? AND p.race_date<=? AND NOT EXISTS(SELECT 1 FROM lab_expected_roster_registry r WHERE r.race_key=p.race_date||':'||p.venue||':'||p.race_no) AND NOT EXISTS(SELECT 1 FROM jra_races r WHERE r.race_date=p.race_date AND r.venue=p.venue AND r.race_no=p.race_no AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key)) ORDER BY q.next_at,p.race_date,p.race_no,p.venue LIMIT 1`).bind(today,until).first();
+  if(!p)return{status:'no-resumable-own-receipt',externalRequests:0};
+ }else{
+  // Keep published official cards first from Thursday afternoon onward.
+  if([4,5,6,0].includes(new Date(stamp+9*3600000).getUTCDay())&&(new Date(stamp+9*3600000).getUTCDay()!==4||new Date(stamp+9*3600000).getUTCHours()>=15))return{status:'official-card-priority',externalRequests:0};
+  const filter=input?' AND p.race_date=? AND p.venue=? AND p.race_no=?':'';
+  const args=[today,until,stamp,...(input?[input.date,input.venue,Number(input.raceNo??input.race_no)]:[])];
+  p=await db.prepare(`SELECT p.*,q.body_html,q.body_sha256,q.observed_at,q.source_url receipt_source_url,q.status source_status FROM jra_race_program p LEFT JOIN lab_missing_roster_sources_v1 q ON q.race_key=p.race_date||':'||p.venue||':'||p.race_no WHERE p.race_date>? AND p.race_date<=? AND (COALESCE(q.next_at,0)<=? OR q.status IN ('source-received','pending-roster-readback')) AND NOT EXISTS(SELECT 1 FROM lab_expected_roster_registry r WHERE r.race_key=p.race_date||':'||p.venue||':'||p.race_no) AND NOT EXISTS(SELECT 1 FROM jra_races r WHERE r.race_date=p.race_date AND r.venue=p.venue AND r.race_no=p.race_no AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key))${filter} ORDER BY COALESCE(q.next_at,0),p.race_date,p.race_no,p.venue LIMIT 1`).bind(...args).first();
+  if(!p)return{status:'no-due-missing-roster',externalRequests:0};
+ }
  const key=`${p.race_date}:${p.venue}:${p.race_no}`;let url;try{url=expectedRosterSourceUrl(p)}catch(e){await db.prepare('INSERT INTO lab_missing_roster_sources_v1(race_key,status,next_at,error) VALUES(?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET status=excluded.status,next_at=excluded.next_at,error=excluded.error').bind(key,'program-identity-incomplete',stamp+6*3600000,String(e.message)).run();return{status:'program-identity-incomplete',target:key,externalRequests:0};}
  const reusableHtml=p.receipt_source_url===url&&['source-received','pending-roster-readback'].includes(p.source_status)&&typeof p.body_html==='string'&&p.body_html.length>0;
+ if(resumeOnly&&!reusableHtml)return{status:'no-resumable-own-receipt',externalRequests:0};
  if(!reusableHtml&&Number(clock?.next_at)>stamp)return{status:'source-not-due',target:key,externalRequests:0,nextAttemptAt:new Date(Number(clock.next_at)).toISOString()};
  const gate=await db.prepare("SELECT next_batch_at,locked_until FROM lab_history_collection_budget WHERE name='jra-history'").first();if(!gate)return{status:'shared-gate-unavailable',externalRequests:0};const wait=reusableHtml?Number(gate.locked_until)||0:Math.max(Number(gate.next_batch_at)||0,Number(gate.locked_until)||0);if(wait>stamp)return{status:'cooldown',target:key,externalRequests:0,nextAttemptAt:new Date(wait).toISOString()};
  const token=crypto.randomUUID(),lease=reusableHtml

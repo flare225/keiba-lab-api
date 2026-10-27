@@ -102,7 +102,11 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  const ordinary=pool=>{const r=original(pool);return r&&lane(r)==='discovery'?discoveryPick(pool.filter(x=>lane(x)==='discovery')):r};
  const fair=(pool,urgentOnly=false)=>{const select=urgentOnly?original:ordinary;return ['card','discovery'].includes(previous)?(select(pool.filter(r=>lane(r)!==previous))||select(pool)):select(pool)};
  const witnessed=eligible.filter(r=>witnessedUrl(r)&&!receiptCards.get(identity(r)));
- const r=fair(urgent,true)||pick(witnessed)||fair(eligible);if(!r)return{ok:true,status:candidates.length?'card-discovery-not-due':'complete',externalRequests:0};
+ // A published URL already discovered for a due race must be consumed before
+ // opening another index page. Otherwise alternating cohorts can strand the
+ // discovered race until after post time despite having a usable continuation.
+ const readyContinuation=eligible.filter(r=>continuation(r));
+ const r=pick(readyContinuation)||fair(urgent,true)||pick(witnessed)||fair(eligible);if(!r)return{ok:true,status:candidates.length?'card-discovery-not-due':'complete',externalRequests:0};
  const discoveryClass=lane(r)==='discovery'?(receipts.has(identity(r))?'retry':'untried'):null;
  const retryDiscoveryStage=discoveryClass==='retry'?(continuation(r)?'continuation':'reexploration'):null;
  const selection={lane:lane(r),retryDiscoveryStage,lastRetryDiscoveryStage:retryDiscoveryStage||previousRetryStage||null,previousRetryDiscoveryStage:previousRetryStage||null,lastDiscoveryClass:discoveryClass||previousClass||null,previousDiscoveryClass:previousClass||null,discoveryClass,reason:urgent.includes(r)?'urgent':witnessed.includes(r)?'witnessed-url':'alternate-eligible-cohorts',previousLane:previous||null,target:`${r.date}:${r.venue}:${r.raceNo}`,eligibleCards:eligible.filter(x=>lane(x)==='card').length,eligibleDiscovery:eligible.filter(x=>lane(x)==='discovery').length,eligibleUntriedDiscovery:eligible.filter(x=>lane(x)==='discovery'&&!receipts.has(identity(x))).length,eligibleRetryDiscovery:eligible.filter(x=>lane(x)==='discovery'&&receipts.has(identity(x))).length,eligibleContinuationDiscovery:eligible.filter(x=>lane(x)==='discovery'&&receipts.has(identity(x))&&continuation(x)).length,eligibleReexplorationDiscovery:eligible.filter(x=>lane(x)==='discovery'&&receipts.has(identity(x))&&!continuation(x)).length};

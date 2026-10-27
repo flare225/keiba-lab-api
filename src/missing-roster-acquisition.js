@@ -4,6 +4,7 @@ import {targetInput} from './race-history-assessment-v3.31.0.js';
 const CODES={'札幌':'01','函館':'02','福島':'03','新潟':'04','東京':'05','中山':'06','中京':'07','京都':'08','阪神':'09','小倉':'10'};
 const text=s=>String(s).replace(/<[^>]*>/g,' ').replace(/&nbsp;|&#160;/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim();
 const FAILURE_BYTES=65536;
+function rosterError(message,rosterOutcome){const error=new Error(message);error.rosterOutcome=rosterOutcome;return error;}
 async function failureResponseEvidence(response,url,stamp){
  const contentType=(response.headers.get('content-type')||'').slice(0,256),charset=contentType.match(/charset=([\w-]+)/i)?.[1]||'euc-jp';
  const evidence={version:'supplementary-http-failure-v1',requestUrl:url,requestMethod:'GET',requestRedirect:'manual',responseUrl:response.url||null,httpStatus:response.status,contentType,charset,charsetSource:/charset=/i.test(contentType)?'response-header':'existing-euc-jp-fallback',observedAt:new Date(stamp).toISOString(),maxRawBytes:FAILURE_BYTES,rawBytesStored:0,bodyComplete:false};
@@ -30,27 +31,27 @@ export function expectedRosterSourceUrl(program){
 }
 export function parseOwnExpectedRoster(html,program,url){
  const expectedUrl=expectedRosterSourceUrl(program),u=new URL(url),id=u.searchParams.get('race_id');
- if(u.origin!=='https://own.netkeiba.com'||u.pathname!=='/race/shutuba.html'||url!==expectedUrl||!/^\d{12}$/.test(id||''))throw Error('補助名簿の取得先・対象レースを確認できません。');
+ if(u.origin!=='https://own.netkeiba.com'||u.pathname!=='/race/shutuba.html'||url!==expectedUrl||!/^\d{12}$/.test(id||''))throw rosterError('補助名簿の取得先・対象レースを確認できません。','response-target-mismatch');
  const [,month,day]=program.race_date.split('-'),dateLabel=`${Number(month)}/${Number(day)}`;
  // The OWN page is server-rendered; its race header must itself show the
  // requested calendar date, venue and race number before runner rows are read.
  const tableMarker=html.indexOf('競馬新聞');
- if(tableMarker<0)throw Error('補助名簿の開催見出しを確認できません。');
+ if(tableMarker<0)throw rosterError('補助名簿の開催見出しを確認できません。','response-identity-unconfirmed');
  const heading=text(html.slice(0,tableMarker));
- if(!heading.includes(dateLabel)||!heading.includes(program.venue)||!new RegExp(`(?:^|\\s)${Number(program.race_no)}R(?:\\s|$)`).test(heading))throw Error('補助名簿の開催日・開催場・レース番号を確認できません。');
+ if(!heading.includes(dateLabel)||!heading.includes(program.venue)||!new RegExp(`(?:^|\\s)${Number(program.race_no)}R(?:\\s|$)`).test(heading))throw rosterError('補助名簿の開催日・開催場・レース番号を確認できません。','response-target-identity-mismatch');
  const endMarker=html.indexOf('※結果',tableMarker),section=html.slice(tableMarker,endMarker>tableMarker?endMarker:undefined);
  const anchors=[...section.matchAll(/<a\b[^>]*href\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi)].map(m=>{
   let profile=false;try{const link=new URL(m[2],'https://own.netkeiba.com');profile=(link.hostname==='own.netkeiba.com'&&link.pathname==='/db/horse.html'&&/^\d+$/.test(link.searchParams.get('id')||''))||(link.hostname==='db.netkeiba.com'&&/^\/horse\/\d+\/?$/.test(link.pathname));}catch{}
   return{match:m,profile,name:text(m[3])};
  }).filter(x=>x.profile);
- if(!anchors.length)throw Error('補助出馬表の名簿公開を確認できません。');
+ if(!anchors.length)throw rosterError('補助出馬表に候補馬のプロフィール行がありません。','response-roster-data-absent');
  const runners=[];
  for(let i=0;i<anchors.length;i++){
   const current=anchors[i],start=current.match.index+current.match[0].length,next=anchors[i+1]?.match.index??section.length,tail=text(section.slice(start,next)),age=tail.match(/[牡牝セ騸]\s*(\d{1,2})(?:\s|$)/);
-  if(!current.name||current.name.length>40||!age||Number(age[1])<2||Number(age[1])>15)throw Error('補助名簿の馬名・年齢を確認できません。');
+  if(!current.name||current.name.length>40||!age||Number(age[1])<2||Number(age[1])>15)throw rosterError('補助名簿の馬名・年齢を確認できません。','response-roster-parse-invalid');
   runners.push({horseName:current.name,age:Number(age[1])});
  }
- if(runners.length>100||new Set(runners.map(r=>r.horseName)).size!==runners.length)throw Error('補助名簿の頭数・重複を確認できません。');
+ if(runners.length>100||new Set(runners.map(r=>r.horseName)).size!==runners.length)throw rosterError('補助名簿の頭数・重複を確認できません。','response-roster-parse-invalid');
  return runners;
 }
 export function parseSupplementaryRoster(html,program,url){
@@ -94,9 +95,9 @@ export async function collectMissingRoster(db,input=null,{now=Date.now,fetcher=f
  const runners=parseSupplementaryRoster(html,p,url),sourceText=`対象 ${p.race_date} ${p.venue}${p.race_no}R\n取得元HTML SHA256 ${await sha256(html)}\n`+runners.map(r=>r.horseName+' '+r.age+'歳').join('\n');
  const saved=await saveExpectedRoster(db,{date:p.race_date,venue:p.venue,raceNo:p.race_no,raceName:p.race_label,provider:'netkeiba',kind:'expected-runners',sourceUrl:url,observedAt:observed,sourceText,runners},stamp);
  await db.prepare("UPDATE lab_missing_roster_sources_v1 SET status='roster-saved',next_at=?,error=NULL WHERE race_key=?").bind(stamp+86400000,key).run();return{status:'roster-saved',target:key,storedRunners:runners.length,newRosterRaces:saved.idempotent?0:1,snapshotId:saved.snapshotId,externalRequests:requests,independentRosterReadback:true,formalCardSaved:false};
- }catch(e){if(e.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e))){quota=true;throw e;}const status=e.saveMayHaveSucceeded?'pending-roster-readback':[403,429,503].includes(http)?'source-blocked':/補助.*(?:確認|不正)|補助出馬表/.test(String(e.message||e))?'publication-unconfirmed':'fetch-failed';
+ }catch(e){if(e.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e))){quota=true;throw e;}const status=e.saveMayHaveSucceeded?'pending-roster-readback':[403,429,503].includes(http)?'source-blocked':e.rosterOutcome||(/補助.*(?:確認|不正)|補助出馬表/.test(String(e.message||e))?'publication-unconfirmed':'fetch-failed');
  if(failedResponse){const f=failedResponse;await db.prepare('INSERT INTO lab_missing_roster_sources_v1 VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET status=excluded.status,next_at=excluded.next_at,source_url=excluded.source_url,http_status=excluded.http_status,body_sha256=excluded.body_sha256,body_html=excluded.body_html,observed_at=excluded.observed_at,error=excluded.error').bind(key,status,stamp+3600000,url,http,f.evidence.storedDecodedBodySha256||null,f.body,f.evidence.observedAt,JSON.stringify({version:'supplementary-http-failure-v1',message:String(e.message||e),responseEvidence:f.evidence})).run();}
  else await db.prepare('INSERT INTO lab_missing_roster_sources_v1(race_key,status,next_at,source_url,http_status,error) VALUES(?,?,?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET status=excluded.status,next_at=excluded.next_at,error=excluded.error,http_status=excluded.http_status').bind(key,status,stamp+3600000,url,http,String(e.message||e)).run();
- return{status,target:key,error:String(e.message||e),sourceUrl:url,httpStatus:http,externalRequests:requests,nextAttemptAt:new Date(stamp+3600000).toISOString(),saveMayHaveSucceeded:!!e.saveMayHaveSucceeded,...(failedResponse?{failureEvidence:failedResponse.evidence}:{})};
+ return{status,target:key,error:String(e.message||e),...(e.rosterOutcome?{rosterOutcome:e.rosterOutcome}:{}),sourceUrl:url,httpStatus:http,externalRequests:requests,nextAttemptAt:new Date(stamp+3600000).toISOString(),saveMayHaveSucceeded:!!e.saveMayHaveSucceeded,...(failedResponse?{failureEvidence:failedResponse.evidence}:{})};
  }finally{if(!quota)await db.prepare("UPDATE lab_history_collection_budget SET locked_until=0,lock_token=NULL,next_batch_at=? WHERE name='jra-history' AND lock_token=?").bind(now()+pause,token).run();}
 }

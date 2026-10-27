@@ -13,7 +13,7 @@ function fixture(){
  return{sql,db,queries};
 }
 test('failed natural collector response can be read by exact key without refetch or modifying its receipt',async()=>{
- const {db,sql,queries}=fixture();let calls=0;const failure=await collectMissingRoster(db,target,{now:()=>now,fetcher:async()=>{calls++;return new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}})}});assert.equal(failure.status,'publication-unconfirmed');
+ const {db,sql,queries}=fixture();let calls=0;const failure=await collectMissingRoster(db,target,{now:()=>now,fetcher:async()=>{calls++;return new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}})}});assert.equal(failure.status,'response-identity-unconfirmed');
  const before=sql.prepare('SELECT * FROM lab_missing_roster_sources_v1').get();queries.length=0;
  const r=await readMissingRosterEvidence(db,{...target,includeBody:true});assert.equal(r.integrityVerified,true);assert.equal(r.bodyHtml,html);assert.equal(r.bodySha256,await sha256(html));assert.deepEqual(r.parserIdentityChecks,{raceId:false,date:false,meeting:false});assert.deepEqual(r.observedCalendarDates,['20261024']);assert.deepEqual(r.observedRaceIds,['202608040901']);assert.equal(r.charsetRecorded,false);assert.equal(calls,1);assert.equal(queries.length,1);assert.match(queries[0],/^SELECT/);assert.deepEqual(sql.prepare('SELECT * FROM lab_missing_roster_sources_v1').get(),before);
  const other=await readMissingRosterEvidence(db,{...target,raceNo:2,includeBody:true});assert.equal(other.available,false);assert.equal(other.bodyHtml,undefined);sql.close();

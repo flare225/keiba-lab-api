@@ -7,6 +7,7 @@ import {readConfirmedPredraw} from './confirmed-predraw-roster.js';
 import {discoverExpectedCard} from './expected-card-discovery.js';
 import {completeCollectedTraining} from './history-learning-completion.js';
 import {collectionStatus,collectHistoryBatch,officialUrl,jstDay,scheduledCollection} from './history-collection-v3.37.0.js';
+import {markProvisionalHistoryUpdated} from './provisional-prediction-snapshots.js';
 
 // The dated supplementary roster never becomes an official card or a prediction seal.
 // Only profile links already published on an age-consistent JRA card may be reused.
@@ -39,6 +40,7 @@ export async function expectedHistoryStatus(db,now=Date.now(),sources=EXPECTED_S
 }
 export async function collectUpcomingExpectedHistory(db,deps={}){
  const now=deps.now||Date.now,discoverySources=[],waiting=[];
+ const markReevaluation=async(source,result)=>result.results?.some(item=>Number(item.savedRows)>0)?markProvisionalHistoryUpdated(db,source,now()):0;
  const stamp=now(),day=jstDay(stamp),until=new Date(Date.parse(day+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);
  const registered=deps.sources?[]:await storedExpectedSources(db,day,until);
  const fixed=upcomingExpectedSources(stamp,deps.sources||[...registered,...EXPECTED_SOURCES.filter(s=>!registered.some(r=>r.date===s.date&&r.venue===s.venue&&r.raceNo===s.raceNo))]);
@@ -49,14 +51,15 @@ export async function collectUpcomingExpectedHistory(db,deps={}){
  for(const source of sources){
   const formal=await rows(db,'SELECT r.race_key FROM jra_races r WHERE r.race_date=? AND r.venue=? AND r.race_no=? AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key)',[source.date,source.venue,source.raceNo]);
   if(formal.length){
-   if(source.priority===0||source.snapshotId?.startsWith('registered:')){const r=await collectHistoryBatch(db,{date:source.date,venue:source.venue,raceNo:source.raceNo,historyLimit:3,batchSize:1},deps);if(r.attempted||r.status==='cooldown')return {...r,stage:'main-race-official-history'};waiting.push({raceKey:source.raceKey,status:r.status,pendingHorses:r.before?.pendingHorses});}
+   if(source.priority===0||source.snapshotId?.startsWith('registered:')){const r=await collectHistoryBatch(db,{date:source.date,venue:source.venue,raceNo:source.raceNo,historyLimit:3,batchSize:1},deps),provisionalEvaluationQueued=await markReevaluation(source,r);if(r.attempted||r.status==='cooldown')return {...r,stage:'main-race-official-history',provisionalEvaluationQueued};waiting.push({raceKey:source.raceKey,status:r.status,pendingHorses:r.before?.pendingHorses,provisionalEvaluationQueued});}
    continue;
   }
   const context=await expectedHistoryContext(db,source);
   if(context.rosterBasis!=='confirmed-predraw')discoverySources.push(source);
   const r=await collectHistoryBatch(db,{historyLimit:3,batchSize:1},{...deps,context});
-  if(r.attempted||r.status==='cooldown')return {...r,stage:'expected-runner-prior-history',snapshotId:source.snapshotId,authoritativeForCard:false};
-  waiting.push({raceKey:source.raceKey||`${source.date}:${source.venue}:${source.raceNo}`,snapshotId:source.snapshotId,status:r.status,pendingHorses:r.before?.pendingHorses,missingProfileLinks:r.before?.runners.filter(h=>h.storedRows<3&&!h.profileUrl).map(h=>h.horseName)});
+  const provisionalEvaluationQueued=await markReevaluation(source,r);
+  if(r.attempted||r.status==='cooldown')return {...r,stage:'expected-runner-prior-history',snapshotId:source.snapshotId,authoritativeForCard:false,provisionalEvaluationQueued};
+  waiting.push({raceKey:source.raceKey||`${source.date}:${source.venue}:${source.raceNo}`,snapshotId:source.snapshotId,status:r.status,pendingHorses:r.before?.pendingHorses,missingProfileLinks:r.before?.runners.filter(h=>h.storedRows<3&&!h.profileUrl).map(h=>h.horseName),provisionalEvaluationQueued});
  }
  for(const source of discoverySources){
   const card=await discoverExpectedCard(db,source,deps);

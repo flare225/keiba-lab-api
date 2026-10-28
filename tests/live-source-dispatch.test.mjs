@@ -145,3 +145,28 @@ test('invalid completion priority configuration fails before database or source 
  for(const value of ['{}','["2026-10-25:京都:13"]','["2026-10-25:京都:3","2026-10-25:京都:3"]'])assert.throws(()=>cardCompletionPriorities(value),/Invalid card completion priorities/);
  let observed;await collectLiveHistory({}, {scheduledTime:start},{now:()=>start,cardCompletionFirst:true,completionPriorityRaceKeys:['2026-10-25:京都:3'],cards:async(_,input,deps)=>{observed=deps.completionPriorityRaceKeys;return{status:'official-card-saved',externalRequests:1}}});assert.deepEqual(observed,['2026-10-25:京都:3']);
 });
+
+
+test('saved roster history turn precedes a due supplemental request and yields the next turn back',async()=>{
+ const stamp=Date.parse('2026-10-28T06:54:48Z'),seen=[];
+ const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
+ let stage='acquisition';
+ for(let i=0;i<4;i++){
+  const r=await collectLiveHistory(db,{scheduledTime:stamp+i*540000},{now:()=>stamp+i*540000,previousHistoryWorkStage:stage,cardCompletionFirst:true,
+   cards:async()=>({status:'awaiting-official-publication',externalRequests:0}),registered:async()=>[{date:'2026-11-01'}],
+   missing:async()=>{seen.push('roster');return{status:'publication-unconfirmed',externalRequests:1}},
+   expected:async()=>{seen.push('history');return{status:'collected',attempted:1,externalRequests:1}},programs:()=>assert.fail('one source only')});
+  stage=r.historyWorkStage;assert.equal(r.externalRequests,1);
+ }
+ assert.deepEqual(seen,['history','roster','history','roster']);
+});
+test('idle saved history falls through once and a returned safety stop cannot reach supplemental',async()=>{
+ const stamp=Date.parse('2026-10-28T06:54:48Z');
+ for(const status of ['idle','cooldown','paused','lease-unavailable','shared-gate-unavailable']){
+  let history=0,missing=0;const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
+  const r=await collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,previousHistoryWorkStage:'acquisition',cardCompletionFirst:true,
+   cards:async()=>({status:'awaiting-official-publication',externalRequests:0}),registered:async()=>[{date:'2026-11-01'}],
+   expected:async()=>{history++;return{status,externalRequests:0}},missing:async()=>{missing++;return{status:'roster-saved',externalRequests:1}},programs:()=>assert.fail('stop')});
+  assert.equal(history,1);assert.equal(missing,status==='idle'?1:0);assert.equal(r.status,status==='idle'?'roster-saved':status);
+ }
+});

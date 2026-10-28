@@ -1,3 +1,4 @@
+import {assertReviewedProfileIdentity} from './reviewed-jra-profile-sources.js';
 import {jraPageRequest,isJraSourceBlocked} from './jra-page-request.js';
 import {missingPriorHistorySql} from './learning-history-priority.js';
 import {parsePastPerformances,extractProfileLinks,ensureHistoryTable} from './collection-profile-parser-v3.32.0.js';
@@ -93,6 +94,8 @@ export async function collectHistoryBatch(db,input,deps={}){
     }
     if(!profileUrl)throw Error('JRA競走馬リンクが未取得です。');
     const html=await page(profileUrl,true);
+    const reviewed=context.runners.find(r=>r.horse_name===item.horseName)?.reviewed_profile;
+    if(reviewed)assertReviewedProfileIdentity(html,reviewed);
     if(!html.includes(item.horseName))throw Error('プロフィールの馬名を確認できません。');
     const performances=parsePastPerformances(html,item.horseName,profileUrl,context.race.race_date,200).filter(p=>p.raceDate>=item.fromDate).slice(0,limit);
     if(!performances.length&&!/0戦|未出走|出走歴はありません/.test(html)&&!parsePastPerformances(html,item.horseName,profileUrl,'9999-12-31',200).length)throw Error('過去走テーブルを確認できません。履歴ゼロとは判定していません。');

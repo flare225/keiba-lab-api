@@ -48,16 +48,22 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
  let card=cardCompletionFirst?await cards(db,{...cardInput,publicationWindowOnly:true},deps):null;
  if(stops(card))return acquisition(card);
  const preparing=card?.status==='awaiting-official-publication';if(preparing)card=null;
+ // Reuse the existing acquisition/history turn before supplemental work can
+ // consume it. Published official-card work above retains priority.
+ let early=null,rosters;
+ if(preparing&&previousHistoryWorkStage==='acquisition'){
+  rosters=await registered(db,today,until);
+  if(rosters.length){early=await expected(db,deps);if(stops(early))return history(early);}
+ }
  const supplemental=await missing(db,event,{now});if(supplemental&&(supplemental.externalRequests||supplemental.status==='cooldown'||supplemental.saveMayHaveSucceeded||['roster-saved','roster-reconciled'].includes(supplemental.status)))return acquisition(supplemental);
- const rosters=await registered(db,today,until);
+ rosters??=await registered(db,today,until);
  const officialFirst=!preparing&&(cardCompletionFirst||preferOfficialCards(rosters,now()));
  if(officialFirst&&!card)card=await cards(db,cardInput,deps);
  if(stops(card))return acquisition(card);
  // Complete the existing acquisition/history alternation for saved rosters
  // before an unrelated calendar request can consume the shared source turn.
  // On the following history-stage invocation, program recovery keeps priority.
- let early=null;
- if(previousHistoryWorkStage==='acquisition'&&rosters.length&&!officialFirst){
+ if(!early&&previousHistoryWorkStage==='acquisition'&&rosters.length&&!officialFirst){
   early=await expected(db,deps);if(early.externalRequests||early.attempted||early.status==='cooldown')return history(early);
  }
  const recovery=await programs(db,{now});

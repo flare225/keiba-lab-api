@@ -186,3 +186,27 @@ test('one published page retains exact sibling card URLs without shortening wait
   assert.equal(sql.prepare("SELECT COUNT(*) n FROM lab_expected_card_discovery WHERE snapshot_id LIKE '%京都%'").get().n,0);sql.close();
  }
 });
+
+test('reviewed official profiles reach existing natural history writer and re-evaluation without introduction rediscovery',async()=>{
+ const {db,sql}=await fixture();
+ const time=Date.parse('2026-10-29T00:05:00Z'),s={snapshotId:'reviewed-roster',date:'2026-11-01',venue:'東京',raceNo:11,raceName:'天皇賞（秋）',names:['サクラファレル'],ages:{'サクラファレル':4}};
+ sql.exec("CREATE TABLE lab_provisional_queue_v1(race_key TEXT PRIMARY KEY,status TEXT,next_at INTEGER,error TEXT);INSERT INTO lab_provisional_queue_v1 VALUES('2026-11-01:東京:11','verified',0,NULL)");
+ const context=await expectedHistoryContext(db,s);assert.match(context.runners[0].profile_url,/pw01dud002022104094/);assert.equal(context.runners[0].horse_no,null);
+ let requests=0;
+ const body='<h1>サクラファレルSakura Farrel（JPN）</h1><dl><dt>生年月日</dt><dd>2022年4月7日</dd></dl><table>'+row('2026年8月23日')+row('2026年5月9日')+row('2026年2月1日')+'</table>';
+ const deps={sources:[s],now:()=>time,wait:async()=>{},fetcher:async(url,options)=>{requests++;assert.equal(url,'https://www.jra.go.jp/JRADB/accessU.html');assert.equal(new URLSearchParams(options.body).get('CNAME'),'pw01dud002022104094/EE');return new Response(body,{headers:{'content-type':'text/html;charset=utf-8'}});}};
+ const r=await collectUpcomingExpectedHistory(db,deps);assert.equal(r.stage,'expected-runner-prior-history');assert.equal(r.addedRows,3);assert.equal(r.provisionalEvaluationQueued,1);assert.equal(requests,1);
+ assert.equal(sql.prepare("SELECT COUNT(*) n FROM jra_past_performances WHERE horse_name='サクラファレル'").get().n,3);
+ assert.equal(sql.prepare("SELECT COUNT(*) n FROM jra_races WHERE race_date='2026-11-01'").get().n,0);
+ const again=await collectHistoryBatch(db,{historyLimit:3},{...deps,context});assert.equal(again.status,'complete');assert.equal(requests,1);sql.close();
+});
+
+test('reviewed identities preserve shared cooldown and reject wrong profile before any history save',async()=>{
+ const {db,sql}=await fixture(),time=Date.parse('2026-10-29T00:05:00Z');
+ const s={snapshotId:'reviewed-roster',date:'2026-11-01',venue:'東京',raceNo:11,raceName:'天皇賞（秋）',names:['サクラファレル'],ages:{'サクラファレル':4}},context=await expectedHistoryContext(db,s);
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=?').run(time+3600000);
+ const stopped=await collectHistoryBatch(db,{historyLimit:3},{context,now:()=>time,fetcher:()=>assert.fail('must not fetch')});assert.equal(stopped.status,'cooldown');assert.equal(stopped.externalRequests,0);
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=0').run();
+ const bad=await collectHistoryBatch(db,{historyLimit:3},{context,now:()=>time,fetcher:async()=>new Response('<h1>別の馬</h1><p>サクラファレル 生年月日 2022年4月7日</p><table>'+row('2026年8月23日')+'</table>',{headers:{'content-type':'text/html;charset=utf-8'}})});
+ assert.equal(bad.results[0].status,'failed');assert.match(bad.results[0].error,/見出し馬名/);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_past_performances').get().n,0);sql.close();
+});

@@ -1,6 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';
 import {prepareReviewedRoster} from '../src/expected-roster-seeds.js';
-import {UPCOMING_REVIEWED_ROSTERS} from '../src/upcoming-reviewed-rosters.js';
+import {UPCOMING_REVIEWED_ROSTERS as ALL_REVIEWED} from '../src/upcoming-reviewed-rosters.js';
+const UPCOMING_REVIEWED_ROSTERS=ALL_REVIEWED.filter(s=>Date.parse(s.record.observedAt)<=Date.parse('2026-10-26T08:00:00Z'));
 import {scheduledProvisionalPrediction} from '../src/provisional-prediction-queue.js';
 import {buildProvisionalPrediction} from '../src/provisional-expected-prediction.js';
 import {readProvisionalPrediction} from '../src/provisional-prediction-snapshots.js';
@@ -26,4 +27,17 @@ test('official-program debut can persist all-held evaluation without inventing s
  const result=await scheduledProvisionalPrediction(db,now,{prepareRoster:async()=>({saved:0}),sources:async()=>[source],repair:async()=>({repaired:0}),build:async()=>buildProvisionalPrediction(source,conditions,new Map(),now)});
  assert.equal(result.saved,1);assert.equal(result.evaluationStatus,'roster-saved-evaluation-held');const read=await readProvisionalPrediction(db,source);assert.equal(read.snapshotSha256,result.snapshotSha256);assert.equal(read.snapshot.scoredRunners,0);assert.ok(read.snapshot.runners.every(x=>x.rank===null&&x.score===null&&x.mark===null));assert.equal(read.snapshot.guardrails.locked,false);assert.equal(read.snapshot.guardrails.eligibleForLearning,false);assert.equal(read.snapshot.preparation.entriesConfirmed,false);
  assert.equal(buildProvisionalPrediction(source,{...conditions,source_url:'https://other.invalid/'},new Map(),now).race.raceType,undefined);sql.close();
+});
+test('natural writer appends expanded real roster and independently reads seventeen without replacing original ten',async()=>{
+ const {db,sql}=fixture(),stamp=Date.parse('2026-10-28T12:00:00Z');
+ const seeds=ALL_REVIEWED.filter(s=>s.record.date==='2026-11-01');
+ const first=await prepareReviewedRoster(db,'2026-11-01','2026-11-01',stamp,seeds);
+ const old=sql.prepare('SELECT * FROM lab_expected_roster_registry WHERE snapshot_id=?').get(first.snapshotId);
+ const expanded=await prepareReviewedRoster(db,'2026-11-01','2026-11-01',stamp+3600000,seeds);
+ assert.equal(first.storedRunners,10);assert.equal(expanded.storedRunners,17);assert.equal(expanded.externalRequests,0);
+ const response=await app.fetch(new Request('https://test/v1/lab/expected-runners?date=2026-11-01&venue='+encodeURIComponent('東京')+'&race_no=11'),{DB:db},{}),read=await response.json();
+ assert.equal(response.status,200);assert.equal(read.runners.length,17);assert.equal(read.source.snapshotId,'registered:'+expanded.snapshotId);
+ const stored=sql.prepare('SELECT record_json FROM lab_expected_roster_registry WHERE snapshot_id=?').get(expanded.snapshotId);assert.equal(await sha256(stored.record_json),expanded.snapshotId);
+ assert.deepEqual(sql.prepare('SELECT * FROM lab_expected_roster_registry WHERE snapshot_id=?').get(first.snapshotId),old);
+ assert.equal((await prepareReviewedRoster(db,'2026-11-01','2026-11-01',stamp+7200000,seeds)).saved,0);sql.close();
 });

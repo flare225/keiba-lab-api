@@ -2,6 +2,16 @@ import test from 'node:test';import assert from 'node:assert/strict';import {Dat
 import {dispatchLiveSources,collectLiveHistory,preferOfficialCards,cardCompletionPriorities} from '../src/live-source-dispatch.js';
 function fixture(){const sql=new DatabaseSync(':memory:');const db={prepare(q){const w=(a=[])=>({bind(...b){return w(b)},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}},async run(){const r=sql.prepare(q).run(...a);return{meta:{changes:r.changes}}}});return w()}};return{sql,db}}
 const start=Date.parse('2026-10-19T00:12:00Z');
+test('after acquisition an existing roster gets its history turn before unrelated calendar recovery',async()=>{
+ const stamp=Date.parse('2026-10-28T00:54:49Z'),calls=[];
+ const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
+ const r=await collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,previousHistoryWorkStage:'acquisition',cardCompletionFirst:true,cards:async()=>({status:'awaiting-official-publication',externalRequests:0}),missing:async()=>({status:'source-not-due',externalRequests:0}),registered:async()=>[{date:'2026-11-01'}],expected:async()=>{calls.push('saved-roster-history');return{status:'collected',attempted:1,externalRequests:1}},programs:async()=>{calls.push('unrelated-calendar');return{status:'source-unconfirmed',externalRequests:1,error:'JRA program HTTP 403'}}});
+ assert.deepEqual(calls,['saved-roster-history']);assert.equal(r.historyWorkStage,'history');assert.equal(r.externalRequests,1);
+});
+test('calendar recovery retains its turn after a history batch while acquisition cooldown cannot fall through',async()=>{
+ const stamp=Date.parse('2026-10-28T00:54:49Z');
+ for(const stage of ['history','acquisition']){const calls=[];const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};const r=await collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,previousHistoryWorkStage:stage,cardCompletionFirst:true,cards:async()=>({status:'awaiting-official-publication',externalRequests:0}),missing:async()=>null,registered:async()=>[{date:'2026-11-01'}],expected:async()=>{calls.push('history');return{status:'cooldown',externalRequests:0}},programs:async()=>{calls.push('program');return{status:'verified-published-program',externalRequests:1}}});assert.deepEqual(calls,stage==='history'?['program']:['history']);assert.equal(r.externalRequests,stage==='history'?1:0);}
+});
 test('before publication card discovery yields to program recovery and existing roster history preparation',async()=>{
  const stamp=Date.parse('2026-10-26T00:00:00Z');
  for(const stage of ['program','program-cached','history']){

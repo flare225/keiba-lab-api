@@ -53,11 +53,17 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
  const officialFirst=!preparing&&(cardCompletionFirst||preferOfficialCards(rosters,now()));
  if(officialFirst&&!card)card=await cards(db,cardInput,deps);
  if(stops(card))return acquisition(card);
+ // Complete the existing acquisition/history alternation for saved rosters
+ // before an unrelated calendar request can consume the shared source turn.
+ // On the following history-stage invocation, program recovery keeps priority.
+ let early=null;
+ if(previousHistoryWorkStage==='acquisition'&&rosters.length&&!officialFirst){
+  early=await expected(db,deps);if(early.externalRequests||early.attempted||early.status==='cooldown')return history(early);
+ }
  const recovery=await programs(db,{now});
  const programReadback=Number(recovery?.programRowsSaved)>0||Number(recovery?.readbackVerified)>0;
  if(recovery&&(recovery.externalRequests||recovery.status==='cooldown'||recovery.saveMayHaveSucceeded||programReadback))return acquisition(programReadback?{...recovery,attempted:true}:recovery);
- let early=null;
- if(rosters.length&&!officialFirst){early=await expected(db,deps);if(early.externalRequests||early.attempted||early.status==='cooldown')return history(early);}
+ if(!early&&rosters.length&&!officialFirst){early=await expected(db,deps);if(early.externalRequests||early.attempted||early.status==='cooldown')return history(early);}
 
  const remainingCard=card||await cards(db,cardInput,deps);
  if(stops(remainingCard))return acquisition(remainingCard);

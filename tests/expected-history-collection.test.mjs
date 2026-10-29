@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';
 import {ensureCollectionTables,collectHistoryBatch} from '../src/history-collection-v3.37.0.js';
-import {expectedHistoryContext,expectedHistoryStatus,collectUpcomingExpectedHistory,scheduledWeekendHistory,upcomingExpectedSources} from '../src/expected-history-collection-v3.46.0.js';
+import {withStoredRosterDiscovery,expectedHistoryContext,expectedHistoryStatus,collectUpcomingExpectedHistory,scheduledWeekendHistory,upcomingExpectedSources} from '../src/expected-history-collection-v3.46.0.js';
 import app from '../src/index-v3.46.0.js';
 import {MAIN_EXPECTED_SOURCE,EXPECTED_SOURCES,expectedAge,historyForExpected} from '../src/expected-runner-preview-v3.30.0.js';
 import {discoverExpectedProfiles} from '../src/expected-profile-discovery-v3.47.0.js';
@@ -41,6 +41,20 @@ test('official roster discovery 403 stops the shared source for an hour',async()
 const stamp=Date.parse('2026-10-07T00:00:00Z');
 const source={snapshotId:'test-v1',date:'2026-10-10',venue:'東京',raceNo:11,raceName:'試験',age:2,names:['HorseA','HorseB']};
 const profile='https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024100001/AA';
+test('unconfigured saved roster follows exact-day stored program into existing card discovery',async()=>{
+ const {db,sql}=await fixture();sql.exec('CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,source_url TEXT)');
+ const calendar='https://www.jra.go.jp/keiba/calendar2026/2026/10/1010.html';
+ sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?)').run(source.date,source.venue,source.raceNo,calendar);
+ const s=await withStoredRosterDiscovery(db,source);assert.equal(s.officialRosterDiscoveryUrl,calendar);
+ const card='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604031120261010/9E';
+ let calls=0;const r=await discoverExpectedCard(db,s,{now:()=>stamp,fetcher:async url=>{calls++;assert.equal(url,calendar);return new Response('<a href="'+card+'">card</a>',{headers:{'content-type':'text/html;charset=utf-8'}})}});
+ assert.equal(r.status,'official-card-link-found');assert.equal(calls,1);assert.equal(r.officialCardsCreated,false);
+ for(const bad of [calendar.replace('1010.html','1024.html'),'https://own.netkeiba.com/race/shutuba.html',card.replace('20261010','20261024')]){
+  sql.prepare('UPDATE jra_race_program SET source_url=?').run(bad);
+  assert.equal((await withStoredRosterDiscovery(db,source)).officialRosterDiscoveryUrl,undefined);
+ }
+ sql.close();
+});
 async function fixture(){const sql=new DatabaseSync(':memory:');sql.exec("CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,race_name TEXT,source_url TEXT,runner_count INTEGER);CREATE TABLE jra_runners(race_key TEXT,horse_no INTEGER,horse_name TEXT,age INTEGER);INSERT INTO jra_races VALUES('prior','2026-09-01','東京',5,'前走','https://www.jra.go.jp/card',2);INSERT INTO jra_runners VALUES('prior',1,'HorseA',2),('prior',2,'HorseB',2);");const db={prepare(q){const wrap=(args=[])=>({bind(...a){return wrap(a)},async first(){return sql.prepare(q).get(...args)||null},async all(){return{results:sql.prepare(q).all(...args)}},async run(){const r=sql.prepare(q).run(...args);return{meta:{changes:Number(r.changes)}}}});return wrap()},async batch(ss){const out=[];for(const s of ss)out.push(await s.run());return out;}};await ensureCollectionTables(db);sql.prepare('INSERT INTO lab_history_profile_links VALUES(?,?,?,?,?,?)').run('prior','HorseA',2,profile,'https://www.jra.go.jp/card',stamp-100000);return{db,sql};}
 const row=date=>'<tr>'+[date,'東京','過去レース','芝1600','良','12','2','1','騎手','55','450(+0)','1:34.0','111','勝馬'].map(x=>'<td>'+x+'</td>').join('')+'</tr>';
 const html='<h1>HorseA</h1><table>'+row('2026年10月10日')+row('2026年9月1日')+row('2025年9月1日')+'</table>';

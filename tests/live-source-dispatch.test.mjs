@@ -184,3 +184,18 @@ test('actionable saved history keeps its turn after official publication when ca
  }
  assert.deepEqual(seen,['saved-history','roster','saved-history','roster']);
 });
+
+test('unresolved saved profiles retain the history turn without starving the next acquisition turn',async()=>{
+ const stamp=Date.parse('2026-10-29T00:31:00Z'),seen=[];
+ const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
+ const waiting=[{raceKey:'2026-10-31:東京:11',missingProfileLinks:['fixture'],pendingHorses:1}];
+ const deps={now:()=>stamp,cardCompletionFirst:true,
+  cards:async()=>({status:'discovery-not-due',externalRequests:0}),registered:async()=>[{date:'2026-10-31'}],
+  expected:async()=>{seen.push('history');return{ok:true,status:'awaiting-source-readiness',waiting,externalRequests:0}},
+  missing:async()=>{seen.push('roster');return{status:'publication-unconfirmed',externalRequests:1}},programs:()=>assert.fail('no unrelated work')};
+ const first=await collectLiveHistory(db,{scheduledTime:stamp},{...deps,previousHistoryWorkStage:'acquisition'});
+ assert.equal(first.blockedStage,'profile-link-discovery');assert.deepEqual(first.waiting,waiting);
+ assert.equal(first.externalRequests,0);assert.equal(first.historyWorkStage,'history');assert.deepEqual(seen,['history']);
+ const second=await collectLiveHistory(db,{scheduledTime:stamp},{...deps,previousHistoryWorkStage:first.historyWorkStage});
+ assert.equal(second.historyWorkStage,'acquisition');assert.deepEqual(seen,['history','roster']);
+});

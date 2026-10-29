@@ -17,6 +17,7 @@ export async function runSourceCoordinator(event,env,{trigger='scheduled',now=Da
   let r;try{r=JSON.parse(prior?.result_json||'null')}catch{}
   previousHistoryWorkStage=['acquisition','history'].includes(r?.historyWorkStage)?r.historyWorkStage:null;
   previousCardSelection=['card','discovery'].includes(r?.cardSelection?.lane)?r.cardSelection:(['confirmed-predraw-saved','official-card-saved'].includes(r?.status)?{lane:'card',legacy:true}:['official-card-index-found','official-card-link-found'].includes(r?.status)?{lane:'discovery',legacy:true}:null);
+  if(r?.card?.kind==='predraw'||r?.status==='confirmed-predraw-saved')previousCardSelection={...previousCardSelection,savedPredrawHistoryPending:true};
  }
  const cron=event.cron||'manual',scheduledTime=event.scheduledTime??now(),runId=trigger==='scheduled'?'source-dispatch:'+cron+':'+scheduledTime:'manual-dispatch:'+crypto.randomUUID();
  return runPipelineJob(env.DB,job,trigger,async()=>{const result=await jobs[job]({previousCardSelection,previousHistoryWorkStage});return{...result,...(job==='history'&&!result.historyWorkStage&&previousHistoryWorkStage?{historyWorkStage:previousHistoryWorkStage}:{}),...(job==='history'&&!result.cardSelection&&previousCardSelection?{cardSelection:previousCardSelection}:{}),dispatch:{job,cron,configuredSourceCron:SOURCE_CRON,oneSourceJobPerInvocation:true,selection:'oldest-job-execution'}}},{scheduledTime,now,runId});

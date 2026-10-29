@@ -2,6 +2,22 @@ import test from 'node:test';import assert from 'node:assert/strict';import {Dat
 import {dispatchLiveSources,collectLiveHistory,preferOfficialCards,cardCompletionPriorities} from '../src/live-source-dispatch.js';
 function fixture(){const sql=new DatabaseSync(':memory:');const db={prepare(q){const w=(a=[])=>({bind(...b){return w(b)},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}},async run(){const r=sql.prepare(q).run(...a);return{meta:{changes:r.changes}}}});return w()}};return{sql,db}}
 const start=Date.parse('2026-10-19T00:12:00Z');
+test('an exhausted predraw handoff falls back once and does not repeat the known-profile scan next turn',async()=>{
+ let scans=0,cards=0;const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
+ const deps={now:()=>start,cardCompletionFirst:true,priorityExpected:async()=>{scans++;return{status:'idle',externalRequests:0}},cards:async()=>{cards++;return{status:'official-card-link-found',externalRequests:1}}};
+ let selection={lane:'card',savedPredrawHistoryPending:true};
+ for(let i=0;i<2;i++){const r=await collectLiveHistory(db,{scheduledTime:start+i*60000},{...deps,previousHistoryWorkStage:'acquisition',previousCardSelection:selection});selection=r.cardSelection||selection;}
+ assert.equal(scans,1);assert.equal(cards,2);assert.equal(selection.savedPredrawHistoryPending,false);
+});
+test('pending predraw history cannot bypass shared cooldown or a collector safety stop',async()=>{
+ const stamp=start,selection={lane:'card',savedPredrawHistoryPending:true};
+ for(const blocked of [true,false]){
+  let called=0;const db={prepare(){return{async first(){return{next_batch_at:blocked?stamp+3600000:0,locked_until:0}}}}};
+  const r=await collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',previousCardSelection:selection,
+   priorityExpected:async(_,deps)=>{called++;assert.equal(deps.knownProfilesOnly,true);return{status:'paused',externalRequests:0}},cards:()=>assert.fail('no fallback on safety stop')});
+  assert.equal(r.status,blocked?'cooldown':'paused');assert.equal(called,blocked?0:1);assert.equal(r.cardSelection,undefined);
+ }
+});
 test('after acquisition an existing roster gets its history turn before unrelated calendar recovery',async()=>{
  const stamp=Date.parse('2026-10-28T00:54:49Z'),calls=[];
  const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};

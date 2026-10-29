@@ -222,7 +222,9 @@ export async function discoverSharedSelectedCard(db,source,delivery={}){
  const result=await runSharedPageStep(db,{scope:source.date,races:inventory},options);
  const actual=inventory.find(r=>key(r)===(result.card?.raceKey||result.dependentRaces?.[0]))||inventory.find(r=>key(r)===key(source));
  if(!actual)throw Error('Shared page result has no due race identity');
- const attempted=!!(result.externalRequests||result.reusedBody||result.bodyStored||result.waitingRaces);
+ // Waiting inventory is not a source attempt. It must not suppress the
+ // existing saved-history fallback after every card is preserved or not due.
+ const attempted=!!(result.externalRequests||result.reusedBody||result.bodyStored);
  const completionPriorityApplied=(options.completionPriorityRaceKeys||[]).includes(key(actual))&&Date.parse(actual.startAt)<=stamp+300000;
  return{...result,attempted,ok:!result.error,target:{date:actual.date,venue:actual.venue,raceNo:actual.raceNo},officialCardsCreated:!!result.formalCardSaved,...(attempted?{cardSelection:{...delivery.previousCardSelection,lane:metaFromRacecardUrl(result.sourceUrl||actual.cardUrl||actual.rootUrl)?'card':'discovery',reason:completionPriorityApplied?'shared-page-completion-priority':'shared-page-deadline',target:key(actual),eligibleSharedRaces:inventory.length,completionPriorityApplied,completionPriorityRaceKeys:options.completionPriorityRaceKeys||[]}}:{})};
 }

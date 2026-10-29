@@ -1,4 +1,22 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {scheduledProvisionalPrediction} from '../src/provisional-prediction-queue.js';import {markProvisionalHistoryUpdated,readProvisionalPrediction} from '../src/provisional-prediction-snapshots.js';
+test('the observed predraw identities feed the real hourly builder, immutable writer and independent SHA readback',async()=>{
+ const {readFile}=await import('node:fs/promises'),e=JSON.parse(await readFile(new URL('./fixtures/kyoto1-predraw-handoff-20261029.json',import.meta.url),'utf8'));
+ const {fixtureDatabase}=await import('./helpers/shared-page-fixture.mjs'),{db,sql}=await fixtureDatabase();
+ const {sha256}=await import('../src/card-evidence.js');
+ sql.exec('CREATE TABLE lab_confirmed_predraw_rosters(race_key TEXT PRIMARY KEY,source_url TEXT,source_sha256 TEXT,runners_json TEXT,checked_at TEXT);CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,surface TEXT,distance INTEGER,source_url TEXT,race_label TEXT)');
+ sql.prepare('INSERT INTO lab_confirmed_predraw_rosters VALUES(?,?,?,?,?)').run(e.raceKey,e.sourceUrl,e.sourceSha256,JSON.stringify(e.runners),e.observedAt);
+ sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?,?,?)').run('2026-10-31','京都',1,'ダート',1400,'https://www.jra.go.jp/keiba/calendar2026/2026/10/1031.html','2歳未勝利 ダ1400m');
+ // Synthetic historical performances; identities/profile links above are the
+ // independently verified production source set, not fabricated race entries.
+ for(const date of ['2026-07-25','2026-08-22','2026-09-20'])sql.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,surface,distance,finish_position,field_size,track_condition,source_url,fetched_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(e.runners[14].horse_name,date,'京都','隔離検証','ダート',1400,2,12,'良',e.runners[14].profile_url,e.observedAt);
+ const stamp=Date.parse('2026-10-29T14:00:00Z'),result=await scheduledProvisionalPrediction(db,stamp,{prepareRoster:async()=>({status:'no-reviewed-preparation'})});
+ assert.equal(result.status,'verified');assert.equal(result.saved,1);assert.equal(result.basis,'confirmed-predraw');
+ const source={date:'2026-10-31',venue:'京都',raceNo:1,basis:'confirmed-predraw',sourceSha256:e.sourceSha256};
+ const read=await readProvisionalPrediction(db,source,{exact:true});assert.equal(read.snapshotSha256,result.snapshotSha256);assert.equal(read.snapshotSha256,await sha256(JSON.stringify(read.snapshot)));
+ assert.equal(read.snapshot.runnerCount,16);assert.ok(read.snapshot.scoredRunners>0);assert.ok(read.snapshot.scoredRunners<16);assert.equal(read.snapshot.guardrails.locked,false);assert.equal(read.snapshot.guardrails.eligibleForLearning,false);
+ assert.deepEqual(read.snapshot.runners.map(r=>r.horseName).sort(),e.runners.map(r=>r.horse_name).sort());
+ const repeat=await scheduledProvisionalPrediction(db,stamp+3600000,{prepareRoster:async()=>({})});assert.equal(repeat.status,'no-due-registered-roster');assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,1);sql.close();
+});
 test('pre-deploy collected history catches up once at the existing daily deadline and preserves original snapshot',async()=>{
  const {db,sql}=fixture();const source={...sources[1],snapshotId:'registered:test'};let score=80,builds=0;
  const one={sources:async()=>[source],repair:async()=>({repaired:0}),build:async()=>{builds++;return{ok:true,status:'provisional-expected-roster',race:source,runnerCount:1,scoredRunners:1,histories:[],runners:[{horseName:'test',horseNo:null,frameNo:null,rank:1,score,mark:'◎'}],guardrails:{humanMarksUsed:false,officialCard:false,locked:false,eligibleForLearning:false}};}};

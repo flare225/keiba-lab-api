@@ -120,3 +120,9 @@ PR #262でmainへ反映済み。2026-10-25の更新はユーザーの継続記�
 ## 2026-10-29 評価jobの未表示と保存失敗を混同しない
 - pipeline-statusはprovisional-predictionを返さない。jobが一覧にないだけで自然評価の未実行/失敗と判断しない。対象を絞った既存保存版GETを使い、savedAt/本文SHA/全馬内容を確認する。今回は23:00:07.692 JSTの京都1R16頭・14成立2保留保存版を独立検証済み。
 - DB評価保存・クライアントSHA/renderer全行一致・実ブラウザの画面確認を区別する。ブラウザ実行不可をrenderer一致で隠さない。新保存版/失敗/条件変更がなければ同じ成功を再監査しない。根拠はwork-log-2026-10-27.md 23:04節。
+
+
+## 2026-10-30 優先名簿の探索を既知profileループの後ろへ固定しない
+- dispatcher到達だけで取得候補の公平性を保証したとしない。collector内で全既知profileのattempted returnが先行すると、優先registered名簿の未解決profile探索は到達不能になる。
+- 実探索後の種別を既存history receiptで保持し、次機会は既知profileを先行させる。cooldown/カード取得で種別を失わず、新clock/取得枠を作らない。knownProfilesOnlyは探索禁止を維持。
+- URLなしを失敗/競走歴なしに変換しない。履歴充足済み/不足profileなしは探索候補にせず、完了分を再取得しない。回帰証拠はwork-log-2026-10-27.md 10/30 06:27節。

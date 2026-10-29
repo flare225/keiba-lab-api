@@ -63,3 +63,18 @@ test('explicit failure read retrieves saved evidence hidden by cooldown with one
  count=0;assert.equal((await app.fetch(new Request('https://test/v1/lab/pipeline-status?failure_job=invalid'),{DB:observed},{})).status,400);assert.equal(count,0);
  for(let i=0;i<32;i++)put.run('new'+i,'history','scheduled',start+3+i,'cooldown','{}');const {readPipelineFailure}=await import('../src/pipeline-runs-v3.40.0.js');assert.equal((await readPipelineFailure(db,'history')).available,false);assert.equal((await readPipelineFailure(db,'history')).scannedRuns,32);sql.close();
 });
+
+
+test('expected discovery fairness survives acquisition and safety stops in the existing history receipt',async()=>{
+ const {db,sql}=fixture();let stamp=start;const seen=[];
+ const jobs={archive:async()=>({status:'idle'}),results:async()=>({status:'idle'}),history:async context=>{
+  seen.push(context.previousExpectedHistoryWorkKind);
+  if(seen.length===1)return{status:'failed',externalRequests:1,expectedHistoryWorkKind:'discovery'};
+  if(seen.length===2)return{status:'cooldown',externalRequests:0};
+  if(seen.length===3)return{status:'page-parsed',historyWorkStage:'acquisition',externalRequests:0};
+  return{status:'collected',externalRequests:1,expectedHistoryWorkKind:'known'};
+ }};
+ for(let i=0;i<15;i++){await runSourceCoordinator({cron:SOURCE_CRON,scheduledTime:stamp},{DB:db},{now:()=>stamp,jobs});stamp+=180000;}
+ assert.deepEqual(seen,[null,'discovery','discovery','discovery','known']);
+ assert.equal(sql.prepare("SELECT COUNT(*) n FROM lab_bounded_pipeline_runs WHERE job='results'").get().n,5);sql.close();
+});

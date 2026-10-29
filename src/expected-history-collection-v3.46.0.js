@@ -59,38 +59,46 @@ export async function expectedHistoryStatus(db,now=Date.now(),sources=EXPECTED_S
 }
 export async function collectUpcomingExpectedHistory(db,deps={}){
  const now=deps.now||Date.now,discoverySources=[],waiting=[];
+ const discoverSource=async original=>{
+  const source=await withStoredRosterDiscovery(db,original);
+  const card=await discoverExpectedCard(db,source,deps);
+  if(card.externalRequests||card.status==='cooldown')return {...card,snapshotId:source.snapshotId,...(card.externalRequests?{expectedHistoryWorkKind:'discovery'}:{})};
+  const discovery=await discoverExpectedProfiles(db,source,deps);
+  if(discovery.externalRequests||discovery.status==='cooldown')return {...discovery,snapshotId:source.snapshotId,...(discovery.externalRequests?{expectedHistoryWorkKind:'discovery'}:{})};
+  waiting.push({snapshotId:source.snapshotId,cardStatus:card.status,profileStatus:discovery.status});
+  return null;
+ };
  const markReevaluation=async(source,result)=>result.results?.some(item=>Number(item.savedRows)>0)?markProvisionalHistoryUpdated(db,source,now()):0;
  const stamp=now(),day=jstDay(stamp),until=new Date(Date.parse(day+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);
  const registered=deps.sources?[]:await storedExpectedSources(db,day,until);
  const fixed=upcomingExpectedSources(stamp,deps.sources||[...registered,...EXPECTED_SOURCES.filter(s=>!registered.some(r=>r.date===s.date&&r.venue===s.venue&&r.raceNo===s.raceNo))]);
  const discovered=deps.sources?null:await (deps.nextPredrawSource||nextConfirmedPredrawSource)(db,now());
  const sources=discovered&&!fixed.some(s=>s.date===discovered.date&&s.venue===discovered.venue&&s.raceNo===discovered.raceNo)?[...fixed,discovered]:fixed;
- // Use verified cached profiles across all target races before requesting a
- // discovery page. A failing discovery must not repeatedly starve known horses.
+ // Registered priority rosters with unresolved profiles get a discovery turn
+ // before later known profiles. After an actual discovery request, the existing
+ // coordinator receipt gives known profiles the next turn, including after a
+ // failed discovery/cooldown. No new timer or source allowance is introduced.
  for(const source of sources){
   const formal=await rows(db,'SELECT r.race_key FROM jra_races r WHERE r.race_date=? AND r.venue=? AND r.race_no=? AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key)',[source.date,source.venue,source.raceNo]);
   if(formal.length){
    if(deps.knownProfilesOnly)continue;
-   if(source.priority===0||source.snapshotId?.startsWith('registered:')){const r=await collectHistoryBatch(db,{date:source.date,venue:source.venue,raceNo:source.raceNo,historyLimit:3,batchSize:1},deps),provisionalEvaluationQueued=await markReevaluation(source,r);if(r.attempted||r.status==='cooldown')return {...r,stage:'main-race-official-history',provisionalEvaluationQueued};waiting.push({raceKey:source.raceKey,status:r.status,pendingHorses:r.before?.pendingHorses,provisionalEvaluationQueued});}
+   if(source.priority===0||source.snapshotId?.startsWith('registered:')){const r=await collectHistoryBatch(db,{date:source.date,venue:source.venue,raceNo:source.raceNo,historyLimit:3,batchSize:1},deps),provisionalEvaluationQueued=await markReevaluation(source,r);if(r.attempted||r.status==='cooldown')return {...r,stage:'main-race-official-history',...(r.attempted||r.externalRequests?{expectedHistoryWorkKind:'known'}:{}),provisionalEvaluationQueued};waiting.push({raceKey:source.raceKey,status:r.status,pendingHorses:r.before?.pendingHorses,provisionalEvaluationQueued});}
    continue;
   }
   const context=await expectedHistoryContext(db,source,stamp);
   if(deps.knownProfilesOnly&&!context.runners.some(r=>r.profile_url))continue;
-  if(context.rosterBasis!=='confirmed-predraw')discoverySources.push(source);
   const r=await collectHistoryBatch(db,{historyLimit:3,batchSize:1},{...deps,context});
   const provisionalEvaluationQueued=await markReevaluation(source,r);
-  if(r.attempted||r.status==='cooldown')return {...r,stage:'expected-runner-prior-history',snapshotId:source.snapshotId,authoritativeForCard:false,provisionalEvaluationQueued};
+  if(r.attempted||r.status==='cooldown')return {...r,stage:'expected-runner-prior-history',...(r.attempted||r.externalRequests?{expectedHistoryWorkKind:'known'}:{}),snapshotId:source.snapshotId,authoritativeForCard:false,provisionalEvaluationQueued};
   waiting.push({raceKey:source.raceKey||`${source.date}:${source.venue}:${source.raceNo}`,snapshotId:source.snapshotId,status:r.status,pendingHorses:r.before?.pendingHorses,missingProfileLinks:r.before?.runners.filter(h=>h.storedRows<3&&!h.profileUrl).map(h=>h.horseName),provisionalEvaluationQueued});
+  if(context.rosterBasis!=='confirmed-predraw'&&waiting.at(-1).missingProfileLinks?.length)discoverySources.push(source);
+  if(!deps.knownProfilesOnly&&deps.previousExpectedHistoryWorkKind!=='discovery'&&context.rosterBasis!=='confirmed-predraw'&&(source.priority===0||source.snapshotId?.startsWith('registered:'))&&waiting.at(-1).missingProfileLinks?.length){
+   const discovery=await discoverSource(source);if(discovery)return discovery;
+   discoverySources.splice(discoverySources.indexOf(source),1);
+  }
  }
  if(deps.knownProfilesOnly)return {ok:true,status:waiting.length?'awaiting-source-readiness':'idle',waiting,externalRequests:0};
- for(const original of discoverySources){
-  const source=await withStoredRosterDiscovery(db,original);
-  const card=await discoverExpectedCard(db,source,deps);
-  if(card.externalRequests||card.status==='cooldown')return card;
-  const discovery=await discoverExpectedProfiles(db,source,deps);
-  if(discovery.externalRequests||discovery.status==='cooldown')return discovery;
-  waiting.push({snapshotId:source.snapshotId,cardStatus:card.status,profileStatus:discovery.status});
- }
+ for(const original of discoverySources){const discovery=await discoverSource(original);if(discovery)return discovery;}
  return {ok:true,status:waiting.length?'awaiting-source-readiness':'idle',waiting,externalRequests:0};
 }
 export async function scheduledWeekendHistory(db,deps={}){

@@ -55,7 +55,14 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
  let early=null,rosters;
  if(cardCompletionFirst&&previousHistoryWorkStage==='acquisition'){
   rosters=await registered(db,today,until);
-  if(rosters.length){early=await priorityExpected(db,deps);if(stops(early))return history(early);}
+  if(rosters.length){
+   early=await priorityExpected(db,deps);if(stops(early))return history(early);
+   // A saved-roster history turn must retain its unresolved-profile evidence.
+   // Do not spend that turn on a different roster request. Rotate the existing
+   // stage so the following invocation still gives acquisition its fair turn.
+   if(early?.status==='awaiting-source-readiness'&&early.waiting?.some(r=>r.missingProfileLinks?.length))
+    return {...early,historyWorkStage:'history',blockedStage:'profile-link-discovery'};
+  }
  }
  const supplemental=await missing(db,event,{now});if(supplemental&&(supplemental.externalRequests||supplemental.status==='cooldown'||supplemental.saveMayHaveSucceeded||['roster-saved','roster-reconciled'].includes(supplemental.status)))return acquisition(supplemental);
  rosters??=await registered(db,today,until);

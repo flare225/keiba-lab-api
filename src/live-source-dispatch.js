@@ -46,7 +46,11 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
  const cardInput=cardCompletionFirst?{date:today,includeFuture:true,completeDateFirst:true}:{upcomingOnly:true,includeFuture:true};
  const stops=r=>r&&(r.externalRequests||r.attempted||r.saveMayHaveSucceeded||['cooldown','lease-unavailable','shared-gate-unavailable','paused'].includes(r.status));
  let card=cardCompletionFirst?await cards(db,{...cardInput,publicationWindowOnly:true},deps):null;
- if(stops(card))return acquisition(card);
+ // A cached navigation parse is not a saved card or an external source turn.
+ // Let the existing history turn run once, retaining the card result for the
+ // next acquisition turn. Actual fetches, saves and safety stops still return.
+ const cachedNavigation=previousHistoryWorkStage==='acquisition'&&card?.status==='page-parsed'&&card.reusedBody===true&&card.externalRequests===0&&card.officialCardsCreated===false&&!card.saveMayHaveSucceeded&&!card.predictionRebuilt;
+ if(stops(card)&&!cachedNavigation)return acquisition(card);
  const preparing=card?.status==='awaiting-official-publication';if(preparing)card=null;
  // Reuse the existing acquisition/history turn before supplemental work can
  // consume it, including after the publication window opens when no card work

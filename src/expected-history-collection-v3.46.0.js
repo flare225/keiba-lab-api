@@ -9,12 +9,25 @@ import {discoverExpectedCard} from './expected-card-discovery.js';
 import {completeCollectedTraining} from './history-learning-completion.js';
 import {collectionStatus,collectHistoryBatch,officialUrl,jstDay,scheduledCollection} from './history-collection-v3.37.0.js';
 import {markProvisionalHistoryUpdated} from './provisional-prediction-snapshots.js';
+import {metaFromRacecardUrl,metaFromMeetingListUrl} from './index-v1.1.4.js';
 
 // The dated supplementary roster never becomes an official card or a prediction seal.
 // Reuse age-consistent official card links, or independently reviewed individual
 // JRA profiles whose name/birth date are checked again by the bounded collector.
 async function rows(db,query,args=[]){try{return (await db.prepare(query).bind(...args).all()).results||[];}catch(e){if(/no such table/.test(String(e)))return [];throw e;}}
 export function upcomingExpectedSources(now,sources=EXPECTED_SOURCES){const today=jstDay(now),until=new Date(Date.parse(today+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);return sources.filter(s=>s.date>=today&&s.date<=until).sort((a,b)=>(a.priority??100)-(b.priority??100)||a.date.localeCompare(b.date));}
+export async function withStoredRosterDiscovery(db,source){
+ if(source.officialRosterDiscoveryUrl||source.officialHorsePage||source.officialRacePage)return source;
+ const found=await rows(db,'SELECT source_url FROM jra_race_program WHERE race_date=? AND venue=? AND race_no=? LIMIT 1',[source.date,source.venue,source.raceNo]);
+ const value=found[0]?.source_url;if(!value)return source;
+ try{
+  const u=new URL(officialUrl(value)),m=metaFromRacecardUrl(value)||metaFromMeetingListUrl(value);
+  const [year,month,day]=source.date.split('-');
+  const calendar=u.pathname===`/keiba/calendar${year}/${year}/${month}/${month}${day}.html`&&!u.search&&!u.hash;
+  if(!calendar&&!(m?.date===source.date&&m.venue===source.venue&&(!m.raceNo||m.raceNo===source.raceNo)))return source;
+  return {...source,officialRosterDiscoveryUrl:value,...(m?.raceNo?{officialCardUrl:value}:{})};
+ }catch{return source;}
+}
 export async function expectedHistoryContext(db,source,now=Date.now()){
  const confirmed=await readConfirmedPredraw(db,source);
  if(confirmed)return {race:{race_key:'expected:'+source.snapshotId,race_date:source.date,venue:source.venue,race_no:source.raceNo,race_name:source.raceName,source_url:confirmed.source_url,runner_count:confirmed.runners.length},runners:confirmed.runners,rosterBasis:'confirmed-predraw'};
@@ -67,7 +80,8 @@ export async function collectUpcomingExpectedHistory(db,deps={}){
   if(r.attempted||r.status==='cooldown')return {...r,stage:'expected-runner-prior-history',snapshotId:source.snapshotId,authoritativeForCard:false,provisionalEvaluationQueued};
   waiting.push({raceKey:source.raceKey||`${source.date}:${source.venue}:${source.raceNo}`,snapshotId:source.snapshotId,status:r.status,pendingHorses:r.before?.pendingHorses,missingProfileLinks:r.before?.runners.filter(h=>h.storedRows<3&&!h.profileUrl).map(h=>h.horseName),provisionalEvaluationQueued});
  }
- for(const source of discoverySources){
+ for(const original of discoverySources){
+  const source=await withStoredRosterDiscovery(db,original);
   const card=await discoverExpectedCard(db,source,deps);
   if(card.externalRequests||card.status==='cooldown')return card;
   const discovery=await discoverExpectedProfiles(db,source,deps);

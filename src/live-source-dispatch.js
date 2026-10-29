@@ -8,7 +8,7 @@ import {jstDay} from './history-collection-v3.37.0.js';
 import {runSourceCoordinator} from './source-coordinator-v3.40.0.js';
 import {collectArchiveBatch} from './archive-collection-v3.39.0.js';
 import {scheduledRichResult} from './rich-result-collection-v3.39.0.js';
-import {scheduledWeekendHistory} from './expected-history-collection-v3.46.0.js';
+import {scheduledWeekendHistory,collectUpcomingExpectedHistory} from './expected-history-collection-v3.46.0.js';
 import {collectMissingOfficialCard,officialCardWindowOpen} from './missing-official-cards.js';
 import {collectTodayMainHistory} from './today-main-history-priority.js';
 import {collectUpcomingOfficialHistory} from './upcoming-official-history.js';
@@ -26,7 +26,7 @@ export async function scheduledMissingRoster(db,event,{now=Date.now}={}){return 
 
 // Priorities belong inside the history lane, never ahead of the common fair
 // dispatcher: a nonempty card/history queue must not suppress result collection.
-export async function collectLiveHistory(db,event,{now=Date.now,previousCardSelection=null,previousHistoryWorkStage=null,cardCompletionFirst=false,completionPriorityRaceKeys=[],discover=null,cards=collectMissingOfficialCard,main=collectTodayMainHistory,upcoming=collectUpcomingOfficialHistory,expected=scheduledWeekendHistory,details=scheduledPriorDetails,registered=storedExpectedSources,programs=recoverMissingPrograms,missing=scheduledMissingRoster}={}){
+export async function collectLiveHistory(db,event,{now=Date.now,previousCardSelection=null,previousHistoryWorkStage=null,cardCompletionFirst=false,completionPriorityRaceKeys=[],discover=null,cards=collectMissingOfficialCard,main=collectTodayMainHistory,upcoming=collectUpcomingOfficialHistory,expected=scheduledWeekendHistory,details=scheduledPriorDetails,priorityExpected=expected===scheduledWeekendHistory?collectUpcomingExpectedHistory:expected,registered=storedExpectedSources,programs=recoverMissingPrograms,missing=scheduledMissingRoster}={}){
  // Stage history is separate from card-candidate fairness. It is carried in
  // the existing coordinator result, with no new table or periodic clock.
  const acquisition=r=>r&&(r.externalRequests||r.attempted||r.saveMayHaveSucceeded)?{...r,historyWorkStage:'acquisition'}:r;
@@ -49,11 +49,13 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
  if(stops(card))return acquisition(card);
  const preparing=card?.status==='awaiting-official-publication';if(preparing)card=null;
  // Reuse the existing acquisition/history turn before supplemental work can
- // consume it. Published official-card work above retains priority.
+ // consume it, including after the publication window opens when no card work
+ // is due. Only upcoming saved-roster history is tried here, never ordinary
+ // archive history. Published official-card work above retains priority.
  let early=null,rosters;
- if(preparing&&previousHistoryWorkStage==='acquisition'){
+ if(cardCompletionFirst&&previousHistoryWorkStage==='acquisition'){
   rosters=await registered(db,today,until);
-  if(rosters.length){early=await expected(db,deps);if(stops(early))return history(early);}
+  if(rosters.length){early=await priorityExpected(db,deps);if(stops(early))return history(early);}
  }
  const supplemental=await missing(db,event,{now});if(supplemental&&(supplemental.externalRequests||supplemental.status==='cooldown'||supplemental.saveMayHaveSucceeded||['roster-saved','roster-reconciled'].includes(supplemental.status)))return acquisition(supplemental);
  rosters??=await registered(db,today,until);

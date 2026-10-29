@@ -170,3 +170,17 @@ test('idle saved history falls through once and a returned safety stop cannot re
   assert.equal(history,1);assert.equal(missing,status==='idle'?1:0);assert.equal(r.status,status==='idle'?'roster-saved':status);
  }
 });
+
+test('actionable saved history keeps its turn after official publication when card discovery has no source work',async()=>{
+ const stamp=Date.parse('2026-10-29T00:31:00Z'),seen=[];
+ const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
+ let stage='acquisition';
+ for(let i=0;i<4;i++){
+  const r=await collectLiveHistory(db,{scheduledTime:stamp+i*600000},{now:()=>stamp+i*600000,previousHistoryWorkStage:stage,cardCompletionFirst:true,
+   cards:async()=>({status:'discovery-not-due',externalRequests:0}),registered:async()=>[{date:'2026-11-01'}],
+   missing:async()=>{seen.push('roster');return{status:'publication-unconfirmed',externalRequests:1}},
+   expected:async()=>{seen.push('saved-history');return{status:'collected',attempted:1,externalRequests:1}},programs:()=>assert.fail('one source only')});
+  stage=r.historyWorkStage;
+ }
+ assert.deepEqual(seen,['saved-history','roster','saved-history','roster']);
+});

@@ -303,3 +303,52 @@ test('reviewed identities preserve shared cooldown and reject wrong profile befo
  const bad=await collectHistoryBatch(db,{historyLimit:3},{context,now:()=>time,fetcher:async()=>new Response('<h1>別の馬</h1><p>サクラファレル 生年月日 2022年4月7日</p><table>'+row('2026年8月23日')+'</table>',{headers:{'content-type':'text/html;charset=utf-8'}})});
  assert.equal(bad.results[0].status,'failed');assert.match(bad.results[0].error,/見出し馬名/);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_past_performances').get().n,0);sql.close();
 });
+
+
+test('registered unresolved discovery gets a bounded turn ahead of later known profiles, then yields back',async()=>{
+ const {db,sql}=await fixture();
+ const unresolved={...source,snapshotId:'registered:priority-nine',raceNo:9,priority:0,names:['UnknownHorse'],officialHorsePage:'https://www.jra.go.jp/keiba/race/095/horse.html'};
+ const known={...source,snapshotId:'later-known',raceNo:10,names:['HorseA']};
+ let time=stamp;const seen=[];
+ const deps={sources:[unresolved,known],now:()=>time,wait:async()=>{},fetcher:async url=>{seen.push(url);return url.includes('accessU')?new Response(html,{headers:{'content-type':'text/html;charset=utf-8'}}):new Response('',{status:403});}};
+ const first=await collectUpcomingExpectedHistory(db,deps);
+ assert.equal(seen[0],unresolved.officialHorsePage);assert.equal(first.externalRequests,1);assert.equal(first.expectedHistoryWorkKind,'discovery');
+ assert.equal(sql.prepare('SELECT next_batch_at FROM lab_history_collection_budget').get().next_batch_at,time+3600000);
+ const retry=sql.prepare('SELECT next_attempt_at FROM lab_expected_profile_discovery WHERE snapshot_id=?').get(unresolved.snapshotId).next_attempt_at;
+ time+=61000;
+ const blocked=await collectUpcomingExpectedHistory(db,{...deps,previousExpectedHistoryWorkKind:first.expectedHistoryWorkKind});
+ assert.equal(blocked.status,'cooldown');assert.equal(seen.length,1);
+ time=stamp+3600001;
+ const second=await collectUpcomingExpectedHistory(db,{...deps,previousExpectedHistoryWorkKind:first.expectedHistoryWorkKind});
+ assert.equal(second.snapshotId,known.snapshotId);assert.equal(second.expectedHistoryWorkKind,'known');assert.equal(second.addedRows,1);assert.equal(seen.length,2);
+ assert.equal(sql.prepare('SELECT next_attempt_at FROM lab_expected_profile_discovery WHERE snapshot_id=?').get(unresolved.snapshotId).next_attempt_at,retry);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_history_collection_receipts WHERE horse_name=?').get('UnknownHorse').n,0);
+ sql.close();
+});
+
+
+test('real dispatcher discovers a priority registered link then uses its saved profile without guessing or extra requests',async()=>{
+ const {db,sql}=await fixture();
+ const s={...source,snapshotId:'registered:discovery-flow',priority:0,names:['ミカイケツ'],officialHorsePage:'https://www.jra.go.jp/keiba/race/095/horse.html'};
+ let time=stamp;const seen=[];
+ const options={now:()=>time,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',registered:async()=>[s],cards:async()=>({status:'awaiting-source-or-deadline',externalRequests:0}),missing:()=>assert.fail('priority turn consumed'),
+  priorityExpected:(db,deps)=>collectUpcomingExpectedHistory(db,{...deps,sources:[s,{...source,snapshotId:'later-known'}],wait:async()=>{},fetcher:async url=>{
+   seen.push(url);
+   return new Response(url.includes('accessU')?html.replaceAll('HorseA','ミカイケツ'):'<h1>2026年10月10日 試験</h1><h3><a href="'+profile+'">ミカイケツ</a></h3><p>牡2歳 調教師：調教師 父：父 母：母 母の父：母父</p>',{headers:{'content-type':'text/html;charset=utf-8'}});
+  }})};
+ const first=await collectLiveHistory(db,{scheduledTime:time},options);
+ assert.equal(first.status,'discovered');assert.equal(first.historyWorkStage,'history');assert.equal(first.expectedHistoryWorkKind,'discovery');assert.equal(seen.length,1);
+ assert.equal((await expectedHistoryContext(db,s,time)).runners[0].profile_url,profile);
+ time+=61000;
+ const second=await collectLiveHistory(db,{scheduledTime:time},{...options,previousExpectedHistoryWorkKind:first.expectedHistoryWorkKind});
+ assert.equal(second.expectedHistoryWorkKind,'known');assert.equal(second.addedRows,1);assert.equal(seen.length,2);
+ assert.equal(sql.prepare('SELECT horse_name FROM jra_past_performances').get().horse_name,'ミカイケツ');sql.close();
+});
+
+test('unconfigured priority roster yields to known history and complete targets are not rediscovered',async()=>{
+ const {db,sql}=await fixture();const unconfigured={...source,snapshotId:'registered:no-url',priority:0,names:['Unresolved']};
+ for(const date of ['2026-06-01','2026-07-01','2026-08-01'])sql.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,finish_position,field_size,fetched_at) VALUES(?,?,?,?,?,?,?)').run('CompleteHorse',date,'東京','保存済み',2,10,'2026-10-06T00:00:00Z');
+ const complete={...source,snapshotId:'registered:complete',priority:0,names:['CompleteHorse'],officialHorsePage:'https://www.jra.go.jp/keiba/race/095/horse.html'};
+ const r=await collectUpcomingExpectedHistory(db,{sources:[complete,unconfigured,source],now:()=>stamp,wait:async()=>{},fetcher:async url=>{assert.equal(url,'https://www.jra.go.jp/JRADB/accessU.html');return new Response(html,{headers:{'content-type':'text/html;charset=utf-8'}})}});
+ assert.equal(r.addedRows,1);assert.equal(r.snapshotId,source.snapshotId);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_history_collection_receipts WHERE horse_name=?').get('Unresolved').n,0);sql.close();
+});

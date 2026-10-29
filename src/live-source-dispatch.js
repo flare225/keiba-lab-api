@@ -29,8 +29,10 @@ export async function scheduledMissingRoster(db,event,{now=Date.now}={}){return 
 export async function collectLiveHistory(db,event,{now=Date.now,previousCardSelection=null,previousHistoryWorkStage=null,cardCompletionFirst=false,completionPriorityRaceKeys=[],discover=null,cards=collectMissingOfficialCard,main=collectTodayMainHistory,upcoming=collectUpcomingOfficialHistory,expected=scheduledWeekendHistory,details=scheduledPriorDetails,priorityExpected=expected===scheduledWeekendHistory?collectUpcomingExpectedHistory:expected,registered=storedExpectedSources,programs=recoverMissingPrograms,missing=scheduledMissingRoster}={}){
  // Stage history is separate from card-candidate fairness. It is carried in
  // the existing coordinator result, with no new table or periodic clock.
- const acquisition=r=>r&&(r.externalRequests||r.attempted||r.saveMayHaveSucceeded)?{...r,historyWorkStage:'acquisition'}:r;
- const history=r=>r&&(r.externalRequests||r.attempted||r.saveMayHaveSucceeded)?{...r,historyWorkStage:'history'}:r;
+ let clearedPredrawSelection=null;
+ const selected=r=>r&&clearedPredrawSelection&&!r.cardSelection?{...r,cardSelection:clearedPredrawSelection}:r;
+ const acquisition=r=>selected(r&&(r.externalRequests||r.attempted||r.saveMayHaveSucceeded)?{...r,historyWorkStage:'acquisition'}:r);
+ const history=r=>selected(r&&(r.externalRequests||r.attempted||r.saveMayHaveSucceeded)?{...r,historyWorkStage:'history'}:r);
  let checkedUpcoming=false;
  if(previousHistoryWorkStage==='acquisition'){
   const gate=await db.prepare("SELECT next_batch_at,locked_until FROM lab_history_collection_budget WHERE name='jra-history'").first();
@@ -41,10 +43,20 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
   if(completion&&(completion.externalRequests||completion.attempted||completion.saveMayHaveSucceeded||['cooldown','lease-unavailable','shared-gate-unavailable','paused'].includes(completion.status)))return history(completion);}
  }
  const deps={now,previousCardSelection,completionPriorityRaceKeys,programPlanCache:new Map(),...(typeof discover==='function'?{discover}:{})},today=jstDay(now()),until=new Date(Date.parse(today+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);
- // Complete cards before supplemental acquisition or its roster inventory read.
+ // Outside the saved pre-draw handoff, cards precede supplemental acquisition.
  // The existing card collector remains responsible for gate, lease and budget.
  const cardInput=cardCompletionFirst?{date:today,includeFuture:true,completeDateFirst:true}:{upcomingOnly:true,includeFuture:true};
  const stops=r=>r&&(r.externalRequests||r.attempted||r.saveMayHaveSucceeded||['cooldown','lease-unavailable','shared-gate-unavailable','paused'].includes(r.status));
+ // A successfully persisted pre-draw roster already supplies real profiles.
+ // Give those known inputs one history turn before requesting another card.
+ // This mode cannot discover/fetch a roster for unresolved names. The common
+ // gate above and the existing one-horse collector still own every source call.
+ if(cardCompletionFirst&&previousHistoryWorkStage==='acquisition'&&previousCardSelection?.savedPredrawHistoryPending){
+  const saved=await priorityExpected(db,{...deps,knownProfilesOnly:true});
+  if(stops(saved))return {...history(saved),...(saved.externalRequests||saved.attempted?{cardSelection:{...previousCardSelection,savedPredrawHistoryPending:false}}:{})};
+  clearedPredrawSelection={...previousCardSelection,savedPredrawHistoryPending:false};
+  deps.previousCardSelection=clearedPredrawSelection;
+ }
  let card=cardCompletionFirst?await cards(db,{...cardInput,publicationWindowOnly:true},deps):null;
  // A cached navigation parse is not a saved card or an external source turn.
  // Let the existing history turn run once, retaining the card result for the
@@ -90,8 +102,8 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
  const next=checkedUpcoming?null:await upcoming(db,deps);if(next)return history(next);
  const remainder=early||await expected(db,deps);
  if(remainder.externalRequests||remainder.attempted||remainder.status==='cooldown')return history(remainder);
- if(Math.floor(Number(event.scheduledTime)/60000)%12===0)return details(db,deps);
- return remainder;
+ if(Math.floor(Number(event.scheduledTime)/60000)%12===0)return selected(await details(db,deps));
+ return selected(remainder);
 }
 export function cardCompletionPriorities(value){
  const completionPriorityRaceKeys=JSON.parse(value||'[]');

@@ -7,6 +7,60 @@ import {discoverExpectedProfiles} from '../src/expected-profile-discovery-v3.47.
 import {comparisonPage} from '../src/mark-comparison-page-v3.42.0.js';
 import {discoverExpectedCard} from '../src/expected-card-discovery.js';
 import {collectLiveHistory} from '../src/live-source-dispatch.js';
+test('the observed sixteen-runner Kyoto predraw identity set reaches profile storage and queues re-evaluation',async()=>{
+ const {readFile}=await import('node:fs/promises'),e=JSON.parse(await readFile(new URL('./fixtures/kyoto1-predraw-handoff-20261029.json',import.meta.url),'utf8'));
+ const {confirmedPredrawSource}=await import('../src/confirmed-predraw-history-source.js');
+ const {db,sql}=await fixture(),time=Date.parse(e.observedAt)+61000;
+ sql.exec('CREATE TABLE lab_confirmed_predraw_rosters(race_key TEXT PRIMARY KEY,source_url TEXT,source_sha256 TEXT,runners_json TEXT,checked_at TEXT);CREATE TABLE lab_provisional_queue_v1(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_at INTEGER NOT NULL,error TEXT)');
+ const row={race_key:e.raceKey,source_url:e.sourceUrl,source_sha256:e.sourceSha256,runners_json:JSON.stringify(e.runners),checked_at:e.observedAt};
+ sql.prepare('INSERT INTO lab_confirmed_predraw_rosters VALUES(?,?,?,?,?)').run(...Object.values(row));
+ sql.prepare('INSERT INTO lab_provisional_queue_v1 VALUES(?,?,?,NULL)').run(e.raceKey+':predraw:'+e.sourceSha256,'verified',9999999999999);
+ const s=confirmedPredrawSource(row,time);assert.equal(s.names.length,16);let requests=0;
+ const r=await collectLiveHistory(db,{scheduledTime:time},{now:()=>time,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',previousCardSelection:{lane:'card',savedPredrawHistoryPending:true},cards:()=>assert.fail('no second card request'),
+  priorityExpected:(db,deps)=>collectUpcomingExpectedHistory(db,{...deps,sources:[s],wait:async()=>{},fetcher:async(url,opts)=>{requests++;assert.equal(url,'https://www.jra.go.jp/JRADB/accessU.html');assert.equal(new URLSearchParams(opts.body).get('CNAME'),new URL(e.runners[0].profile_url).searchParams.get('CNAME'));return new Response('<h1>'+e.runners[0].horse_name+'</h1><table>'+rowHtml('2026年9月1日')+'</table>',{headers:{'content-type':'text/html;charset=utf-8'}})}})});
+ assert.equal(requests,1);assert.equal(r.addedRows,1);assert.equal(r.provisionalEvaluationQueued,1);assert.equal(r.historyWorkStage,'history');
+ assert.equal(sql.prepare('SELECT horse_name FROM jra_past_performances').get().horse_name,e.runners[0].horse_name);
+ assert.equal(sql.prepare('SELECT status FROM lab_provisional_queue_v1').get().status,'history-updated');
+ assert.equal(sql.prepare('SELECT runners_json FROM lab_confirmed_predraw_rosters').get().runners_json,row.runners_json);sql.close();
+ function rowHtml(date){return '<tr>'+[date,'京都','過去レース','芝1400','良','12','2','1','騎手','55','450(+0)','1:24.0','111','勝馬'].map(x=>'<td>'+x+'</td>').join('')+'</tr>';}
+});
+test('targeted GET reads a persisted predraw roster absent from registry without creating or fetching a roster',async()=>{
+ const {db,sql}=await fixture(),key='2026-10-31:京都:1',card='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202604100120261031/52';
+ sql.exec('CREATE TABLE lab_confirmed_predraw_rosters(race_key TEXT PRIMARY KEY,source_url TEXT,source_sha256 TEXT,runners_json TEXT,checked_at TEXT)');
+ sql.prepare('INSERT INTO lab_confirmed_predraw_rosters VALUES(?,?,?,?,?)').run(key,card,'a'.repeat(64),JSON.stringify([{horse_name:'HorseA',age:2,horse_no:null,frame_no:null,profile_url:profile}]),new Date(stamp).toISOString());
+ const {resolveExpectedCollectionSource}=await import('../src/index-v3.46.0.js');const before=sql.prepare('SELECT total_changes() n').get().n;
+ const s=await resolveExpectedCollectionSource(db,{date:'2026-10-31',venue:'京都',raceNo:1});assert.equal(s.snapshotId,'confirmed-predraw:'+key);assert.deepEqual(s.names,['HorseA']);assert.equal(s.basis,'confirmed-predraw');
+ assert.equal(sql.prepare('SELECT total_changes() n').get().n,before);sql.close();
+});
+test('saved predraw handoff collects a known profile before another card request and returns acquisition its next turn',async()=>{
+ const {db,sql}=await fixture();let requests=0,cards=0;
+ const selection={lane:'card',savedPredrawHistoryPending:true};
+ const deps={now:()=>stamp,cardCompletionFirst:true,registered:async()=>[source],
+  expected:(_,delivery)=>collectUpcomingExpectedHistory(db,{...delivery,sources:[source],wait:async()=>{},fetcher:async()=>{requests++;return new Response(html,{headers:{'content-type':'text/html;charset=utf-8'}})}}),
+  cards:async()=>{cards++;return{status:'official-card-link-found',externalRequests:1}},missing:()=>assert.fail('one source only')};
+ const first=await collectLiveHistory(db,{scheduledTime:stamp},{...deps,previousHistoryWorkStage:'acquisition',previousCardSelection:selection});
+ assert.equal(first.stage,'expected-runner-prior-history');assert.equal(first.historyWorkStage,'history');assert.equal(cards,0);assert.equal(requests,1);
+ assert.equal(first.cardSelection.savedPredrawHistoryPending,false);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_past_performances').get().n,1);
+ const second=await collectLiveHistory(db,{scheduledTime:stamp+61000},{...deps,now:()=>stamp+61000,previousHistoryWorkStage:first.historyWorkStage,previousCardSelection:first.cardSelection});
+ assert.equal(second.status,'official-card-link-found');assert.equal(cards,1);assert.equal(requests,1);sql.close();
+});
+test('known-profile handoff never starts discovery for unresolved names',async()=>{
+ const {db,sql}=await fixture();sql.exec('DELETE FROM lab_history_profile_links');
+ const r=await collectUpcomingExpectedHistory(db,{sources:[{...source,officialRosterDiscoveryUrl:'https://www.jra.go.jp/keiba/race/095.html'}],knownProfilesOnly:true,now:()=>stamp,fetcher:()=>assert.fail('no discovery request in known-profile turn')});
+ assert.equal(r.externalRequests,0);sql.close();
+});
+test('a predraw race absent from the registration registry reaches the real natural profile writer',async()=>{
+ const {db,sql}=await fixture(),time=Date.parse('2026-10-19T00:15:00Z');
+ sql.exec('CREATE TABLE lab_confirmed_predraw_rosters(race_key TEXT PRIMARY KEY,source_url TEXT,source_sha256 TEXT,runners_json TEXT,checked_at TEXT)');
+ const key='2026-10-24:東京:9',card='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604040920261024/AA';
+ sql.prepare('INSERT INTO lab_confirmed_predraw_rosters VALUES(?,?,?,?,?)').run(key,card,'a'.repeat(64),JSON.stringify([{horse_name:'HorseA',age:2,horse_no:null,frame_no:null,profile_url:profile}]),new Date(time-1000).toISOString());
+ let requests=0;
+ const r=await collectLiveHistory(db,{scheduledTime:time},{now:()=>time,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',previousCardSelection:{lane:'card',savedPredrawHistoryPending:true},
+  priorityExpected:(db,deps)=>collectUpcomingExpectedHistory(db,{...deps,wait:async()=>{},fetcher:async()=>{requests++;return new Response(html,{headers:{'content-type':'text/html;charset=utf-8'}})}}),cards:()=>assert.fail('saved profiles must precede the next card request')});
+ assert.equal(r.snapshotId,'confirmed-predraw:'+key);assert.equal(r.addedRows,2);assert.equal(requests,1);assert.equal(r.cardSelection.savedPredrawHistoryPending,false);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races WHERE race_date=?').get('2026-10-24').n,0);sql.close();
+});
 test('cached navigation alternates through real card discovery, pre-draw persistence and prior-history persistence',async()=>{
  const {db,sql}=await fixture();sql.exec('DELETE FROM lab_history_profile_links;CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,source_url TEXT);CREATE TABLE lab_provisional_queue_v1(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_at INTEGER NOT NULL,error TEXT)');
  const s={...source,snapshotId:'registered:turn-integration',names:['HorseA']},calendar='https://www.jra.go.jp/keiba/calendar2026/2026/10/1010.html',card='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604031120261010/9E';

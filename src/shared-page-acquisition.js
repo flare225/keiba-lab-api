@@ -75,6 +75,11 @@ export function planSharedPages(races,rows,stamp,parserVersion=SHARED_PAGE_POLIC
    if(row?.status==='parse-failed'&&row.parser_version===parserVersion)continue;
    if(!row?.body_sha){add(url,race,depth);found=true;break;}
    const f=findings(row);if(f?.kind==='predraw')continue;
+   // A stale selector whose dated meetings all belong elsewhere cannot reveal
+   // this race by traversing those old branches. Refresh that selector first;
+   // generic navigation and matching dated continuations keep their priority.
+   const datedMeetings=(f?.pages||[]).map(metaFromMeetingListUrl).filter(Boolean);
+   if(stamp-Number(row.observed_at)>=SHARED_PAGE_POLICY.refreshMs&&datedMeetings.length&&!datedMeetings.some(m=>m.date===race.date&&m.venue===race.venue)){add(url,race,depth);found=true;break;}
    for(const child of f?.pages||[]){const meeting=metaFromMeetingListUrl(child);if(meeting&&(meeting.date!==race.date||meeting.venue!==race.venue))continue;queue.push({url:child,depth:depth+1});}
    if(stamp-Number(row.observed_at)>=SHARED_PAGE_POLICY.refreshMs)refresh.push({url,depth});
   }

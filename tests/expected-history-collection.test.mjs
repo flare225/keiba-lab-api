@@ -6,6 +6,31 @@ import {MAIN_EXPECTED_SOURCE,EXPECTED_SOURCES,expectedAge,historyForExpected} fr
 import {discoverExpectedProfiles} from '../src/expected-profile-discovery-v3.47.0.js';
 import {comparisonPage} from '../src/mark-comparison-page-v3.42.0.js';
 import {discoverExpectedCard} from '../src/expected-card-discovery.js';
+import {collectLiveHistory} from '../src/live-source-dispatch.js';
+test('cached navigation alternates through real card discovery, pre-draw persistence and prior-history persistence',async()=>{
+ const {db,sql}=await fixture();sql.exec('DELETE FROM lab_history_profile_links;CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,source_url TEXT);CREATE TABLE lab_provisional_queue_v1(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_at INTEGER NOT NULL,error TEXT)');
+ const s={...source,snapshotId:'registered:turn-integration',names:['HorseA']},calendar='https://www.jra.go.jp/keiba/calendar2026/2026/10/1010.html',card='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604031120261010/9E';
+ sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?)').run(s.date,s.venue,s.raceNo,calendar);
+ sql.prepare('INSERT INTO lab_provisional_queue_v1 VALUES(?,?,?,NULL)').run('2026-10-10:東京:11','verified',9999999999999);
+ const roster='<table><caption>2026年10月10日 東京<img alt="11レース"></caption><thead></thead><tbody><tr><td class="waku"></td><td class="num"></td><td class="horse"><div class="name"><a href="'+profile+'">HorseA</a></div></td><td class="jockey"><p class="age">牡2/黒鹿</p><p class="weight">56kg</p><p class="jockey">騎手</p></td></tr></tbody></table>';
+ let time=stamp,stage='acquisition';const requests=[],results=[];
+ const deps={now:()=>time,cardCompletionFirst:true,registered:async()=>[s],cards:async()=>({status:'page-parsed',attempted:true,reusedBody:true,externalRequests:0,officialCardsCreated:false}),missing:()=>assert.fail('cached acquisition must return before unrelated roster'),programs:()=>assert.fail('no unrelated program'),expected:(_,delivery)=>collectUpcomingExpectedHistory(db,{...delivery,sources:[s],wait:async()=>{},fetcher:async(url,opts)=>{
+  const actual=opts?.method==='POST'?url+'?'+opts.body:url;requests.push(actual);
+  return new Response(url===calendar?'<a href="'+card+'">published</a>':url.endsWith('accessD.html')?roster:html,{headers:{'content-type':'text/html;charset=utf-8'}});
+ }})};
+ for(let i=0;i<5;i++){
+  const result=await collectLiveHistory(db,{scheduledTime:time},{...deps,previousHistoryWorkStage:stage});results.push(result);stage=result.historyWorkStage;time+=61000;
+ }
+ assert.deepEqual(results.map(r=>r.status),['official-card-link-found','page-parsed','confirmed-predraw-saved','page-parsed','collected']);
+ assert.deepEqual(results.map(r=>r.historyWorkStage),['history','acquisition','history','acquisition','history']);
+ assert.equal(requests.length,3);assert.equal(requests[0],calendar);assert.match(requests[1],/accessD\.html/);assert.match(requests[2],/accessU\.html/);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_confirmed_predraw_rosters').get().n,1);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_past_performances').get().n,1);
+ assert.equal(results.at(-1).provisionalEvaluationQueued,1);
+ assert.equal(sql.prepare('SELECT status FROM lab_provisional_queue_v1').get().status,'history-updated');
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races WHERE race_date=?').get(s.date).n,0);
+ sql.close();
+});
 test('official roster discovery follows witnessed exact-date links one page per shared-budget batch',async()=>{
  const {db,sql}=await fixture(),s={...source,officialRosterDiscoveryUrl:'https://www.jra.go.jp/keiba/race/095.html'};
  const card='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604031120261010/9E';

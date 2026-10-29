@@ -109,3 +109,9 @@ PR #262でmainへ反映済み。2026-10-25の更新はユーザーの継続記�
 - predraw-page-preservedを本文だけの保全と決めつけない。saveConfirmedPredrawの名簿DB書込/関数内読返し、registry保存、独立HTTP読返し、過去走保存を区別し、同じ名簿を別writerへ重複保存しない。
 - 実プロフィールURLが保存済みなのに次のカード要求が先にreturnする経路を、自然dispatcherの複数turnで検証する。保存後の履歴引継ぎは既存result_json/cardSelectionで行い、共有待機を保持し、1回後はカードの取得機会を戻す。
 - profile既知の枠で未解決名簿探索へ広げない。登録がないレースでも、既存confirmed-predraw行を検証して対象限定GET/自然collectorへ渡す。詳細はwork-log-2026-10-27.md 22:25節。修正未公開/本番履歴成功未確認を保持する。
+
+
+## 2026-10-29 待機件数を実作業として返さない
+- waitingRaces>0をattemptedtrueに変換すると、カードの実要求/本文処理/保存がない状態でも保存履歴fallbackを止め続ける。PR306の保存直後1回のhandoffだけで全後続turnまで保証したと考えない。
+- 共有安全待機と、あるレースの個別retry未到来/枠順待ちを区別する。元の個別期限は保ち、実作業なしなら既存公平dispatcherへ返す。外部要求枠・頻度・安全停止は増減しない。
+- 取得後の評価保存経路も既存本物のbuilder/writer/独立SHAで通す。合成データの検証は本番保存に計上しない。詳細はwork-log-2026-10-27.md 22:40節。

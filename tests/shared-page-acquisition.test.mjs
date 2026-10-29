@@ -9,6 +9,16 @@ import {scheduledAutomaticPrediction,readAutomaticPrediction} from '../src/autom
 import {fixtureDatabase,racesFixture,pageGraph,fixtureFetcher,FIXTURE_STAMP,SCOPE,INDEX,cardUrl,drawnHtml,calendar,meetingUrl} from './helpers/shared-page-fixture.mjs';
 const input=races=>({scope:SCOPE,races});
 const rows=sql=>sql.prepare('SELECT * FROM lab_shared_page_receipts_v1').all();
+test('an inventory with preserved predraw pages yields to saved history instead of claiming an attempted card forever',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture()[0],now=FIXTURE_STAMP;
+ const card=cardUrl(race);sql.prepare('INSERT INTO lab_shared_page_receipts_v1(scope_key,page_url,status,next_at) VALUES(?,?,?,?)').run(race.date,card,'predraw',now+86400000);
+ const source={...race,officialRosterDiscoveryUrl:race.rootUrl,sharedInventory:[{...race,cardUrl:card}]};
+ const cards=()=>discoverSharedSelectedCard(db,source,{now:()=>now,fetcher:()=>assert.fail('preserved page must not be fetched')});
+ const held=await cards();assert.equal(held.status,'awaiting-source-or-deadline');assert.equal(held.waitingRaces,1);assert.equal(held.attempted,false);
+ let histories=0;
+ const result=await collectLiveHistory(db,{scheduledTime:now},{now:()=>now,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',cards,registered:async()=>[race],priorityExpected:async()=>{histories++;return{status:'collected',attempted:1,externalRequests:1,addedRows:2}},missing:()=>assert.fail('saved history precedes unrelated rosters')});
+ assert.equal(histories,1);assert.equal(result.historyWorkStage,'history');assert.equal(result.addedRows,2);sql.close();
+});
 test('stored production drl10 meeting links retain date and venue identity',async()=>{
  const evidence=JSON.parse(await readFile(new URL('./fixtures/jra-stored-index-links-20261029.json',import.meta.url),'utf8'));
  const {metaFromMeetingListUrl}=await import('../src/index-v1.1.4.js');
@@ -301,8 +311,8 @@ test('shared natural handoff can process another due card while the legacy-selec
  const result=await collectMissingOfficialCard(db,{date:selected.date},{now:()=>FIXTURE_STAMP,discover:discoverSharedSelectedCard,fetcher:fixtureFetcher(pageGraph(races),requests)});
  assert.equal(result.formalCardSaved,true);assert.equal(result.target.raceNo,other.raceNo);assert.equal(result.cardSelection.target,`${other.date}:${other.venue}:${other.raceNo}`);assert.deepEqual(requests,[cardUrl(other)]);
  assert.equal(sql.prepare('SELECT next_at FROM lab_shared_page_receipts_v1 WHERE page_url=?').get(cardUrl(selected)).next_at,until);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_runners').get().n,2);
- const waiting=await collectLiveHistory(db,{scheduledTime:FIXTURE_STAMP+61000},{now:()=>FIXTURE_STAMP+61000,cardCompletionFirst:true,cards:(d,input,deps)=>collectMissingOfficialCard(d,{date:selected.date},{...deps,discover:discoverSharedSelectedCard,fetcher:()=>assert.fail('private retry is not due')}),missing:()=>assert.fail('waiting acquisition owns this stage'),registered:()=>assert.fail('no repeated roster scan'),programs:()=>assert.fail('no fallthrough source request')});
- assert.equal(waiting.status,'awaiting-source-or-deadline');assert.equal(waiting.externalRequests,0);assert.equal(waiting.attempted,true);assert.equal(waiting.cardSelection.lane,'card');sql.close();
+ const waiting=await collectLiveHistory(db,{scheduledTime:FIXTURE_STAMP+61000},{now:()=>FIXTURE_STAMP+61000,cardCompletionFirst:true,cards:(d,input,deps)=>collectMissingOfficialCard(d,{date:selected.date},{...deps,discover:discoverSharedSelectedCard,fetcher:()=>assert.fail('private retry is not due')}),previousHistoryWorkStage:'acquisition',registered:async()=>[selected],priorityExpected:async()=>({status:'collected',attempted:1,externalRequests:1}),missing:()=>assert.fail('saved history precedes unrelated acquisition'),programs:()=>assert.fail('one source only')});
+ assert.equal(waiting.status,'collected');assert.equal(waiting.externalRequests,1);assert.equal(waiting.historyWorkStage,'history');assert.equal(sql.prepare('SELECT next_at FROM lab_shared_page_receipts_v1 WHERE page_url=?').get(cardUrl(selected)).next_at,until);sql.close();
 });
 
 test('a meeting URL parsed for one race is reused by another race without revisiting its calendar',()=>{

@@ -9,6 +9,37 @@ import {scheduledAutomaticPrediction,readAutomaticPrediction} from '../src/autom
 import {fixtureDatabase,racesFixture,pageGraph,fixtureFetcher,FIXTURE_STAMP,SCOPE,INDEX,cardUrl,drawnHtml,calendar,meetingUrl} from './helpers/shared-page-fixture.mjs';
 const input=races=>({scope:SCOPE,races});
 const rows=sql=>sql.prepare('SELECT * FROM lab_shared_page_receipts_v1').all();
+test('stored production drl10 meeting links retain date and venue identity',async()=>{
+ const evidence=JSON.parse(await readFile(new URL('./fixtures/jra-stored-index-links-20261029.json',import.meta.url),'utf8'));
+ const {metaFromMeetingListUrl}=await import('../src/index-v1.1.4.js');
+ const meetings=evidence.links.filter(url=>new URL(url).searchParams.get('CNAME').startsWith('pw01drl10'));
+ assert.equal(meetings.length,6);
+ for(const url of meetings){
+  const m=metaFromMeetingListUrl(url);assert.ok(m,url);assert.ok(['2026-10-24','2026-10-25'].includes(m.date));
+  assert.ok(['東京','京都','新潟'].includes(m.venue));assert.equal(m.url,url);
+  assert.equal(metaFromMeetingListUrl(url+'&extra=1'),null);
+  assert.equal(metaFromMeetingListUrl(url.replace('www.jra.go.jp','attacker.invalid')),null);
+ }
+});
+test('expired navigation refreshes before walking its previous-week descendants and reaches a newly published card',async()=>{
+ const evidence=JSON.parse(await readFile(new URL('./fixtures/jra-stored-index-links-20261029.json',import.meta.url),'utf8'));
+ const {db,sql}=await fixtureDatabase(),base=racesFixture()[0],race={...base,date:'2026-10-31',rootUrl:calendar('2026-10-31'),startAt:'2026-10-31T09:45:00+09:00'};
+ let now=FIXTURE_STAMP,published=false;const requests=[];
+ const pages=new Map([[race.rootUrl,`<a href="${INDEX}">index</a>`],[INDEX,evidence.links.map(u=>`<a href="${u}">recorded link</a>`).join('')]]);
+ const fetcher=async(url,options)=>{
+  const actual=canonicalPublishedPage(options?.method==='POST'?url+'?'+options.body:url);requests.push(actual);
+  assert.ok(pages.has(actual),'must refresh stale navigation instead of fetching '+actual);
+  const html=published&&actual===INDEX?`<a href="${cardUrl(race)}">new card</a>`:pages.get(actual);
+  return new Response(html,{headers:{'content-type':'text/html;charset=utf-8'}});
+ };
+ await runSharedPageStep(db,{scope:'2026-10-31',races:[race]},{now:()=>now,fetcher});now+=61000;
+ await runSharedPageStep(db,{scope:'2026-10-31',races:[race]},{now:()=>now,fetcher});
+ published=true;now+=SHARED_PAGE_POLICY.refreshMs+61000;pages.set(cardUrl(race),drawnHtml(race));
+ for(let i=0;i<3;i++){const r=await runSharedPageStep(db,{scope:'2026-10-31',races:[race]},{now:()=>now,fetcher});assert.ok(r.externalRequests<=1);now+=61000;}
+ assert.deepEqual(requests,[race.rootUrl,INDEX,INDEX,cardUrl(race)]);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_runners WHERE race_key=?').get('2026-10-31:東京:1').n,2);
+ sql.close();
+});
 test('only saved literal official links are accepted; witnessed calendar excerpt yields index, not race success',async()=>{
  const html=await readFile(new URL('./fixtures/jra-calendar-index-link-20261023.html',import.meta.url),'utf8');const p=parseSharedPage(html,calendar('2026-10-24'));assert.deepEqual(p.pages,[INDEX]);assert.equal(p.cards.length,0);
  for(const url of ['https://attacker.invalid/JRADB/accessD.html?CNAME=pw01dli00/F3','https://user@www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dli00/F3','https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud00/AA'])assert.throws(()=>canonicalPublishedPage(url));

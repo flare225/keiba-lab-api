@@ -199,3 +199,14 @@ test('unresolved saved profiles retain the history turn without starving the nex
  const second=await collectLiveHistory(db,{scheduledTime:stamp},{...deps,previousHistoryWorkStage:first.historyWorkStage});
  assert.equal(second.historyWorkStage,'acquisition');assert.deepEqual(seen,['history','roster']);
 });
+
+ test('cached shared navigation without a card cannot consume the saved-history turn',async()=>{
+ const stamp=Date.parse('2026-10-29T08:06:49Z'),seen=[];
+ const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
+ const cached={status:'page-parsed',attempted:true,reusedBody:true,externalRequests:0,officialCardsCreated:false,discoveredCards:0,discoveredPages:45};
+ const deps={now:()=>stamp,cardCompletionFirst:true,cards:async()=>cached,registered:async()=>[{date:'2026-10-31'}],expected:async()=>{seen.push('history');return{status:'collected',externalRequests:1,historyRowsSaved:3}},missing:()=>assert.fail('no unrelated roster'),programs:()=>assert.fail('no unrelated calendar')};
+ const first=await collectLiveHistory(db,{scheduledTime:stamp},{...deps,previousHistoryWorkStage:'acquisition'});
+ assert.deepEqual(seen,['history']);assert.equal(first.historyRowsSaved,3);assert.equal(first.historyWorkStage,'history');
+ const second=await collectLiveHistory(db,{scheduledTime:stamp},{...deps,previousHistoryWorkStage:'history'});
+ assert.equal(second.status,'page-parsed');assert.equal(second.historyWorkStage,'acquisition');assert.deepEqual(seen,['history']);
+ });

@@ -1,0 +1,30 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {storedCardPriorCells} from '../src/stored-card-prior-cells.js';
+const url='https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002023100001/A1';
+const row=(name,id,date)=>`<tr><td class="horse"><div class="name_line"><div class="name"><a href="${id}">${name}</a></div></div></td><td class="past p1"><div class="date">${date}</div><div class="name">別レース名</div></td></tr>`;
+test('stored card cells retain horse identity and exclude target/future dates and siblings',()=>{
+ const input={horseName:'対象馬',profileUrl:url,beforeDate:'2026-10-31'};
+ const html=row('隣馬',url,'2026年10月1日')+row('対象馬',url,'2026年10月2日')+row('対象馬',url,'2026年10月31日');
+ const found=storedCardPriorCells(html,input);assert.equal(found.length,1);assert.equal(found[0].raceDate,'2026-10-02');assert.equal(found[0].horseName,'対象馬');
+ assert.throws(()=>storedCardPriorCells(row('対象馬',url.replace('100001','100002'),'2026年10月2日'),input),/identity/);
+});
+import {decodeStoredCardPriors,readStoredCardPriors} from '../src/stored-card-prior-cells.js';
+import {createHash} from 'node:crypto';
+const cell='<div class="date">2026年10月2日</div><div class="rc">東京</div><div class="name"><a href="/result">1勝クラス</a></div><div class="place">2<span>着</span></div><span class="max">16<span>頭</span></span><span class="dist">2100ダ</span><div class="jockey">騎手</div><div class="weight">56.0<span>kg</span></div><p class="h_weight">480<span>kg</span></p><p class="time">2:12.5</p><span class="condition">良</span><div class="f3">3F 37.5</div>';
+test('observed nested card cells decode race name, valid finish and rich fields',()=>{const [p]=decodeStoredCardPriors([{horseName:'対象馬',raceDate:'2026-10-02',cellHtml:cell}],url);assert.equal(p.raceName,'1勝クラス');assert.equal(p.finishPosition,2);assert.equal(p.distance,2100);assert.equal(p.last3f,37.5);assert.equal(p.assignedWeight,56);assert.equal(p.bodyWeight,480);assert.equal(decodeStoredCardPriors([{horseName:'対象馬',raceDate:'2026-10-02',cellHtml:cell.replace('2<span>着','取消<span>着')}],url).length,0);});
+test('stored source hash is verified and insufficient card history falls back',async()=>{let html=row('対象馬',url,'2026年10月2日').replace('<div class="date">2026年10月2日</div>',cell);const source={body_html:html,byte_length:Buffer.byteLength(html),source_sha256:createHash('sha256').update(html).digest('hex')};const db={prepare(){return{bind(){return{async first(){return source}}}}}};const context={race:{source_url:'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604100620261031/FD',race_key:'2026-10-31:東京:6',race_date:'2026-10-31'}};const item={horseName:'対象馬',fromDate:'2025-01-01'};assert.equal((await readStoredCardPriors(db,context,item,1)).performances.length,1);assert.equal(await readStoredCardPriors(db,context,item,3),null);source.source_sha256='bad';await assert.rejects(readStoredCardPriors(db,context,item,1),/hash mismatch/);});
+import {DatabaseSync} from 'node:sqlite';
+import {collectHistoryBatch} from '../src/history-collection-v3.37.0.js';
+test('natural collector reuses evidence-bound body, saves rows, reads back and obeys cooldown without HTTP',async()=>{
+ const sql=new DatabaseSync(':memory:');
+ const sourceUrl='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604100620261031/FD';
+ const html=row('対象馬',url,'2026年10月2日').replace('<div class="date">2026年10月2日</div>',cell);
+ const hash=createHash('sha256').update(html).digest('hex');
+ sql.exec('CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,race_name TEXT,source_url TEXT,runner_count INTEGER,fetched_at TEXT);CREATE TABLE jra_runners(race_key TEXT,horse_no INTEGER,horse_name TEXT,age INTEGER);CREATE TABLE lab_card_source_evidence(race_key TEXT,source_url TEXT,source_sha256 TEXT,card_fetched_at TEXT,horse_numbers_observed INTEGER,frames_observed INTEGER,declared_count INTEGER,parsed_count INTEGER);CREATE TABLE lab_shared_page_bodies_v1(scope_key TEXT,page_url TEXT,sha256 TEXT,body_html TEXT,byte_length INTEGER);');
+ sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?,?,?,?)').run('r','2026-10-31','東京',6,'試験',sourceUrl,1,'saved');sql.prepare('INSERT INTO jra_runners VALUES(?,?,?,?)').run('r',1,'対象馬',3);sql.prepare('INSERT INTO lab_card_source_evidence VALUES(?,?,?,?,1,1,1,1)').run('r',sourceUrl,hash,'saved');sql.prepare('INSERT INTO lab_shared_page_bodies_v1 VALUES(?,?,?,?,?)').run('2026-10-31',sourceUrl,hash,html,Buffer.byteLength(html));
+ const db={prepare(q){const wrap=(a=[])=>({bind(...v){return wrap(v)},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}},async run(){return{meta:{changes:Number(sql.prepare(q).run(...a).changes)}}}});return wrap()},async batch(ss){return Promise.all(ss.map(s=>s.run()))}};
+ const input={date:'2026-10-31',venue:'東京',raceNo:6,historyLimit:1,batchSize:1},now=()=>Date.parse('2026-10-30T06:00:00Z'),fetcher=()=>assert.fail('stored body must not fetch');
+ const r=await collectHistoryBatch(db,input,{now,fetcher});assert.equal(r.externalRequests,0);assert.equal(r.addedRows,1);assert.equal(r.results[0].reusedStoredCard,true);assert.equal(r.after.totalStoredRows,1);assert.equal(sql.prepare('SELECT finish_position FROM jra_past_performances').get().finish_position,2);
+ assert.equal((await collectHistoryBatch(db,input,{now,fetcher})).attempted,0);
+ sql.prepare('DELETE FROM lab_history_collection_receipts').run();sql.prepare('DELETE FROM jra_past_performances').run();sql.prepare('UPDATE lab_history_collection_budget SET locked_until=?').run(now()+3600000);assert.equal((await collectHistoryBatch(db,input,{now,fetcher})).status,'cooldown');assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_past_performances').get().n,0);sql.close();
+});

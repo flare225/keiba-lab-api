@@ -81,7 +81,7 @@ export async function collectUpcomingExpectedHistory(db,deps={}){
  for(const source of sources){
   const formal=await rows(db,'SELECT r.race_key FROM jra_races r WHERE r.race_date=? AND r.venue=? AND r.race_no=? AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key)',[source.date,source.venue,source.raceNo]);
   if(formal.length){
-   if(deps.knownProfilesOnly)continue;
+   if(deps.knownProfilesOnly&&!deps.includeFormalHistory)continue;
    if(source.priority===0||source.snapshotId?.startsWith('registered:')){const r=await collectHistoryBatch(db,{date:source.date,venue:source.venue,raceNo:source.raceNo,historyLimit:3,batchSize:1},deps),provisionalEvaluationQueued=await markReevaluation(source,r);if(r.attempted||r.status==='cooldown')return {...r,stage:'main-race-official-history',...(r.attempted||r.externalRequests?{expectedHistoryWorkKind:'known'}:{}),provisionalEvaluationQueued};waiting.push({raceKey:source.raceKey,status:r.status,pendingHorses:r.before?.pendingHorses,provisionalEvaluationQueued});}
    continue;
   }

@@ -40,7 +40,7 @@ export async function readStoredCardPriors(db,context,item,limit){
  if(!row)return null;
  if(new TextEncoder().encode(row.body_html).length!==row.byte_length||await sha256(row.body_html)!==row.source_sha256)throw Error('Stored prior source hash mismatch');
  const profileUrl=extractProfileLinks(row.body_html,[item.horseName],race.source_url).get(item.horseName);if(!profileUrl)return null;
- const performances=decodeStoredCardPriors(storedCardPriorCells(row.body_html,{horseName:item.horseName,profileUrl,beforeDate:race.race_date}),race.source_url).filter(p=>p.raceDate>=item.fromDate).slice(0,limit);
+ const performances=decodeStoredCardPriors(storedCardPriorCells(row.body_html,{horseName:item.horseName,profileUrl,beforeDate:race.race_date}),race.source_url).filter(p=>p.raceDate>=item.fromDate).filter((p,i,all)=>all.findIndex(q=>q.raceDate===p.raceDate&&q.venue===p.venue&&q.raceName===p.raceName)===i).slice(0,limit);
  // A partial card cannot mark profile collection complete or suppress fallback.
  return performances.length>=limit?{profileUrl,performances,sourceSha256:row.source_sha256}:null;
 }

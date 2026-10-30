@@ -4,6 +4,7 @@
   "compatibility_date": "2026-10-03",
   "vars": {
     "LAB_SHARED_PAGE_ACQUISITION": "true",
+    "LAB_SAVED_AUTOMATIC_LOCK": "true",
     "LAB_CARD_COMPLETION_PRIORITIES": "[\"2026-10-25:京都:3\",\"2026-10-25:京都:8\",\"2026-10-25:京都:9\",\"2026-10-25:京都:10\"]"
   },
   "d1_databases": [

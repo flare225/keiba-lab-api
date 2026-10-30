@@ -72,3 +72,27 @@ test('old recovery inspects only a bounded keyset page then reaches later unveri
  const {recoverOldAutomaticPrediction}=await import('../src/automatic-pre-race-prediction.js');const {sql,db,queries}=await fixture();await captureAutomaticPrediction(db,target,now);const row=sql.prepare('SELECT * FROM lab_automatic_predictions_v1').get();for(let i=0;i<25;i++){const key='!verified'+String(i).padStart(2,'0');sql.prepare('INSERT INTO lab_automatic_predictions_v1 VALUES(?,?,?,?,?)').run(key,row.race_date,row.snapshot_json,row.snapshot_sha256,row.saved_at);sql.prepare('INSERT INTO lab_automatic_prediction_receipts_v1 VALUES(?,?,?,?)').run(key,'saved',0,'{}');}
  const later=now+10*86400000,first=await recoverOldAutomaticPrediction(db,later);assert.equal(first.status,'old-page-verified-or-waiting');assert.equal(first.inspectedSnapshots,25);assert.ok(queries.some(q=>/WITH page AS MATERIALIZED/.test(q)&&/LIMIT 25/.test(q)));const next=await recoverOldAutomaticPrediction(db,later+86400001);assert.equal(next.status,'reconciled');assert.equal(next.raceKey,target.date+':京都:11');sql.close();
 });
+
+test('natural forecast and saved-readback queues propagate D1 exhaustion without any subsequent SQL or retry receipt',async()=>{
+ for(const reconcile of [false,true])for(const marked of [false,true]){
+  const {sql,db}=await fixture();
+  if(reconcile)await captureAutomaticPrediction(db,target,now);
+  const before=sql.prepare("SELECT name FROM sqlite_master WHERE name='lab_automatic_predictions_v1'").get()?sql.prepare('SELECT * FROM lab_automatic_predictions_v1').all():[];
+  const error=marked?Object.assign(Error('budget exhausted'),{d1DailyReadLimit:true}):Error("D1_ERROR: Your account has exceeded D1's free tier daily row read limit.");
+  let stopped=false,after=0;
+  const wrapped={prepare(q){
+   if(stopped){after++;throw Error('SQL issued after daily quota');}
+   if(q.startsWith('SELECT * FROM lab_automatic_predictions_v1'))return{bind(){return{first:async()=>{stopped=true;throw error}}}};
+   return db.prepare(q);
+  }};
+  await assert.rejects(scheduledAutomaticPrediction(wrapped,now),e=>e===error);
+  assert.equal(after,0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_automatic_prediction_receipts_v1').get().n,0);
+  assert.deepEqual(sql.prepare('SELECT * FROM lab_automatic_predictions_v1').all(),before);
+  // Once an existing scheduler budget permits another invocation, ordinary
+  // prediction or READ-only reconciliation resumes without a synthetic delay.
+  const resumed=await scheduledAutomaticPrediction(db,now+1000);
+  assert.equal(resumed.integrityVerified,true);assert.equal(resumed.saved,reconcile?0:1);
+  if(reconcile)assert.equal(resumed.verificationOnly,true);
+  sql.close();
+ }
+});

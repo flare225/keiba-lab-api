@@ -19,10 +19,19 @@ export function provisionalStorageKey(input){
  if(input.revisionSha256){if(!/^[a-f0-9]{64}$/.test(input.revisionSha256))throw Error('暫定評価の版識別を確認できません。');storageKey+=':revision:'+input.revisionSha256;}
  return storageKey;
 }
-export async function readProvisionalPrediction(db,input,{exact=false}={}){
+export async function readProvisionalPrediction(db,input,{exact=false,snapshotSha256=null}={}){
  const t=targetInput(input),storageKey=provisionalStorageKey(input);let row;
+ if(snapshotSha256!==null&&!/^[a-f0-9]{64}$/.test(snapshotSha256))throw Error('保存SHAを確認できません。');
  try{
-  if(input.revisionSha256||exact)row=await db.prepare(`SELECT * FROM ${TABLE} WHERE race_key=? ORDER BY saved_at DESC,rowid DESC LIMIT 1`).bind(storageKey).first();
+  // Explicit audit reads must retrieve the witnessed immutable version, even
+  // when the ordinary reader prefers another preparation basis. Race scope
+  // remains bounded by the same exact key and version-key ranges.
+  if(snapshotSha256!==null){
+   const ranges=input.revisionSha256||exact?[]:input.basis?[[storageKey+':revision:',storageKey+':revision;']]:[[storageKey+':predraw:',storageKey+':predraw;'],[storageKey+':revision:',storageKey+':revision;']];
+   const union=[`SELECT * FROM ${TABLE} WHERE race_key=?`,...ranges.map(()=>`SELECT * FROM ${TABLE} WHERE race_key>=? AND race_key<?`)].join(' UNION ALL ');
+   row=await db.prepare(`SELECT * FROM (${union}) WHERE snapshot_sha256=? LIMIT 1`).bind(storageKey,...ranges.flat(),snapshotSha256).first();
+  }
+  else if(input.revisionSha256||exact)row=await db.prepare(`SELECT * FROM ${TABLE} WHERE race_key=? ORDER BY saved_at DESC,rowid DESC LIMIT 1`).bind(storageKey).first();
   else if(input.basis)row=await db.prepare(`SELECT * FROM (SELECT * FROM ${TABLE} WHERE race_key=? UNION ALL SELECT * FROM ${TABLE} WHERE race_key>=? AND race_key<?) ORDER BY saved_at DESC LIMIT 1`).bind(storageKey,storageKey+':revision:',storageKey+':revision;').first();
   else row=await db.prepare(`SELECT * FROM (SELECT * FROM ${TABLE} WHERE race_key=? UNION ALL SELECT * FROM ${TABLE} WHERE race_key>=? AND race_key<? UNION ALL SELECT * FROM ${TABLE} WHERE race_key>=? AND race_key<?) ORDER BY CASE WHEN instr(race_key,':predraw:')>0 THEN 0 ELSE 1 END,saved_at DESC LIMIT 1`).bind(storageKey,storageKey+':predraw:',storageKey+':predraw;',storageKey+':revision:',storageKey+':revision;').first();
  }

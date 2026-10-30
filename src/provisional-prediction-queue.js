@@ -37,7 +37,10 @@ export async function scheduledProvisionalPrediction(db,now=Date.now(),deps={}){
  // Eligibility/retry deadlines above still apply before either selection.
  const completionTurn=Math.floor((now+9*3600000)/3600000)%2===1;
  const completion=completionTurn?due.filter(s=>{const status=byKey.get(provisionalStorageKey(s))?.status;return exists.has(provisionalStorageKey(s))&&(status==='history-updated'||status==='pending-readback'||/^revision-readback:[a-f0-9]{64}$/.test(status||''));}).sort((a,b)=>a.date.localeCompare(b.date)||Number(!(a.raceNo>=9&&a.raceNo<=11))-Number(!(b.raceNo>=9&&b.raceNo<=11))||Number(byKey.get(provisionalStorageKey(a))?.next_at||0)-Number(byKey.get(provisionalStorageKey(b))?.next_at||0)||a.raceNo-b.raceNo||a.venue.localeCompare(b.venue)):[];
- const source=completion[0]||due[0];if(!source)return{status:'no-due-registered-roster',rosterPreparation,externalRequests:0};const k=provisionalStorageKey(source);
+ // Complete due, append-only snapshot readbacks before generating another
+ // revision. The existing due/retry filter above remains authoritative.
+ const readbacks=due.filter(s=>/^revision-readback:[a-f0-9]{64}$/.test(byKey.get(provisionalStorageKey(s))?.status||'')).sort((a,b)=>a.date.localeCompare(b.date)||a.raceNo-b.raceNo||a.venue.localeCompare(b.venue));
+ const source=readbacks[0]||completion[0]||due[0];if(!source)return{status:'no-due-registered-roster',rosterPreparation,externalRequests:0};const k=provisionalStorageKey(source);
  try{
  let result;
  const pendingRevision=/^revision-readback:([a-f0-9]{64})$/.exec(byKey.get(k)?.status||'');

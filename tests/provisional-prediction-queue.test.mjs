@@ -45,7 +45,7 @@ test('untried races prioritize earlier race days rather than registry import ord
 test('new rosters without any usable history are deferred rather than saved as successful predictions',async()=>{const {db,sql}=fixture();const r=await scheduledProvisionalPrediction(db,now,{...deps,sources:async()=>[sources[1]],build:async()=>({scoredRunners:0})});assert.equal(r.status,'awaiting-data');assert.equal(sql.prepare("SELECT count(*) n FROM sqlite_master WHERE name='lab_provisional_predictions_v1'").get().n,0);sql.close();});
 test('hour-boundary cron jitter cannot skip an eligible slot or claim twice in the same hour',async()=>{const {db,sql}=fixture();await scheduledProvisionalPrediction(db,now,deps);sql.prepare("UPDATE lab_provisional_clock_v1 SET next_at=? WHERE name='queue'").run(now+3600000+6000);const first=await scheduledProvisionalPrediction(db,now+3600000+1000,deps);assert.equal(first.status,'verified');const second=await scheduledProvisionalPrediction(db,now+3600000+2000,deps);assert.equal(second.status,'not-due');assert.equal(sql.prepare("SELECT next_at FROM lab_provisional_clock_v1 WHERE name='queue'").get().next_at,now+7200000);sql.close();});
 test('new stored history appends a revised provisional snapshot without mutating the original and unchanged input is idempotent',async()=>{const {db,sql}=fixture();let version=0;const one={...deps,sources:async()=>[sources[1]],build:async(db,s)=>({ok:true,status:'provisional-expected-roster',race:s,runnerCount:1,scoredRunners:1,histories:[{horseName:s.venue,date:version?'2026-10-20':'2026-10-10',finish:version?2:4}],runners:[{horseName:s.venue,horseNo:null,frameNo:null,rank:1,score:version?95:90,mark:'◎',assessment:{historyRows:version?3:2}}],guardrails:{humanMarksUsed:false,officialCard:false,locked:false,eligibleForLearning:false}})};const first=await scheduledProvisionalPrediction(db,now,one);assert.equal(first.saved,1);const original=await readProvisionalPrediction(db,sources[1],{exact:true});const originalBody=sql.prepare('SELECT snapshot_json FROM lab_provisional_predictions_v1 WHERE race_key=?').get(sources[1].raceKey).snapshot_json;version=1;assert.equal(await markProvisionalHistoryUpdated(db,sources[1],now+3600000),1);const revised=await scheduledProvisionalPrediction(db,now+3600000,one);assert.equal(revised.status,'verified');assert.equal(revised.saved,1);assert.equal(revised.evaluationChanged,true);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,2);assert.equal(sql.prepare('SELECT snapshot_json FROM lab_provisional_predictions_v1 WHERE race_key=?').get(sources[1].raceKey).snapshot_json,originalBody);assert.equal((await readProvisionalPrediction(db,sources[1],{exact:true})).snapshotSha256,original.snapshotSha256);assert.equal((await readProvisionalPrediction(db,sources[1])).snapshotSha256,revised.snapshotSha256);assert.equal(await markProvisionalHistoryUpdated(db,sources[1],now+7200000),1);const unchanged=await scheduledProvisionalPrediction(db,now+7200000,one);assert.equal(unchanged.status,'verified');assert.equal(unchanged.saved,0);assert.equal(unchanged.evaluationChanged,false);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,2);sql.close();});
-test('unprocessed roster keeps the existing priority ahead of an updated prior evaluation',async()=>{const {db,sql}=fixture();const one={...deps,sources:async()=>[sources[1]]};await scheduledProvisionalPrediction(db,now,one);await markProvisionalHistoryUpdated(db,sources[1],now+3600000);const r=await scheduledProvisionalPrediction(db,now+3600000,{...deps,sources:async()=>[sources[1],sources[2]]});assert.equal(r.target,sources[2].raceKey);assert.equal(r.saved,1);sql.close();});
+test('the alternate FIFO turn keeps unprocessed roster opportunity ahead of an updated prior evaluation',async()=>{const {db,sql}=fixture();const one={...deps,sources:async()=>[sources[1]]};await scheduledProvisionalPrediction(db,now,one);await markProvisionalHistoryUpdated(db,sources[1],now+3600000);const r=await scheduledProvisionalPrediction(db,now+7200000,{...deps,sources:async()=>[sources[1],sources[2]]});assert.equal(r.target,sources[2].raceKey);assert.equal(r.saved,1);sql.close();});
 test('one history update wakes both expected and confirmed-predraw queue entries for the same race',async()=>{const {db,sql}=fixture();await scheduledProvisionalPrediction(db,now,{...deps,sources:async()=>[sources[1]]});const base=sources[1].raceKey;sql.prepare("INSERT INTO lab_provisional_queue_v1 VALUES(?,'verified',?,NULL)").run(base+':predraw:'+'a'.repeat(64),now+86400000);const changed=await markProvisionalHistoryUpdated(db,sources[1],now+3600000);assert.equal(changed,2);assert.equal(sql.prepare("SELECT count(*) n FROM lab_provisional_queue_v1 WHERE status='history-updated'").get().n,2);sql.close();});
 test('uncertain append-only revision resumes exact readback without rebuilding or rewriting either revision',async()=>{const {db,sql}=fixture();let version=0;const one={...deps,sources:async()=>[sources[1]],build:async(db,s)=>({ok:true,status:'provisional-expected-roster',race:s,runnerCount:1,scoredRunners:1,histories:[{horseName:s.venue,date:version?'2026-10-20':'2026-10-10'}],runners:[{horseName:s.venue,horseNo:null,frameNo:null,rank:1,score:version?95:90,mark:'◎',assessment:{historyRows:version?3:2}}],guardrails:{humanMarksUsed:false,officialCard:false,locked:false,eligibleForLearning:false}})};await scheduledProvisionalPrediction(db,now,one);const old=await readProvisionalPrediction(db,sources[1],{exact:true});version=1;await markProvisionalHistoryUpdated(db,sources[1],now+3600000);let inserted=false,failed=false;const wrapped={prepare(q){const base=db.prepare(q),wrap=args=>{const b=base.bind(...args);return{async first(){if(inserted&&!failed&&q.startsWith('SELECT * FROM lab_provisional_predictions_v1')&&String(args[0]).includes(':revision:')){failed=true;throw Error('temporary revision readback failure');}return b.first()},async all(){return b.all()},async run(){const r=await b.run();if(q.startsWith('INSERT OR IGNORE INTO lab_provisional_predictions_v1'))inserted=true;return r;}}};return{...wrap([]),bind(...args){return wrap(args);}}}};const uncertain=await scheduledProvisionalPrediction(wrapped,now+3600000,one);assert.equal(uncertain.status,'pending-readback');assert.match(uncertain.pendingRevisionSha256,/^[a-f0-9]{64}$/);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,2);assert.equal(sql.prepare('SELECT status FROM lab_provisional_queue_v1 WHERE race_key=?').get(sources[1].raceKey).status,'revision-readback:'+uncertain.pendingRevisionSha256);const resumed=await scheduledProvisionalPrediction(db,now+3*3600000,{...one,build:async()=>{throw Error('must not rebuild')}});assert.equal(resumed.status,'verified');assert.equal(resumed.saved,0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,2);assert.equal((await readProvisionalPrediction(db,sources[1],{exact:true})).snapshotSha256,old.snapshotSha256);assert.equal((await readProvisionalPrediction(db,sources[1])).snapshotSha256,resumed.snapshotSha256);sql.close();});
 
@@ -57,4 +57,50 @@ test('expanded roster triggers append-only evaluation without a history fetch an
  const expanded=await scheduledProvisionalPrediction(db,now+3600000,one);assert.equal(expanded.saved,1);assert.equal(expanded.evaluationChanged,true);
  assert.equal((await readProvisionalPrediction(db,source)).snapshot.runnerCount,17);assert.equal((await readProvisionalPrediction(db,source,{exact:true})).snapshotSha256,old.snapshotSha256);
  assert.equal((await scheduledProvisionalPrediction(db,now+7200000,one)).status,'no-due-registered-roster');assert.equal(sql.prepare('SELECT count(*) n FROM lab_provisional_predictions_v1').get().n,2);sql.close();
+});
+
+
+test('Saturday main history updates receive an hourly turn despite Sunday zero-deadline arrivals, with the alternate turn preserved',async()=>{
+ const {db,sql}=fixture(),stamp=Date.parse('2026-10-30T12:00:00Z'); // 21 JST: completion turn
+ const saturday={date:'2026-10-31',venue:'東京',raceNo:11},sunday={date:'2026-11-01',venue:'京都',raceNo:2};
+ const one={...deps,sources:async()=>[saturday]};
+ await scheduledProvisionalPrediction(db,stamp-3600000,one);
+ await markProvisionalHistoryUpdated(db,saturday,stamp-1000);
+ const original=await readProvisionalPrediction(db,saturday,{exact:true});
+ const mixed={...deps,sources:async()=>[sunday,saturday]};
+ const completion=await scheduledProvisionalPrediction(db,stamp,mixed);
+ assert.equal(completion.target,'2026-10-31:東京:11');assert.equal(completion.externalRequests,0);
+ assert.equal((await scheduledProvisionalPrediction(db,stamp+1000,mixed)).status,'not-due');
+ await markProvisionalHistoryUpdated(db,saturday,stamp+3600000-1000);
+ const fair=await scheduledProvisionalPrediction(db,stamp+3600000,mixed);
+ assert.equal(fair.target,'2026-11-01:京都:2');assert.equal(fair.saved,1);
+ assert.equal((await readProvisionalPrediction(db,saturday,{exact:true})).snapshotSha256,original.snapshotSha256);
+ sql.close();
+});
+
+test('completion turns keep retry deadlines and prefer the earlier main race without excluding flat races',async()=>{
+ const {db,sql}=fixture(),stamp=Date.parse('2026-10-30T12:00:00Z'); // 21 JST
+ const flat={date:'2026-10-31',venue:'京都',raceNo:1},main={date:'2026-10-31',venue:'東京',raceNo:11},later={date:'2026-11-01',venue:'東京',raceNo:11};
+ // Real immutable snapshots/receipts, then due updates, not fabricated saved flags.
+ for(const [i,source] of [flat,main,later].entries())await scheduledProvisionalPrediction(db,stamp-(3-i)*3600000,{...deps,sources:async()=>[source]});
+ for(const source of [flat,main,later])await markProvisionalHistoryUpdated(db,source,stamp-1000);
+ sql.prepare('UPDATE lab_provisional_queue_v1 SET next_at=? WHERE race_key=?').run(stamp+7200000,'2026-10-31:東京:11');
+ const mix={...deps,sources:async()=>[later,main,flat]};
+ const first=await scheduledProvisionalPrediction(db,stamp,mix);assert.equal(first.target,'2026-10-31:京都:1');
+ await markProvisionalHistoryUpdated(db,flat,stamp+7200000-1000);
+ const second=await scheduledProvisionalPrediction(db,stamp+7200000,mix);assert.equal(second.target,'2026-10-31:東京:11');
+ assert.equal(second.externalRequests,0);sql.close();
+});
+
+test('a failing priority revision keeps its two-hour backoff while Sunday uses the alternate slot',async()=>{
+ const {db,sql}=fixture(),stamp=Date.parse('2026-10-30T12:00:00Z');
+ const saturday={date:'2026-10-31',venue:'東京',raceNo:11},sunday={date:'2026-11-01',venue:'京都',raceNo:2};
+ await scheduledProvisionalPrediction(db,stamp-3600000,{...deps,sources:async()=>[saturday]});
+ await markProvisionalHistoryUpdated(db,saturday,stamp-1000);
+ const mixed={...deps,sources:async()=>[saturday,sunday]};
+ const failed=await scheduledProvisionalPrediction(db,stamp,{...mixed,build:async()=>{throw Error('missing conditions')}});
+ assert.equal(failed.status,'history-updated');assert.equal(failed.nextAttemptAt,new Date(stamp+7200000).toISOString());
+ const next=await scheduledProvisionalPrediction(db,stamp+3600000,mixed);assert.equal(next.target,'2026-11-01:京都:2');
+ const retried=await scheduledProvisionalPrediction(db,stamp+7200000,mixed);assert.equal(retried.target,'2026-10-31:東京:11');assert.equal(retried.status,'verified');
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,2);sql.close();
 });

@@ -17,7 +17,7 @@ export async function readAutomaticPrediction(db,input,{includePending=false}={}
  if(!row){
   if(!includePending)return{ok:true,available:false};
   let pending;try{pending=await db.prepare(`SELECT status,next_attempt_at,detail_json FROM ${RECEIPTS} WHERE race_key=?`).bind(`${t.date}:${t.venue}:${t.raceNo}`).first()}catch(e){if(!/no such table/i.test(String(e)))throw e;}
-  return{ok:true,available:false,pending:pending?{status:pending.status,nextAttemptAt:new Date(pending.next_attempt_at).toISOString(),detail:JSON.parse(pending.detail_json)}:null};
+  return{ok:true,available:false,target:t,pending:pending?{status:pending.status,nextAttemptAt:new Date(pending.next_attempt_at).toISOString(),detail:JSON.parse(pending.detail_json)}:null};
  }
  if(await sha256(row.snapshot_json)!==row.snapshot_sha256)throw Error('自動事前予想のハッシュが一致しません。');
  const snapshot=JSON.parse(row.snapshot_json);

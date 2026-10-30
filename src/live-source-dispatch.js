@@ -31,7 +31,7 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
  // the existing coordinator result, with no new table or periodic clock.
  let clearedPredrawSelection=null;
  const selected=r=>r&&clearedPredrawSelection&&!r.cardSelection?{...r,cardSelection:clearedPredrawSelection}:r;
- const acquisition=r=>selected(r&&(r.externalRequests||r.attempted||r.saveMayHaveSucceeded)?{...r,historyWorkStage:'acquisition'}:r);
+ const acquisition=r=>selected(r&&(r.externalRequests||r.attempted||r.saveMayHaveSucceeded)?{...r,historyWorkStage:'acquisition',...((r.formalCardSaved||r.httpStatus===200)&&r.cardSelection?{cardSelection:{...r.cardSelection,priorityFormalHistoryPending:true}}:{})}:r);
  const history=r=>selected(r&&(r.externalRequests||r.attempted||r.saveMayHaveSucceeded)?{...r,historyWorkStage:'history'}:r);
  let checkedUpcoming=false;
  if(previousHistoryWorkStage==='acquisition'){
@@ -51,10 +51,10 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
  // Give those known inputs one history turn before requesting another card.
  // This mode cannot discover/fetch a roster for unresolved names. The common
  // gate above and the existing one-horse collector still own every source call.
- if(cardCompletionFirst&&previousHistoryWorkStage==='acquisition'&&previousCardSelection?.savedPredrawHistoryPending){
-  const saved=await priorityExpected(db,{...deps,knownProfilesOnly:true});
-  if(stops(saved))return {...history(saved),...(saved.externalRequests||saved.attempted?{cardSelection:{...previousCardSelection,savedPredrawHistoryPending:false}}:{})};
-  clearedPredrawSelection={...previousCardSelection,savedPredrawHistoryPending:false};
+ if(cardCompletionFirst&&previousHistoryWorkStage==='acquisition'&&(previousCardSelection?.savedPredrawHistoryPending||previousCardSelection?.priorityFormalHistoryPending)){
+  const saved=await priorityExpected(db,{...deps,knownProfilesOnly:true,...(previousCardSelection.priorityFormalHistoryPending?{includeFormalHistory:true}:{})});
+  if(stops(saved))return {...history(saved),...(saved.externalRequests||saved.attempted?{cardSelection:{...previousCardSelection,savedPredrawHistoryPending:false,priorityFormalHistoryPending:false}}:{})};
+  clearedPredrawSelection={...previousCardSelection,savedPredrawHistoryPending:false,priorityFormalHistoryPending:false};
   deps.previousCardSelection=clearedPredrawSelection;
  }
  let card=cardCompletionFirst?await cards(db,{...cardInput,publicationWindowOnly:true},deps):null;

@@ -215,7 +215,7 @@ test('unresolved expected profiles expose waiting reason instead of reporting id
 });
 test('registered upcoming roster continues collecting after formal publication regardless of static priority',async()=>{
  const {db,sql}=await fixture();sql.exec("INSERT INTO jra_races VALUES('future','2026-10-10','東京',11,'試験','https://www.jra.go.jp/card',2);INSERT INTO jra_runners VALUES('future',1,'HorseA',2),('future',2,'HorseB',2);CREATE TABLE lab_provisional_queue_v1(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_at INTEGER NOT NULL,error TEXT);INSERT INTO lab_provisional_queue_v1 VALUES('2026-10-10:東京:11','verified',9999999999999,NULL)");
- const r=await collectUpcomingExpectedHistory(db,{sources:[{...source,snapshotId:'registered:abc',priority:50}],now:()=>stamp,wait:async()=>{},fetcher:async url=>new Response(url.includes('accessU')?html:'<a href="'+profile+'">HorseA</a>',{headers:{'content-type':'text/html; charset=utf-8'}})});
+ const r=await collectUpcomingExpectedHistory(db,{knownProfilesOnly:true,includeFormalHistory:true,sources:[{...source,snapshotId:'registered:abc',priority:50}],now:()=>stamp,wait:async()=>{},fetcher:async url=>new Response(url.includes('accessU')?html:'<a href="'+profile+'">HorseA</a>',{headers:{'content-type':'text/html; charset=utf-8'}})});
  assert.equal(r.attempted,1);assert.equal(r.before.race.raceKey,'future');assert.equal(r.after.totalStoredRows,1);assert.equal(r.provisionalEvaluationQueued,1);assert.equal(sql.prepare('SELECT status,next_at FROM lab_provisional_queue_v1 WHERE race_key=?').get('2026-10-10:東京:11').status,'history-updated');assert.equal(sql.prepare('SELECT next_at FROM lab_provisional_queue_v1 WHERE race_key=?').get('2026-10-10:東京:11').next_at,stamp);sql.close();
 });
 

@@ -8,18 +8,22 @@ export function buildProvisionalPrediction(source,conditions,histories,now=Date.
  const today=new Date(now+9*3600000).toISOString().slice(0,10);
  if(source.date<=today)throw Error('暫定生成は翌日以降の開催に限定します。');
  if(!['芝','ダート','障害'].includes(conditions?.surface)||!Number.isInteger(Number(conditions?.distance))||Number(conditions.distance)<=0)throw Error('保存済み番組のコース・距離を確認できません。');
- const race={date:source.date,venue:source.venue,surface:conditions.surface,distance:Number(conditions.distance)};
+ const confirmed=source.rosterBasis==='confirmed-predraw';
+ if(confirmed&&(source.provider!=='JRA'||source.confirmationVerified!==true))throw Error('枠順前名簿の確認根拠がありません。');
+ const preparation={stage:confirmed?'entries-confirmed-predraw':'entries-unconfirmed',label:confirmed?'暫定予想・枠順未確定':'暫定評価・出走未確定',entriesConfirmed:confirmed,candidateSetComplete:confirmed?true:null,provider:source.provider||null,kind:source.kind||null,sourceUrl:source.sourceUrl||null,observedAt:source.observedAt||null,sourceSnapshotId:source.snapshotId||null,sourceSha256:source.sourceSha256||null,officialCard:false,formalLockEligible:false};
+ const debut=/^https:\/\/www\.jra\.go\.jp\//.test(conditions.source_url||'')&&/新馬/.test(conditions.race_label||'');
+ const race={date:source.date,venue:source.venue,surface:conditions.surface,distance:Number(conditions.distance),...(debut?{raceType:'debut'}:{})};
  const rows=rankAssessment(source.names.map(horseName=>({horseName,horseNo:null,frameNo:null,assessment:assessExpectedHistory(histories.get(horseName),race,null,'recent-three-v1')})));
  const marks=['◎','○','▲','△','☆'];
  for(const row of rows){row.score=row.assessment.evidenceScore;row.rank=row.referenceRank;row.mark=row.rank===null?null:(marks[row.rank-1]||'注');}
- return {ok:true,status:'provisional-expected-roster',generatedAt:new Date(now).toISOString(),modelVersion:'existing-safe-core-1.5-recent-three-v1',race:{...race,raceNo:source.raceNo,raceName:source.raceName},roster:{snapshotId:source.snapshotId,sourceUrl:source.sourceUrl,observedAt:source.observedAt},conditionsSourceUrl:conditions.source_url,runnerCount:rows.length,scoredRunners:rows.filter(r=>r.rank!==null).length,runners:rows,histories:source.names.map(name=>histories.get(name)),guardrails:{humanMarksUsed:false,officialCard:false,horseNumbersAssigned:false,locked:false,persisted:false,eligibleForLearning:false,targetResultUsed:false,noForcedTieBreak:true,externalRequests:0},notice:'想定名簿による暫定参考評価。登録除外・取消・枠順は未反映。同点は同順位・同じ印。netkeiba由来の履歴はJRA公式照合済みではありません。'};
+ return {ok:true,status:'provisional-expected-roster',evaluationStatus:debut&&rows.every(r=>r.rank===null)?'roster-saved-evaluation-held':'provisional-reference',preparation,generatedAt:new Date(now).toISOString(),modelVersion:'existing-safe-core-1.5-recent-three-v1',race:{...race,raceNo:source.raceNo,raceName:source.raceName},roster:{snapshotId:source.snapshotId,sourceUrl:source.sourceUrl,observedAt:source.observedAt},conditionsSourceUrl:conditions.source_url,runnerCount:rows.length,scoredRunners:rows.filter(r=>r.rank!==null).length,runners:rows,histories:source.names.map(name=>histories.get(name)),guardrails:{humanMarksUsed:false,officialCard:false,horseNumbersAssigned:false,locked:false,persisted:false,eligibleForLearning:false,targetResultUsed:false,noForcedTieBreak:true,externalRequests:0},notice:'想定名簿による暫定参考評価。登録除外・取消・枠順は未反映。同点は同順位・同じ印。netkeiba由来の履歴はJRA公式照合済みではありません。'};
 }
-export async function provisionalExpectedPrediction(db,source,now=Date.now()){
+export async function provisionalExpectedPrediction(db,source,now=Date.now(),program={}){
  if(!source)throw Error('想定名簿が保存されていません。');
  // Stop before expensive history reads for old targets or incomplete programs.
  const today=new Date(now+9*3600000).toISOString().slice(0,10);
  if(source.date<=today)throw Error('暫定生成は翌日以降の開催に限定します。');
- const conditions=await db.prepare('SELECT surface,distance,source_url FROM jra_race_program WHERE race_date=? AND venue=? AND race_no=?').bind(source.date,source.venue,source.raceNo).first();
+ const conditions=program.loaded===true?program.conditions:await db.prepare('SELECT surface,distance,source_url,race_label FROM jra_race_program WHERE race_date=? AND venue=? AND race_no=?').bind(source.date,source.venue,source.raceNo).first();
  if(!conditions?.surface||!conditions?.distance)throw Error('保存済み番組のコース・距離を確認できません。');
  const context={...source,runners:source.names.map(horse_name=>({horse_name,age:expectedAge(source,horse_name)}))};
  const batch=await postRaceHistoryBatch(db,context),histories=new Map();
@@ -31,13 +35,13 @@ export async function provisionalExpectedPrediction(db,source,now=Date.now()){
 export async function repairStoredProgramConditions(db,source){
  const args=[source.date,source.venue,source.raceNo];
  const row=await db.prepare('SELECT race_label,surface,distance,source_url FROM jra_race_program WHERE race_date=? AND venue=? AND race_no=?').bind(...args).first();
- if(!row||row.surface&&row.distance)return{repaired:0};
- let url;try{url=new URL(row.source_url)}catch{return{repaired:0,reason:'official-source-unconfirmed'}};
- if(url.protocol!=='https:'||url.hostname!=='www.jra.go.jp')return{repaired:0,reason:'official-source-unconfirmed'};
+ if(!row||row.surface&&row.distance)return{repaired:0,conditions:row||null};
+ let url;try{url=new URL(row.source_url)}catch{return{repaired:0,reason:'official-source-unconfirmed',conditions:row}};
+ if(url.protocol!=='https:'||url.hostname!=='www.jra.go.jp')return{repaired:0,reason:'official-source-unconfirmed',conditions:row};
  const parsed=parseProgramLabel(row.race_label);
- if(!parsed.surface||!parsed.distance||row.surface&&row.surface!==parsed.surface||row.distance&&Number(row.distance)!==parsed.distance)return{repaired:0,reason:'stored-label-insufficient-or-conflicting'};
+ if(!parsed.surface||!parsed.distance||row.surface&&row.surface!==parsed.surface||row.distance&&Number(row.distance)!==parsed.distance)return{repaired:0,reason:'stored-label-insufficient-or-conflicting',conditions:row};
  const result=await db.prepare("UPDATE jra_race_program SET surface=COALESCE(NULLIF(surface,''),?),distance=COALESCE(distance,?) WHERE race_date=? AND venue=? AND race_no=? AND (surface IS NULL OR surface='' OR distance IS NULL)").bind(parsed.surface,parsed.distance,...args).run();
  const read=await db.prepare('SELECT surface,distance FROM jra_race_program WHERE race_date=? AND venue=? AND race_no=?').bind(...args).first();
  if(read?.surface!==parsed.surface||Number(read.distance)!==parsed.distance)throw Error('番組条件の補完後読返しが一致しません。');
- return{repaired:Number(result.meta?.changes)||0,sourceUrl:row.source_url,sourceLabel:row.race_label,readbackVerified:true};
+ return{repaired:Number(result.meta?.changes)||0,sourceUrl:row.source_url,sourceLabel:row.race_label,readbackVerified:true,conditions:{...row,...read}};
 }

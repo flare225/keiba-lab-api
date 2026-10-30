@@ -2,6 +2,32 @@ import test from 'node:test';import assert from 'node:assert/strict';import {Dat
 import {dispatchLiveSources,collectLiveHistory,preferOfficialCards,cardCompletionPriorities} from '../src/live-source-dispatch.js';
 function fixture(){const sql=new DatabaseSync(':memory:');const db={prepare(q){const w=(a=[])=>({bind(...b){return w(b)},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}},async run(){const r=sql.prepare(q).run(...a);return{meta:{changes:r.changes}}}});return w()}};return{sql,db}}
 const start=Date.parse('2026-10-19T00:12:00Z');
+test('an exhausted predraw handoff falls back once and does not repeat the known-profile scan next turn',async()=>{
+ let scans=0,cards=0;const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
+ const deps={now:()=>start,cardCompletionFirst:true,priorityExpected:async()=>{scans++;return{status:'idle',externalRequests:0}},cards:async()=>{cards++;return{status:'official-card-link-found',externalRequests:1}}};
+ let selection={lane:'card',savedPredrawHistoryPending:true};
+ for(let i=0;i<2;i++){const r=await collectLiveHistory(db,{scheduledTime:start+i*60000},{...deps,previousHistoryWorkStage:'acquisition',previousCardSelection:selection});selection=r.cardSelection||selection;}
+ assert.equal(scans,1);assert.equal(cards,2);assert.equal(selection.savedPredrawHistoryPending,false);
+});
+test('pending predraw history cannot bypass shared cooldown or a collector safety stop',async()=>{
+ const stamp=start,selection={lane:'card',savedPredrawHistoryPending:true};
+ for(const blocked of [true,false]){
+  let called=0;const db={prepare(){return{async first(){return{next_batch_at:blocked?stamp+3600000:0,locked_until:0}}}}};
+  const r=await collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',previousCardSelection:selection,
+   priorityExpected:async(_,deps)=>{called++;assert.equal(deps.knownProfilesOnly,true);return{status:'paused',externalRequests:0}},cards:()=>assert.fail('no fallback on safety stop')});
+  assert.equal(r.status,blocked?'cooldown':'paused');assert.equal(called,blocked?0:1);assert.equal(r.cardSelection,undefined);
+ }
+});
+test('after acquisition an existing roster gets its history turn before unrelated calendar recovery',async()=>{
+ const stamp=Date.parse('2026-10-28T00:54:49Z'),calls=[];
+ const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
+ const r=await collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,previousHistoryWorkStage:'acquisition',cardCompletionFirst:true,cards:async()=>({status:'awaiting-official-publication',externalRequests:0}),missing:async()=>({status:'source-not-due',externalRequests:0}),registered:async()=>[{date:'2026-11-01'}],expected:async()=>{calls.push('saved-roster-history');return{status:'collected',attempted:1,externalRequests:1}},programs:async()=>{calls.push('unrelated-calendar');return{status:'source-unconfirmed',externalRequests:1,error:'JRA program HTTP 403'}}});
+ assert.deepEqual(calls,['saved-roster-history']);assert.equal(r.historyWorkStage,'history');assert.equal(r.externalRequests,1);
+});
+test('calendar recovery retains its turn after a history batch while acquisition cooldown cannot fall through',async()=>{
+ const stamp=Date.parse('2026-10-28T00:54:49Z');
+ for(const stage of ['history','acquisition']){const calls=[];const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};const r=await collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,previousHistoryWorkStage:stage,cardCompletionFirst:true,cards:async()=>({status:'awaiting-official-publication',externalRequests:0}),missing:async()=>null,registered:async()=>[{date:'2026-11-01'}],expected:async()=>{calls.push('history');return{status:'cooldown',externalRequests:0}},programs:async()=>{calls.push('program');return{status:'verified-published-program',externalRequests:1}}});assert.deepEqual(calls,stage==='history'?['program']:['history']);assert.equal(r.externalRequests,stage==='history'?1:0);}
+});
 test('before publication card discovery yields to program recovery and existing roster history preparation',async()=>{
  const stamp=Date.parse('2026-10-26T00:00:00Z');
  for(const stage of ['program','program-cached','history']){
@@ -134,4 +160,85 @@ test('existing source coordinator passes the shared discoverer only when explici
 test('invalid completion priority configuration fails before database or source work',async()=>{
  for(const value of ['{}','["2026-10-25:京都:13"]','["2026-10-25:京都:3","2026-10-25:京都:3"]'])assert.throws(()=>cardCompletionPriorities(value),/Invalid card completion priorities/);
  let observed;await collectLiveHistory({}, {scheduledTime:start},{now:()=>start,cardCompletionFirst:true,completionPriorityRaceKeys:['2026-10-25:京都:3'],cards:async(_,input,deps)=>{observed=deps.completionPriorityRaceKeys;return{status:'official-card-saved',externalRequests:1}}});assert.deepEqual(observed,['2026-10-25:京都:3']);
+});
+
+
+test('saved roster history turn precedes a due supplemental request and yields the next turn back',async()=>{
+ const stamp=Date.parse('2026-10-28T06:54:48Z'),seen=[];
+ const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
+ let stage='acquisition';
+ for(let i=0;i<4;i++){
+  const r=await collectLiveHistory(db,{scheduledTime:stamp+i*540000},{now:()=>stamp+i*540000,previousHistoryWorkStage:stage,cardCompletionFirst:true,
+   cards:async()=>({status:'awaiting-official-publication',externalRequests:0}),registered:async()=>[{date:'2026-11-01'}],
+   missing:async()=>{seen.push('roster');return{status:'publication-unconfirmed',externalRequests:1}},
+   expected:async()=>{seen.push('history');return{status:'collected',attempted:1,externalRequests:1}},programs:()=>assert.fail('one source only')});
+  stage=r.historyWorkStage;assert.equal(r.externalRequests,1);
+ }
+ assert.deepEqual(seen,['history','roster','history','roster']);
+});
+test('idle saved history falls through once and a returned safety stop cannot reach supplemental',async()=>{
+ const stamp=Date.parse('2026-10-28T06:54:48Z');
+ for(const status of ['idle','cooldown','paused','lease-unavailable','shared-gate-unavailable']){
+  let history=0,missing=0;const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
+  const r=await collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,previousHistoryWorkStage:'acquisition',cardCompletionFirst:true,
+   cards:async()=>({status:'awaiting-official-publication',externalRequests:0}),registered:async()=>[{date:'2026-11-01'}],
+   expected:async()=>{history++;return{status,externalRequests:0}},missing:async()=>{missing++;return{status:'roster-saved',externalRequests:1}},programs:()=>assert.fail('stop')});
+  assert.equal(history,1);assert.equal(missing,status==='idle'?1:0);assert.equal(r.status,status==='idle'?'roster-saved':status);
+ }
+});
+
+test('actionable saved history keeps its turn after official publication when card discovery has no source work',async()=>{
+ const stamp=Date.parse('2026-10-29T00:31:00Z'),seen=[];
+ const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
+ let stage='acquisition';
+ for(let i=0;i<4;i++){
+  const r=await collectLiveHistory(db,{scheduledTime:stamp+i*600000},{now:()=>stamp+i*600000,previousHistoryWorkStage:stage,cardCompletionFirst:true,
+   cards:async()=>({status:'discovery-not-due',externalRequests:0}),registered:async()=>[{date:'2026-11-01'}],
+   missing:async()=>{seen.push('roster');return{status:'publication-unconfirmed',externalRequests:1}},
+   expected:async()=>{seen.push('saved-history');return{status:'collected',attempted:1,externalRequests:1}},programs:()=>assert.fail('one source only')});
+  stage=r.historyWorkStage;
+ }
+ assert.deepEqual(seen,['saved-history','roster','saved-history','roster']);
+});
+
+test('unresolved saved profiles retain the history turn without starving the next acquisition turn',async()=>{
+ const stamp=Date.parse('2026-10-29T00:31:00Z'),seen=[];
+ const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
+ const waiting=[{raceKey:'2026-10-31:東京:11',missingProfileLinks:['fixture'],pendingHorses:1}];
+ const deps={now:()=>stamp,cardCompletionFirst:true,
+  cards:async()=>({status:'discovery-not-due',externalRequests:0}),registered:async()=>[{date:'2026-10-31'}],
+  expected:async()=>{seen.push('history');return{ok:true,status:'awaiting-source-readiness',waiting,externalRequests:0}},
+  missing:async()=>{seen.push('roster');return{status:'publication-unconfirmed',externalRequests:1}},programs:()=>assert.fail('no unrelated work')};
+ const first=await collectLiveHistory(db,{scheduledTime:stamp},{...deps,previousHistoryWorkStage:'acquisition'});
+ assert.equal(first.blockedStage,'profile-link-discovery');assert.deepEqual(first.waiting,waiting);
+ assert.equal(first.externalRequests,0);assert.equal(first.historyWorkStage,'history');assert.deepEqual(seen,['history']);
+ const second=await collectLiveHistory(db,{scheduledTime:stamp},{...deps,previousHistoryWorkStage:first.historyWorkStage});
+ assert.equal(second.historyWorkStage,'acquisition');assert.deepEqual(seen,['history','roster']);
+});
+
+ test('cached shared navigation without a card cannot consume the saved-history turn',async()=>{
+ const stamp=Date.parse('2026-10-29T08:06:49Z'),seen=[];
+ const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
+ const cached={status:'page-parsed',attempted:true,reusedBody:true,externalRequests:0,officialCardsCreated:false,discoveredCards:0,discoveredPages:45};
+ const deps={now:()=>stamp,cardCompletionFirst:true,cards:async()=>cached,registered:async()=>[{date:'2026-10-31'}],expected:async()=>{seen.push('history');return{status:'collected',externalRequests:1,historyRowsSaved:3}},missing:()=>assert.fail('no unrelated roster'),programs:()=>assert.fail('no unrelated calendar')};
+ const first=await collectLiveHistory(db,{scheduledTime:stamp},{...deps,previousHistoryWorkStage:'acquisition'});
+ assert.deepEqual(seen,['history']);assert.equal(first.historyRowsSaved,3);assert.equal(first.historyWorkStage,'history');
+ const second=await collectLiveHistory(db,{scheduledTime:stamp},{...deps,previousHistoryWorkStage:'history'});
+ assert.equal(second.status,'page-parsed');assert.equal(second.historyWorkStage,'acquisition');assert.deepEqual(seen,['history']);
+ });
+
+test('a saved formal card hands one existing slot to priority formal history before another card',async()=>{
+ const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};let calls=[];
+ const deps={now:()=>start,cardCompletionFirst:true,cards:async()=>{calls.push('card');return{status:'official-card-saved',formalCardSaved:true,externalRequests:1,cardSelection:{lane:'card'}}},priorityExpected:async(_,d)=>{assert.equal(d.knownProfilesOnly,true);assert.equal(d.includeFormalHistory,true);calls.push('history');return{status:'collected',attempted:1,externalRequests:0,addedRows:3}}};
+ const a=await collectLiveHistory(db,{},deps);assert.equal(a.cardSelection.priorityFormalHistoryPending,true);
+ const b=await collectLiveHistory(db,{}, {...deps,previousHistoryWorkStage:a.historyWorkStage,previousCardSelection:a.cardSelection});assert.deepEqual(calls,['card','history']);assert.equal(b.addedRows,3);assert.equal(b.cardSelection.priorityFormalHistoryPending,false);
+ const c=await collectLiveHistory(db,{}, {...deps,previousHistoryWorkStage:b.historyWorkStage,previousCardSelection:b.cardSelection});assert.equal(c.status,'official-card-saved');assert.deepEqual(calls,['card','history','card']);
+});
+
+test('successful navigation also hands off formal history, while shared cooldown stops before either lane',async()=>{
+ for(const blocked of [false,true]){let calls=[];const db={prepare(){return{async first(){return{next_batch_at:blocked?start+3600000:0,locked_until:0}}}}};
+ const deps={now:()=>start,cardCompletionFirst:true,cards:async()=>({status:'page-parsed',externalRequests:1,httpStatus:200,cardSelection:{lane:'discovery'}}),priorityExpected:async()=>{calls.push('history');return{status:'idle',externalRequests:0}}};
+ const first=await collectLiveHistory(db,{},deps);assert.equal(first.cardSelection.priorityFormalHistoryPending,true);
+ const r=await collectLiveHistory(db,{}, {...deps,previousHistoryWorkStage:'acquisition',previousCardSelection:first.cardSelection});
+ assert.equal(calls.length,blocked?0:1);if(blocked)assert.equal(r.status,'cooldown');else assert.equal(r.status,'page-parsed');}
 });

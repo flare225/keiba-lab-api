@@ -1,0 +1,171 @@
+{
+  "raceKey": "2026-10-31:京都:1",
+  "sourceUrl": "https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202604100120261031%2F52",
+  "sourceSha256": "3e529d6c27ab3da212e8f05cac3412ed36173fd0298656c11afdee33d9399db8",
+  "observedAt": "2026-10-29T13:12:50.558Z",
+  "sourceIntegrityVerified": true,
+  "fullBodyIncluded": false,
+  "note": "Parsed runner/profile identity evidence from independently hash-verified stored source; test history responses are synthetic.",
+  "runners": [
+    {
+      "horse_name": "アセンシオン",
+      "age": 2,
+      "sex": "せん",
+      "jockey": "角田 大和",
+      "assigned_weight": 56,
+      "profile_url": "https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024105434/59",
+      "horse_no": null,
+      "frame_no": null
+    },
+    {
+      "horse_name": "ヴァルダンセ",
+      "age": 2,
+      "sex": "牡",
+      "jockey": "鮫島 克駿",
+      "assigned_weight": 56,
+      "profile_url": "https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024103952/AA",
+      "horse_no": null,
+      "frame_no": null
+    },
+    {
+      "horse_name": "ウィナーズクロノ",
+      "age": 2,
+      "sex": "牡",
+      "jockey": "古川 吉洋",
+      "assigned_weight": 56,
+      "profile_url": "https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024104203/65",
+      "horse_no": null,
+      "frame_no": null
+    },
+    {
+      "horse_name": "エアロクリスタ",
+      "age": 2,
+      "sex": "牡",
+      "jockey": "池添 謙一",
+      "assigned_weight": 56,
+      "profile_url": "https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024103815/92",
+      "horse_no": null,
+      "frame_no": null
+    },
+    {
+      "horse_name": "エリーマイラヴ",
+      "age": 2,
+      "sex": "牝",
+      "jockey": "小崎 綾也",
+      "assigned_weight": 55,
+      "profile_url": "https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024108341/AC",
+      "horse_no": null,
+      "frame_no": null
+    },
+    {
+      "horse_name": "ゴールドアーク",
+      "age": 2,
+      "sex": "牡",
+      "jockey": "秋山 稔樹",
+      "assigned_weight": 56,
+      "profile_url": "https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024105015/E8",
+      "horse_no": null,
+      "frame_no": null
+    },
+    {
+      "horse_name": "シムサラビン",
+      "age": 2,
+      "sex": "牡",
+      "jockey": "高杉 吏麒",
+      "assigned_weight": 56,
+      "profile_url": "https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024109047/BA",
+      "horse_no": null,
+      "frame_no": null
+    },
+    {
+      "horse_name": "ジャスコヒラリアス",
+      "age": 2,
+      "sex": "牡",
+      "jockey": "斎藤 新",
+      "assigned_weight": 56,
+      "profile_url": "https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024100358/69",
+      "horse_no": null,
+      "frame_no": null
+    },
+    {
+      "horse_name": "スリーオブスペイズ",
+      "age": 2,
+      "sex": "牡",
+      "jockey": "☆ 田山 旺佑",
+      "assigned_weight": 55,
+      "profile_url": "https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024108284/14",
+      "horse_no": null,
+      "frame_no": null
+    },
+    {
+      "horse_name": "ダイユウエゾフジ",
+      "age": 2,
+      "sex": "牡",
+      "jockey": "幸 英明",
+      "assigned_weight": 56,
+      "profile_url": "https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024105952/88",
+      "horse_no": null,
+      "frame_no": null
+    },
+    {
+      "horse_name": "ピエナマーズ",
+      "age": 2,
+      "sex": "牡",
+      "jockey": "酒井 学",
+      "assigned_weight": 56,
+      "profile_url": "https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024100260/B0",
+      "horse_no": null,
+      "frame_no": null
+    },
+    {
+      "horse_name": "ピコジャック",
+      "age": 2,
+      "sex": "牡",
+      "jockey": "松本 大輝",
+      "assigned_weight": 56,
+      "profile_url": "https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024108327/3E",
+      "horse_no": null,
+      "frame_no": null
+    },
+    {
+      "horse_name": "ベラジオセブン",
+      "age": 2,
+      "sex": "牡",
+      "jockey": "国分 恭介",
+      "assigned_weight": 56,
+      "profile_url": "https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024103504/7C",
+      "horse_no": null,
+      "frame_no": null
+    },
+    {
+      "horse_name": "マルモリマイベスト",
+      "age": 2,
+      "sex": "牡",
+      "jockey": "松山 弘平",
+      "assigned_weight": 56,
+      "profile_url": "https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024108132/AD",
+      "horse_no": null,
+      "frame_no": null
+    },
+    {
+      "horse_name": "ヤマトデュノール",
+      "age": 2,
+      "sex": "牡",
+      "jockey": "▲ 森田 誠也",
+      "assigned_weight": 53,
+      "profile_url": "https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024104826/04",
+      "horse_no": null,
+      "frame_no": null
+    },
+    {
+      "horse_name": "ランズエンド",
+      "age": 2,
+      "sex": "牡",
+      "jockey": "富田 暁",
+      "assigned_weight": 56,
+      "profile_url": "https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002024103364/7A",
+      "horse_no": null,
+      "frame_no": null
+    }
+  ]
+}

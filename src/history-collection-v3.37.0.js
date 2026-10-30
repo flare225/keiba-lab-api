@@ -1,3 +1,5 @@
+import {readStoredCardPriors} from './stored-card-prior-cells.js';
+import {assertReviewedProfileIdentity} from './reviewed-jra-profile-sources.js';
 import {jraPageRequest,isJraSourceBlocked} from './jra-page-request.js';
 import {missingPriorHistorySql} from './learning-history-priority.js';
 import {parsePastPerformances,extractProfileLinks,ensureHistoryTable} from './collection-profile-parser-v3.32.0.js';
@@ -79,6 +81,8 @@ export async function collectHistoryBatch(db,input,deps={}){
    let profileUrl=item.profileUrl;
    try{
     if(item.storedRows>=limit){await saveReceipt(db,context.race.race_key,item,limit,'stored-enough',item.storedRows,now());results.push({horseName:item.horseName,status:'stored-enough',savedRows:0});continue}
+    const stored=await readStoredCardPriors(db,context,item,limit);
+    if(stored)profileUrl=stored.profileUrl;
     if(!profileUrl){const known=await db.prepare('SELECT source_url FROM jra_past_performances WHERE horse_name=? AND race_date>=? AND race_date<? AND source_url IS NOT NULL ORDER BY fetched_at DESC LIMIT 1').bind(item.horseName,item.fromDate,context.race.race_date).first();try{profileUrl=officialUrl(known?.source_url,true)}catch{}}
     if(!profileUrl){const cached=await db.prepare('SELECT profile_url FROM lab_history_profile_links WHERE race_key=? AND horse_name=? AND age=? AND source_url=? AND (?<? OR checked_at>?)').bind(context.race.race_key,item.horseName,item.age,context.race.source_url,context.race.race_date,jstDay(now()),now()-86400000).first();if(cached)profileUrl=officialUrl(cached.profile_url,true)}
     if(!profileUrl&&!links&&!resultSourceChecked){
@@ -92,14 +96,16 @@ export async function collectHistoryBatch(db,input,deps={}){
      if(verified.size===1)profileUrl=[...verified][0];
     }
     if(!profileUrl)throw Error('JRA競走馬リンクが未取得です。');
-    const html=await page(profileUrl,true);
-    if(!html.includes(item.horseName))throw Error('プロフィールの馬名を確認できません。');
-    const performances=parsePastPerformances(html,item.horseName,profileUrl,context.race.race_date,200).filter(p=>p.raceDate>=item.fromDate).slice(0,limit);
+    const html=stored?null:await page(profileUrl,true);
+    const reviewed=context.runners.find(r=>r.horse_name===item.horseName)?.reviewed_profile;
+    if(reviewed&&!stored)assertReviewedProfileIdentity(html,reviewed);
+    if(!stored&&!html.includes(item.horseName))throw Error('プロフィールの馬名を確認できません。');
+    const performances=stored?.performances||parsePastPerformances(html,item.horseName,profileUrl,context.race.race_date,200).filter(p=>p.raceDate>=item.fromDate).slice(0,limit);
     if(!performances.length&&!/0戦|未出走|出走歴はありません/.test(html)&&!parsePastPerformances(html,item.horseName,profileUrl,'9999-12-31',200).length)throw Error('過去走テーブルを確認できません。履歴ゼロとは判定していません。');
     const at=new Date(now()).toISOString();
-    if(performances.length)await db.batch(performances.map(p=>db.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,surface,distance,finish_position,field_size,popularity,odds,jockey,assigned_weight,body_weight,body_weight_change,time_text,last3f,corner_positions,track_condition,source_url,fetched_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(horse_name,race_date,venue,race_name) DO UPDATE SET surface=COALESCE(excluded.surface,surface),distance=COALESCE(excluded.distance,distance),finish_position=COALESCE(excluded.finish_position,finish_position),field_size=COALESCE(excluded.field_size,field_size),jockey=COALESCE(excluded.jockey,jockey),assigned_weight=COALESCE(excluded.assigned_weight,assigned_weight),body_weight=COALESCE(excluded.body_weight,body_weight),body_weight_change=COALESCE(excluded.body_weight_change,body_weight_change),time_text=COALESCE(excluded.time_text,time_text),last3f=COALESCE(excluded.last3f,last3f),corner_positions=COALESCE(excluded.corner_positions,corner_positions),track_condition=COALESCE(excluded.track_condition,track_condition),source_url=excluded.source_url,fetched_at=excluded.fetched_at').bind(p.horseName,p.raceDate,p.venue,p.raceName,p.surface,p.distance,p.finishPosition,p.fieldSize,null,null,p.jockey,p.assignedWeight,p.bodyWeight,p.bodyWeightChange,p.timeText,p.last3f,p.cornerPositions,p.trackCondition,p.sourceUrl,at)));
+    if(performances.length)await db.batch(performances.map(p=>db.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,surface,distance,finish_position,field_size,popularity,odds,jockey,assigned_weight,body_weight,body_weight_change,time_text,last3f,corner_positions,track_condition,source_url,fetched_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(horse_name,race_date,venue,race_name) DO UPDATE SET surface=COALESCE(excluded.surface,surface),distance=COALESCE(excluded.distance,distance),finish_position=COALESCE(excluded.finish_position,finish_position),field_size=COALESCE(excluded.field_size,field_size),jockey=COALESCE(excluded.jockey,jockey),assigned_weight=COALESCE(excluded.assigned_weight,assigned_weight),body_weight=COALESCE(excluded.body_weight,body_weight),body_weight_change=COALESCE(excluded.body_weight_change,body_weight_change),time_text=COALESCE(excluded.time_text,time_text),last3f=COALESCE(excluded.last3f,last3f),corner_positions=COALESCE(excluded.corner_positions,corner_positions),track_condition=COALESCE(excluded.track_condition,track_condition),source_url=excluded.source_url,fetched_at=excluded.fetched_at WHERE ?=0').bind(p.horseName,p.raceDate,p.venue,p.raceName,p.surface,p.distance,p.finishPosition,p.fieldSize,null,null,p.jockey,p.assignedWeight,p.bodyWeight,p.bodyWeightChange,p.timeText,p.last3f,p.cornerPositions,p.trackCondition,p.sourceUrl,at,stored?1:0)));
     await saveReceipt(db,context.race.race_key,item,limit,'checked',performances.length,now(),profileUrl);
-    results.push({horseName:item.horseName,status:'checked',savedRows:performances.length,profileUrl,oldestDate:performances.at(-1)?.raceDate||null});
+    results.push({horseName:item.horseName,status:'checked',savedRows:performances.length,profileUrl,...(stored?{reusedStoredCard:true,sourceSha256:stored.sourceSha256}:{}),oldestDate:performances.at(-1)?.raceDate||null});
    }catch(error){await saveReceipt(db,context.race.race_key,item,limit,'failed',0,now(),profileUrl,String(error.message||error));results.push({horseName:item.horseName,status:'failed',savedRows:0,error:String(error.message||error)});if(cooldown>COLLECTION_POLICY.minBatchGapMs)break}
   }
  }finally{await db.prepare("UPDATE lab_history_collection_budget SET locked_until=0,next_batch_at=?,lock_token=NULL WHERE name='jra-history' AND lock_token=?").bind(now()+cooldown,token).run()}

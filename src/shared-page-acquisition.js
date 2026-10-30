@@ -4,12 +4,12 @@ import {resolveReviewedWithdrawal,hasReviewedWithdrawal} from './reviewed-withdr
 // Network is injected explicitly; one delivery can fetch at most one page.
 import {extractLinks,metaFromMeetingListUrl,metaFromRacecardUrl} from './index-v1.1.4.js';
 import {inspectSourceCard,runnerFingerprint,sha256} from './card-evidence.js';
-import {parseConfirmedPredraw} from './confirmed-predraw-roster.js';
+import {saveConfirmedPredraw} from './confirmed-predraw-roster.js';
 import {saveDrawnOfficialCard,isPublishedCardNavigation,cardDiscoveryFailureEvidence} from './expected-card-discovery.js';
 import {jraPageRequest,isJraSourceBlocked} from './jra-page-request.js';
 import {observedQuotaPause} from './scheduled-read-budget.js';
 
-export const SHARED_PAGE_POLICY=Object.freeze({maxRaces:120,maxPages:256,maxDepth:4,maxLinks:256,maxBytes:1500000,maxStoredBodyBytes:16*1024*1024,maxVersionsPerPage:4,refreshMs:3600000,maxWaitMs:6*3600000,parserVersion:'shared-page-v1-local'});
+export const SHARED_PAGE_POLICY=Object.freeze({maxRaces:120,maxPages:256,maxDepth:4,maxLinks:256,maxBytes:1500000,maxStoredBodyBytes:16*1024*1024,maxVersionsPerPage:4,refreshMs:3600000,maxWaitMs:6*3600000,parserVersion:'shared-page-v3-predraw-preparation'});
 const PAGES='lab_shared_page_receipts_v1',BODIES='lab_shared_page_bodies_v1';
 const quota=e=>e?.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e));
 const key=r=>`${r.date}:${r.venue}:${r.raceNo}`;
@@ -23,9 +23,11 @@ export function canonicalPublishedPage(value){
  u.hash='';u.searchParams.sort();return u.href;
 }
 export function parseSharedPage(html,url){
- const links=extractLinks(html,url);if(links.length>SHARED_PAGE_POLICY.maxLinks)throw Error('Published-link bound exceeded');
+ // Keep the existing 256 acquisition-page bound; CSS/general navigation are not jobs.
+ const links=new Set();
+ for(const link of extractLinks(html,url)){try{links.add(canonicalPublishedPage(link));}catch{continue;}if(links.size>SHARED_PAGE_POLICY.maxLinks)throw Error('Published-link bound exceeded');}
  const pages=[],cards=[];
- for(const link of links){let canonical;try{canonical=canonicalPublishedPage(link)}catch{continue;}
+ for(const canonical of links){
   const meta=metaFromRacecardUrl(canonical);
   if(meta){if(!meta.venue||meta.raceNo<1||meta.raceNo>12)continue;cards.push({...meta,url:canonical});}
   else if(new URL(canonical).pathname==='/JRADB/accessD.html')pages.push(canonical);
@@ -52,6 +54,20 @@ function validateInventory(races,scope,stamp){
  if(new Set(result.map(key)).size!==result.length)throw Error('Duplicate race identity');return result;
 }
 function findings(row){return row?.findings_json?JSON.parse(row.findings_json):null;}
+// JRA's ordinary numbered cards are announced after 10:00 the day before;
+// allow the documented ~15-minute website delay. This is a recheck opportunity,
+// never an assumption that numbering has appeared. Earlier special publication
+// remains eligible under the existing 24-hour maximum.
+// https://www.jra.go.jp/faq/pop02/2_2.html
+function predrawNextAttempt(stamp,date){
+ const publication=Date.parse(date+'T10:15:00+09:00')-86400000;
+ return Math.min(stamp+86400000,Math.max(stamp+SHARED_PAGE_POLICY.refreshMs,publication));
+}
+function pageNextAttempt(row,race,url){
+ if(row?.status!=='predraw'||!row.body_sha||row.card_key!==key(race)||key(metaFromRacecardUrl(url)||{})!==key(race)||!Number.isFinite(Number(row.observed_at))||Number(row.observed_at)<=0)return Number(row?.next_at)||0;
+ return Math.min(Number(row.next_at)||0,predrawNextAttempt(Number(row.observed_at),race.date));
+}
+
 export function planSharedPages(races,rows,stamp,parserVersion=SHARED_PAGE_POLICY.parserVersion,{allowStartedCards=false,completionPriorityRaceKeys=[]}={}){
  const completionOrder=new Map(completionPriorityRaceKeys.map((k,i)=>[k,i]));
  const records=new Map(rows.map(r=>[r.page_url,r])),known=new Map(),meetings=new Map(),jobs=new Map();let complete=0,waiting=0;
@@ -66,13 +82,18 @@ export function planSharedPages(races,rows,stamp,parserVersion=SHARED_PAGE_POLIC
   while(queue.length){const {url,depth}=queue.shift();if(seen.has(url)||depth>SHARED_PAGE_POLICY.maxDepth)continue;seen.add(url);
    const row=records.get(url);
    if(row?.status==='formal-saved'&&row.card_key===key(race)){complete++;found=true;break;}
-   if(Number(row?.next_at)>stamp)continue;
+   if(pageNextAttempt(row,race,url)>stamp)continue;
    const parsedCard=row?.status==='parsed'&&key(metaFromRacecardUrl(url)||{})===key(race);
    const cached=row?.body_sha&&(parsedCard||row.status==='body-stored'||row.parser_version!==parserVersion||row.status==='card-ready'||(row.status==='parse-failed'&&hasReviewedWithdrawal(race,stamp)));
    if(cached){add(url,race,depth);found=true;break;}
    if(row?.status==='parse-failed'&&row.parser_version===parserVersion)continue;
    if(!row?.body_sha){add(url,race,depth);found=true;break;}
    const f=findings(row);if(f?.kind==='predraw')continue;
+   // A stale selector whose dated meetings all belong elsewhere cannot reveal
+   // this race by traversing those old branches. Refresh that selector first;
+   // generic navigation and matching dated continuations keep their priority.
+   const datedMeetings=(f?.pages||[]).map(metaFromMeetingListUrl).filter(Boolean);
+   if(stamp-Number(row.observed_at)>=SHARED_PAGE_POLICY.refreshMs&&datedMeetings.length&&!datedMeetings.some(m=>m.date===race.date&&m.venue===race.venue)){add(url,race,depth);found=true;break;}
    for(const child of f?.pages||[]){const meeting=metaFromMeetingListUrl(child);if(meeting&&(meeting.date!==race.date||meeting.venue!==race.venue))continue;queue.push({url:child,depth:depth+1});}
    if(stamp-Number(row.observed_at)>=SHARED_PAGE_POLICY.refreshMs)refresh.push({url,depth});
   }
@@ -124,8 +145,8 @@ async function parseStored(db,scope,job,row,stamp,deps){
   const card=await saveDrawnOfficialCard(db,html,job.url,body.http_status,race,Number(row.observed_at),deps);
   result={...card,kind:'formal',runnerSha256:await sha256(runnerFingerprint(inspect.raw.map(r=>({...r,frameNo:inspect.frames.get(r.horseNo)}))))};
   }
- }else{try{if(inspect.cancelledRows?.length){const error=Error('正式出馬表の取消・除外馬の馬番が原典に表示されていません。番号を推測せず保存を保留します: '+inspect.cancelledRows.map(r=>r.horseName||'不明').join('、'));error.cancelledCardUnresolved=true;throw error;}const roster=parseConfirmedPredraw(html,job.url,race,{allowUnassignedConnections:true});result={kind:'predraw',raceKey:roster.raceKey,runnerCount:roster.runners.length};}catch(e){e.failureEvidence=await cardDiscoveryFailureEvidence(html,job.url,race,{httpStatus:body.http_status,observedAt:new Date(Number(row.observed_at)).toISOString()});throw e;}}
- await updateReceipt(db,scope,job.url,{...row,status:result.kind==='formal'?'formal-saved':'predraw',next_at:stamp+86400000,parser_version:version,findings_json:JSON.stringify({kind:result.kind,pages:[],cards:[]}),card_key:key(race),card_result_json:JSON.stringify(result),error:null});
+ }else{try{if(inspect.cancelledRows?.length){const error=Error('正式出馬表の取消・除外馬の馬番が原典に表示されていません。番号を推測せず保存を保留します: '+inspect.cancelledRows.map(r=>r.horseName||'不明').join('、'));error.cancelledCardUnresolved=true;throw error;}const roster=await saveConfirmedPredraw(db,html,job.url,race,{allowUnassignedConnections:true,observedAt:new Date(Number(row.observed_at)).toISOString()});result={kind:'predraw',raceKey:roster.raceKey,runnerCount:roster.runners.length};}catch(e){e.failureEvidence=await cardDiscoveryFailureEvidence(html,job.url,race,{httpStatus:body.http_status,observedAt:new Date(Number(row.observed_at)).toISOString()});throw e;}}
+ await updateReceipt(db,scope,job.url,{...row,status:result.kind==='formal'?'formal-saved':'predraw',next_at:result.kind==='formal'?stamp+86400000:predrawNextAttempt(stamp,race.date),parser_version:version,findings_json:JSON.stringify({kind:result.kind,pages:[],cards:[]}),card_key:key(race),card_result_json:JSON.stringify(result),error:null});
  return{status:result.kind==='formal'?(result.newlySaved===false?'existing-card-reconciled':'official-card-saved'):'predraw-page-preserved',formalCardSaved:result.kind==='formal'&&result.newlySaved!==false,card:result,predictionRebuilt:false};
 }
 export async function runSharedPageStep(db,{scope,races},deps={}){
@@ -215,7 +236,9 @@ export async function discoverSharedSelectedCard(db,source,delivery={}){
  const result=await runSharedPageStep(db,{scope:source.date,races:inventory},options);
  const actual=inventory.find(r=>key(r)===(result.card?.raceKey||result.dependentRaces?.[0]))||inventory.find(r=>key(r)===key(source));
  if(!actual)throw Error('Shared page result has no due race identity');
- const attempted=!!(result.externalRequests||result.reusedBody||result.bodyStored||result.waitingRaces);
+ // Waiting inventory is not a source attempt. It must not suppress the
+ // existing saved-history fallback after every card is preserved or not due.
+ const attempted=!!(result.externalRequests||result.reusedBody||result.bodyStored);
  const completionPriorityApplied=(options.completionPriorityRaceKeys||[]).includes(key(actual))&&Date.parse(actual.startAt)<=stamp+300000;
  return{...result,attempted,ok:!result.error,target:{date:actual.date,venue:actual.venue,raceNo:actual.raceNo},officialCardsCreated:!!result.formalCardSaved,...(attempted?{cardSelection:{...delivery.previousCardSelection,lane:metaFromRacecardUrl(result.sourceUrl||actual.cardUrl||actual.rootUrl)?'card':'discovery',reason:completionPriorityApplied?'shared-page-completion-priority':'shared-page-deadline',target:key(actual),eligibleSharedRaces:inventory.length,completionPriorityApplied,completionPriorityRaceKeys:options.completionPriorityRaceKeys||[]}}:{})};
 }

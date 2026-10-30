@@ -1,5 +1,6 @@
 import {readWithdrawalEvidence} from './reviewed-withdrawal-card.js';
 import {readMissingRosterEvidence} from './missing-roster-evidence.js';
+import {readSharedPageEvidence} from './shared-page-evidence.js';
 import {readSavedAutomaticSeal} from './saved-automatic-seal.js';
 import {scheduledSavedAutomaticSeal} from './saved-automatic-seal-queue.js';
 import {measureD1Operation} from './d1-operation-metrics.js';
@@ -46,6 +47,13 @@ const historyInventories=new WeakMap();
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/shared-page-evidence'){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
+   if(request.method!=='GET')return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
+   if(u.searchParams.get('confirm')!=='READ_STORED_SOURCE')return Response.json({ok:false,error:'explicit source read confirmation required'},{status:400,headers});
+   try{return Response.json({...await measureD1Operation(env.DB,db=>readSharedPageEvidence(db,{scope:u.searchParams.get('scope'),pageUrl:u.searchParams.get('page_url'),includeBody:u.searchParams.get('include_body')==='1'})),version:VERSION},{headers});}
+   catch(e){return Response.json({ok:false,error:String(e.message||e)},{status:409,headers});}
+  }
   if(u.pathname==='/v1/lab/missing-roster-evidence'){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
    if(request.method!=='GET')return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
@@ -127,7 +135,7 @@ export default {
   if(u.pathname==='/v1/lab/provisional-prediction-snapshot'){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*','access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'content-type'};
    if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
-   try{const b=request.method==='GET'?{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')}:request.method==='POST'?await request.json():null;
+   try{const b=request.method==='GET'?{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no'),...(u.searchParams.has('basis')?{basis:u.searchParams.get('basis'),sourceSha256:u.searchParams.get('source_sha256')}:{})}:request.method==='POST'?await request.json():null;
     if(!b)return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
     if(request.method==='POST'&&b.confirm!=='SAVE_PROVISIONAL')throw Error('confirm SAVE_PROVISIONAL is required');
     const result=request.method==='GET'?await readProvisionalPrediction(env.DB,b):await saveProvisionalPrediction(env.DB,b,async()=>{const source=await resolveExpectedCollectionSource(env.DB,b);if(!source)throw Error('想定名簿が未保存です。');const repair=await repairStoredProgramConditions(env.DB,source);return {...await provisionalExpectedPrediction(env.DB,source),programRepair:repair};});

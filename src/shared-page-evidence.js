@@ -5,8 +5,10 @@ import {sha256} from './card-evidence.js';
 // Diagnose an existing exact scope/URL receipt; never enqueue, fetch or reparse it.
 export async function readSharedPageEvidence(db,{scope,pageUrl,includeBody=false}){
  if(!/^\d{4}-\d{2}-\d{2}$/.test(scope||'')||new Date(scope+'T00:00:00Z').toISOString().slice(0,10)!==scope)throw Error('Exact shared-page scope required');
- const url=canonicalPublishedPage(pageUrl);let row;
- try{row=await db.prepare(`SELECT p.status,p.next_at,p.error,p.body_sha,p.parser_version,b.body_html,b.byte_length,b.observed_at,b.http_status,b.charset,b.received_bytes FROM lab_shared_page_receipts_v1 p LEFT JOIN lab_shared_page_bodies_v1 b ON b.scope_key=p.scope_key AND b.page_url=p.page_url AND b.sha256=p.body_sha WHERE p.scope_key=? AND p.page_url=? LIMIT 1`).bind(scope,url).first();}
+ const url=canonicalPublishedPage(pageUrl);
+ // Resolve only the two validated historical CNAME separator spellings.
+ const literal=url.replace(/%2F/gi,'/');let row;
+ try{row=await db.prepare(`SELECT p.status,p.next_at,p.error,p.body_sha,p.parser_version,b.body_html,b.byte_length,b.observed_at,b.http_status,b.charset,b.received_bytes FROM lab_shared_page_receipts_v1 p LEFT JOIN lab_shared_page_bodies_v1 b ON b.scope_key=p.scope_key AND b.page_url=p.page_url AND b.sha256=p.body_sha WHERE p.scope_key=? AND p.page_url IN (?,?) ORDER BY CASE WHEN p.page_url=? THEN 0 ELSE 1 END LIMIT 1`).bind(scope,url,literal,url).first();}
  catch(e){if(!/no such table/.test(String(e)))throw e;return{ok:true,available:false,scope,pageUrl:url};}
  if(!row)return{ok:true,available:false,scope,pageUrl:url};
  const result={ok:true,available:true,scope,pageUrl:url,status:row.status,error:row.error||null,nextAttemptAt:row.next_at?new Date(Number(row.next_at)).toISOString():null,bodySha256:row.body_sha||null,bodyAvailable:typeof row.body_html==='string',parserVersion:row.parser_version,externalRequests:0,readOnly:true};

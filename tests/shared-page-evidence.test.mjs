@@ -17,3 +17,13 @@ test('explicit shared-source GET requires exact scope and published JRA URL befo
  const res=await app.fetch(new Request(u),{DB:db},{}),j=await res.json();assert.equal(res.status,200);assert.equal(j.bodyHtml,undefined);assert.equal(j.metrics.queries,1);assert.equal(j.integrityVerified,true);assert.equal(res.headers.get('cache-control'),'no-store');reset();
  assert.equal((await app.fetch(new Request(u,{method:'POST'}),{DB:db},{})).status,405);u.searchParams.delete('scope');assert.equal((await app.fetch(new Request(u),{DB:db},{})).status,409);u.searchParams.set('scope',SCOPE);u.searchParams.set('page_url','https://evil.test/');assert.equal((await app.fetch(new Request(u),{DB:db},{})).status,409);assert.equal(stats.statements,0);sql.close();
 });
+
+test('validated literal CNAME receipt is readable through either separator without writes',async()=>{
+ const {db,sql,stats,reset}=await fixtureDatabase();
+ const literal='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604100120261031/74', encoded=literal.replace('/74','%2F74'), body='<title>Saved card</title>', hash=await sha256(body);
+ sql.prepare('INSERT INTO lab_shared_page_receipts_v1(scope_key,page_url,status,next_at,body_sha) VALUES(?,?,?,?,?)').run(SCOPE,literal,'formal-saved',0,hash);
+ sql.prepare('INSERT INTO lab_shared_page_bodies_v1(scope_key,page_url,sha256,body_html,byte_length,observed_at) VALUES(?,?,?,?,?,?)').run(SCOPE,literal,hash,body,new TextEncoder().encode(body).length,FIXTURE_STAMP);
+ reset();for(const pageUrl of [literal,encoded]){const r=await readSharedPageEvidence(db,{scope:SCOPE,pageUrl,includeBody:true});assert.equal(r.integrityVerified,true);assert.equal(r.bodySha256,hash);assert.equal(r.bodyHtml,body);}
+ assert.ok(stats.executed.every(q=>q.startsWith('SELECT')));assert.equal((await readSharedPageEvidence(db,{scope:'2026-10-24',pageUrl:encoded})).available,false);
+ sql.exec("UPDATE lab_shared_page_receipts_v1 SET body_sha='wrong'");await assert.rejects(readSharedPageEvidence(db,{scope:SCOPE,pageUrl:encoded}),/body is missing/);sql.close();
+});

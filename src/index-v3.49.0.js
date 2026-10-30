@@ -136,7 +136,7 @@ export default {
    try{const b=request.method==='GET'?{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no'),...(u.searchParams.has('basis')?{basis:u.searchParams.get('basis'),sourceSha256:u.searchParams.get('source_sha256')}:{})}:request.method==='POST'?await request.json():null;
     if(!b)return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
     if(request.method==='POST'&&b.confirm!=='SAVE_PROVISIONAL')throw Error('confirm SAVE_PROVISIONAL is required');
-    const result=request.method==='GET'?await readProvisionalPrediction(env.DB,b):await saveProvisionalPrediction(env.DB,b,async()=>{const source=await resolveExpectedCollectionSource(env.DB,b);if(!source)throw Error('想定名簿が未保存です。');const repair=await repairStoredProgramConditions(env.DB,source);return {...await provisionalExpectedPrediction(env.DB,source),programRepair:repair};});
+    const result=request.method==='GET'?await readProvisionalPrediction(env.DB,b,{snapshotSha256:u.searchParams.get('snapshot_sha256')}):await saveProvisionalPrediction(env.DB,b,async()=>{const source=await resolveExpectedCollectionSource(env.DB,b);if(!source)throw Error('想定名簿が未保存です。');const repair=await repairStoredProgramConditions(env.DB,source);return {...await provisionalExpectedPrediction(env.DB,source),programRepair:repair};});
     return Response.json({...result,version:VERSION},{headers});
    }catch(e){return Response.json({ok:false,error:String(e.message||e),...(e.saveMayHaveSucceeded?{saveMayHaveSucceeded:true,retryWrite:false}:{})},{status:e.saveMayHaveSucceeded?503:409,headers});}
   }

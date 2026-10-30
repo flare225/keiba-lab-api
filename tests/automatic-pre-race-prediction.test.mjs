@@ -96,3 +96,19 @@ test('natural forecast and saved-readback queues propagate D1 exhaustion without
   sql.close();
  }
 });
+
+test('real scheduled entry returns quota pause before LOCK or source handoff',async t=>{
+ t.mock.timers.enable({apis:['Date'],now});
+ const {sql,db}=await fixture();let flagReads=0,quotaObserved=false,afterQuota=0;
+ const limited={prepare(q){
+  if(quotaObserved){afterQuota++;throw Error('underlying D1 touched after quota');}
+  if(q.startsWith('SELECT * FROM lab_automatic_predictions_v1'))return{bind(){return{all:async()=>{quotaObserved=true;throw Error("D1_ERROR: Your account has exceeded D1's free tier daily row read limit.")}}}};
+  return db.prepare(q);
+ }};
+ const {default:app}=await import('../src/index-v3.49.0.js');
+ const env={DB:limited,get LAB_SAVED_AUTOMATIC_LOCK(){flagReads++;if(quotaObserved)throw Error('LOCK handoff reached after quota');return 'true'}};
+ const result=await app.scheduled({cron:'*/3 * * * *',scheduledTime:now},env,{});
+ assert.equal(result.status,'paused');assert.equal(result.reason,'d1-daily-read-limit');assert.equal(result.telemetrySaved,false);
+ assert.equal(flagReads,1);assert.equal(afterQuota,0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_automatic_prediction_receipts_v1').get().n,0);
+ sql.close();
+});

@@ -73,7 +73,7 @@ export async function scheduledAutomaticPrediction(db,now=Date.now()){
  try{
   if(queued.existingSnapshot){const read=await readAutomaticPrediction(db,t);if(!read.available)throw Error('保存済み予想の再照合で対象が見つかりません。再生成しません。');result={...read,saved:0,verificationOnly:true,externalRequests:0};}
   else result=await captureAutomaticPrediction(db,t,now);
- }catch(e){if(e.saveMayHaveSucceeded)throw e;result={ok:false,status:'deferred',error:String(e.message||e),saved:0,externalRequests:0}}
+ }catch(e){if(e.saveMayHaveSucceeded||e?.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;result={ok:false,status:'deferred',error:String(e.message||e),saved:0,externalRequests:0}}
  await db.prepare(`INSERT INTO ${RECEIPTS} VALUES(?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET status=excluded.status,next_attempt_at=excluded.next_attempt_at,detail_json=excluded.detail_json`).bind(key,result.available?'saved':result.status,now+3600000,JSON.stringify(result.available?{snapshotSha256:result.snapshotSha256}:{...result})).run();
  return{...result,target:t};
 }

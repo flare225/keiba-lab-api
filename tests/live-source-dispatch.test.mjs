@@ -226,3 +226,19 @@ test('unresolved saved profiles retain the history turn without starving the nex
  const second=await collectLiveHistory(db,{scheduledTime:stamp},{...deps,previousHistoryWorkStage:'history'});
  assert.equal(second.status,'page-parsed');assert.equal(second.historyWorkStage,'acquisition');assert.deepEqual(seen,['history']);
  });
+
+test('a saved formal card hands one existing slot to priority formal history before another card',async()=>{
+ const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};let calls=[];
+ const deps={now:()=>start,cardCompletionFirst:true,cards:async()=>{calls.push('card');return{status:'official-card-saved',formalCardSaved:true,externalRequests:1,cardSelection:{lane:'card'}}},priorityExpected:async(_,d)=>{assert.equal(d.knownProfilesOnly,true);assert.equal(d.includeFormalHistory,true);calls.push('history');return{status:'collected',attempted:1,externalRequests:0,addedRows:3}}};
+ const a=await collectLiveHistory(db,{},deps);assert.equal(a.cardSelection.priorityFormalHistoryPending,true);
+ const b=await collectLiveHistory(db,{}, {...deps,previousHistoryWorkStage:a.historyWorkStage,previousCardSelection:a.cardSelection});assert.deepEqual(calls,['card','history']);assert.equal(b.addedRows,3);assert.equal(b.cardSelection.priorityFormalHistoryPending,false);
+ const c=await collectLiveHistory(db,{}, {...deps,previousHistoryWorkStage:b.historyWorkStage,previousCardSelection:b.cardSelection});assert.equal(c.status,'official-card-saved');assert.deepEqual(calls,['card','history','card']);
+});
+
+test('successful navigation also hands off formal history, while shared cooldown stops before either lane',async()=>{
+ for(const blocked of [false,true]){let calls=[];const db={prepare(){return{async first(){return{next_batch_at:blocked?start+3600000:0,locked_until:0}}}}};
+ const deps={now:()=>start,cardCompletionFirst:true,cards:async()=>({status:'page-parsed',externalRequests:1,httpStatus:200,cardSelection:{lane:'discovery'}}),priorityExpected:async()=>{calls.push('history');return{status:'idle',externalRequests:0}}};
+ const first=await collectLiveHistory(db,{},deps);assert.equal(first.cardSelection.priorityFormalHistoryPending,true);
+ const r=await collectLiveHistory(db,{}, {...deps,previousHistoryWorkStage:'acquisition',previousCardSelection:first.cardSelection});
+ assert.equal(calls.length,blocked?0:1);if(blocked)assert.equal(r.status,'cooldown');else assert.equal(r.status,'page-parsed');}
+});

@@ -119,7 +119,7 @@ test('finished/complete races and wrong-date card links never become fetchable f
 });
 test('predraw remains a separate preserved page version, never an official card or old roster overwrite',async()=>{
  const {db,sql}=await fixtureDatabase(),r={...racesFixture()[0]};r.cardUrl=cardUrl(r);const url=cardUrl(r),html=`<table><caption>2026年10月24日 東京<img alt="1レース"></caption><thead></thead><tr><td class="waku"></td><td class="num"></td><td class="horse"><div class="name"><a href="https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002023000001/AA">テストア</a></div></td><td class="jockey"><p class="age">牡2/黒鹿</p><p class="weight">55kg</p><p class="jockey">山田</p></td></tr></table>`;
- const result=await runSharedPageStep(db,input([r]),{now:()=>FIXTURE_STAMP,fetcher:fixtureFetcher(new Map([[url,html]]))});assert.equal(result.status,'predraw-page-preserved');assert.equal(result.formalCardSaved,false);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);assert.equal(rows(sql)[0].status,'predraw');
+ const result=await runSharedPageStep(db,input([r]),{now:()=>FIXTURE_STAMP,fetcher:fixtureFetcher(new Map([[url,html]]))});assert.equal(result.status,'predraw-page-preserved');assert.equal(result.formalCardSaved,false);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);assert.equal(rows(sql)[0].status,'predraw');assert.equal(rows(sql)[0].next_at,FIXTURE_STAMP+SHARED_PAGE_POLICY.refreshMs);
  const {readConfirmedPredraw}=await import('../src/confirmed-predraw-roster.js');const stored=await readConfirmedPredraw(db,r);assert.ok(stored,'parsed shared roster must reach existing preparation store');assert.equal(stored.runners[0].horse_name,'テストア');assert.equal(stored.runners[0].horse_no,null);assert.equal(stored.source_sha256,await sha256(html));assert.equal(stored.checked_at,new Date(FIXTURE_STAMP).toISOString());
  const {nextConfirmedPredrawSource}=await import('../src/confirmed-predraw-history-source.js');const source=await nextConfirmedPredrawSource(db,FIXTURE_STAMP+1);assert.deepEqual(source.names,['テストア']);assert.equal(source.rosterBasis,'confirmed-predraw');
  const {buildProvisionalPrediction}=await import('../src/provisional-expected-prediction.js');const {saveProvisionalPrediction,readProvisionalPrediction}=await import('../src/provisional-prediction-snapshots.js');
@@ -396,4 +396,46 @@ test('observed failed URL set is reparsed from the saved body on parser revision
  assert.deepEqual(f.sql.prepare('SELECT * FROM lab_shared_page_bodies_v1').get(),body);
  assert.equal(f.sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);
  assert.equal(f.sql.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='lab_automatic_predictions_v1'").get().n,0);f.sql.close();
+});
+
+test('observed Kyoto9 predraw receipt becomes due after the regular formal publication window, not Saturday morning',()=>{
+ const race={date:'2026-10-31',venue:'京都',raceNo:9,cardUrl:'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202604100920261031%2FFA',rootUrl:calendar('2026-10-31'),start:Date.parse('2026-10-31T14:25:00+09:00'),enqueued:Date.parse('2026-10-29T22:48:52.711Z')};
+ const row={page_url:race.cardUrl,status:'predraw',card_key:'2026-10-31:京都:9',body_sha:'8e48f723bf7fdd19a2b3779ec8d10b0911865cd65ecc941cf5404de5eee2a505',observed_at:Date.parse('2026-10-29T22:48:52.711Z'),next_at:Date.parse('2026-10-30T22:48:52.711Z'),parser_version:SHARED_PAGE_POLICY.parserVersion};
+ assert.equal(planSharedPages([race],[row],Date.parse('2026-10-30T01:14:59Z')).jobs.length,0);
+ assert.equal(planSharedPages([race],[row],Date.parse('2026-10-30T01:15:00Z')).jobs[0]?.url,race.cardUrl);
+ // A failure/cancellation/manual retry is a different state, never capped.
+ for(const status of ['http-or-source-failed','card-ready','parse-failed'])assert.equal(planSharedPages([race],[{...row,status}],Date.parse('2026-10-30T01:15:00Z')).jobs.length,0);
+ for(const invalid of [{card_key:'2026-10-31:京都:10'},{body_sha:null},{observed_at:null}])assert.equal(planSharedPages([race],[{...row,...invalid}],Date.parse('2026-10-30T01:15:00Z')).jobs.length,0);
+ assert.equal(row.next_at,Date.parse('2026-10-30T22:48:52.711Z'),'planning does not rewrite the receipt');
+});
+
+test('natural shared step refreshes preserved predraw into a strict formal card after publication and keeps the old body immutable',async()=>{
+ const {db,sql}=await fixtureDatabase();let now=Date.parse('2026-10-22T13:00:00Z');
+ const race={...racesFixture()[0],enqueuedAt:new Date(now).toISOString()};race.cardUrl=cardUrl(race);
+ const predraw='<table><caption>2026年10月24日 東京<img alt="1レース"></caption><thead></thead>'+['テストア','テストイ'].map((name,i)=>'<tr><td class="waku"></td><td class="num"></td><td class="horse"><div class="name"><a href="https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud00202410000'+i+'/AA">'+name+'</a></div></td><td class="jockey"><p class="age">牡2/黒鹿</p><p class="weight">55kg</p><p class="jockey">山田</p></td></tr>').join('')+'</table>';
+ let calls=0;const deps={now:()=>now,fetcher:async()=>{calls++;return new Response(calls===1?predraw:drawnHtml(race),{headers:{'content-type':'text/html;charset=utf-8'}})}};
+ const first=await runSharedPageStep(db,input([race]),deps);assert.equal(first.status,'predraw-page-preserved');assert.equal(calls,1);
+ const old=sql.prepare('SELECT * FROM lab_shared_page_bodies_v1').get(),prep=sql.prepare('SELECT * FROM lab_confirmed_predraw_rosters').get();
+ const publication=Date.parse('2026-10-23T01:15:00Z');assert.equal(rows(sql)[0].next_at,publication);
+ now=publication-1;assert.equal((await runSharedPageStep(db,input([race]),deps)).externalRequests,0);assert.equal(calls,1);
+ // Even the successful-preparation transition cannot cross a global stop.
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=?').run(publication+60000);now=publication;
+ assert.equal((await runSharedPageStep(db,input([race]),deps)).status,'cooldown');assert.equal(calls,1);
+ now=publication+60001;
+ const formal=await runSharedPageStep(db,input([race]),deps);assert.equal(formal.status,'official-card-saved');assert.equal(formal.formalCardSaved,true);assert.equal(formal.externalRequests,1);assert.equal(calls,2);
+ const key='2026-10-24:東京:1',saved=sql.prepare('SELECT * FROM jra_runners WHERE race_key=? ORDER BY horse_no').all(key),e=sql.prepare('SELECT * FROM lab_card_source_evidence WHERE race_key=?').get(key);
+ assert.deepEqual(saved.map(r=>[r.horse_no,r.frame_no,r.horse_name]),[[1,1,'テストア'],[2,2,'テストイ']]);
+ assert.equal(e.source_sha256,await sha256(drawnHtml(race)));assert.equal(e.runner_sha256,await sha256(runnerFingerprint(saved)));await requireLockEvidence(db,{race_key:key},saved);
+ assert.deepEqual(sql.prepare('SELECT * FROM lab_shared_page_bodies_v1 WHERE sha256=?').get(old.sha256),old);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_shared_page_bodies_v1').get().n,2);
+ assert.deepEqual(sql.prepare('SELECT * FROM lab_confirmed_predraw_rosters').get(),prep,'preparation record is not relabelled as numbered');
+ now+=61000;assert.equal((await runSharedPageStep(db,input([race]),deps)).status,'complete');assert.equal(calls,2);sql.close();
+});
+
+test('post-publication predraw responses keep a full refresh interval and failed refresh keeps the existing one-hour stop',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture()[0];race.cardUrl=cardUrl(race);
+ const old=FIXTURE_STAMP-2*3600000;
+ sql.prepare('INSERT INTO lab_shared_page_receipts_v1(scope_key,page_url,status,next_at,body_sha,observed_at,parser_version,card_key) VALUES(?,?,?,?,?,?,?,?)').run(SCOPE,race.cardUrl,'predraw',old+86400000,'a'.repeat(64),old,SHARED_PAGE_POLICY.parserVersion,`${race.date}:${race.venue}:${race.raceNo}`);
+ let now=FIXTURE_STAMP,calls=0;const r=await runSharedPageStep(db,input([race]),{now:()=>now,fetcher:async()=>{calls++;return new Response('',{status:429})}});
+ assert.equal(r.status,'deferred');assert.equal(calls,1);assert.equal(rows(sql)[0].status,'http-or-source-failed');assert.equal(rows(sql)[0].next_at,now+3600000);
+ now+=61000;assert.equal((await runSharedPageStep(db,input([race]),{now:()=>now,fetcher:()=>assert.fail('shared 429 pause')})).status,'cooldown');assert.equal(calls,1);sql.close();
 });

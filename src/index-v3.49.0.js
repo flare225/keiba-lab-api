@@ -316,7 +316,7 @@ export default {
   return runWithScheduledReadBudget(env.DB,async db=>{
   const budgetEnv={...env,DB:db};
   if(event.cron==='*/3 * * * *'){
-   try{await scheduledAutomaticPrediction(db);}catch(e){console.error('automatic-prediction',String(e));}
+   try{await scheduledAutomaticPrediction(db);}catch(e){if(e.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;console.error('automatic-prediction',String(e));}
    // Explicit activation approval is separate from deploying the read adapter.
    if(env.LAB_SAVED_AUTOMATIC_LOCK==='true')try{console.info('saved-automatic-lock',JSON.stringify(await scheduledSavedAutomaticSeal(db,{enabled:true})));}catch(e){if(e.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;console.error('saved-automatic-lock',String(e));}
    await dispatchLiveSources(event,budgetEnv);

@@ -54,6 +54,20 @@ function validateInventory(races,scope,stamp){
  if(new Set(result.map(key)).size!==result.length)throw Error('Duplicate race identity');return result;
 }
 function findings(row){return row?.findings_json?JSON.parse(row.findings_json):null;}
+// JRA's ordinary numbered cards are announced after 10:00 the day before;
+// allow the documented ~15-minute website delay. This is a recheck opportunity,
+// never an assumption that numbering has appeared. Earlier special publication
+// remains eligible under the existing 24-hour maximum.
+// https://www.jra.go.jp/faq/pop02/2_2.html
+function predrawNextAttempt(stamp,date){
+ const publication=Date.parse(date+'T10:15:00+09:00')-86400000;
+ return Math.min(stamp+86400000,Math.max(stamp+SHARED_PAGE_POLICY.refreshMs,publication));
+}
+function pageNextAttempt(row,race,url){
+ if(row?.status!=='predraw'||!row.body_sha||row.card_key!==key(race)||key(metaFromRacecardUrl(url)||{})!==key(race)||!Number.isFinite(Number(row.observed_at))||Number(row.observed_at)<=0)return Number(row?.next_at)||0;
+ return Math.min(Number(row.next_at)||0,predrawNextAttempt(Number(row.observed_at),race.date));
+}
+
 export function planSharedPages(races,rows,stamp,parserVersion=SHARED_PAGE_POLICY.parserVersion,{allowStartedCards=false,completionPriorityRaceKeys=[]}={}){
  const completionOrder=new Map(completionPriorityRaceKeys.map((k,i)=>[k,i]));
  const records=new Map(rows.map(r=>[r.page_url,r])),known=new Map(),meetings=new Map(),jobs=new Map();let complete=0,waiting=0;
@@ -68,7 +82,7 @@ export function planSharedPages(races,rows,stamp,parserVersion=SHARED_PAGE_POLIC
   while(queue.length){const {url,depth}=queue.shift();if(seen.has(url)||depth>SHARED_PAGE_POLICY.maxDepth)continue;seen.add(url);
    const row=records.get(url);
    if(row?.status==='formal-saved'&&row.card_key===key(race)){complete++;found=true;break;}
-   if(Number(row?.next_at)>stamp)continue;
+   if(pageNextAttempt(row,race,url)>stamp)continue;
    const parsedCard=row?.status==='parsed'&&key(metaFromRacecardUrl(url)||{})===key(race);
    const cached=row?.body_sha&&(parsedCard||row.status==='body-stored'||row.parser_version!==parserVersion||row.status==='card-ready'||(row.status==='parse-failed'&&hasReviewedWithdrawal(race,stamp)));
    if(cached){add(url,race,depth);found=true;break;}
@@ -132,7 +146,7 @@ async function parseStored(db,scope,job,row,stamp,deps){
   result={...card,kind:'formal',runnerSha256:await sha256(runnerFingerprint(inspect.raw.map(r=>({...r,frameNo:inspect.frames.get(r.horseNo)}))))};
   }
  }else{try{if(inspect.cancelledRows?.length){const error=Error('正式出馬表の取消・除外馬の馬番が原典に表示されていません。番号を推測せず保存を保留します: '+inspect.cancelledRows.map(r=>r.horseName||'不明').join('、'));error.cancelledCardUnresolved=true;throw error;}const roster=await saveConfirmedPredraw(db,html,job.url,race,{allowUnassignedConnections:true,observedAt:new Date(Number(row.observed_at)).toISOString()});result={kind:'predraw',raceKey:roster.raceKey,runnerCount:roster.runners.length};}catch(e){e.failureEvidence=await cardDiscoveryFailureEvidence(html,job.url,race,{httpStatus:body.http_status,observedAt:new Date(Number(row.observed_at)).toISOString()});throw e;}}
- await updateReceipt(db,scope,job.url,{...row,status:result.kind==='formal'?'formal-saved':'predraw',next_at:stamp+86400000,parser_version:version,findings_json:JSON.stringify({kind:result.kind,pages:[],cards:[]}),card_key:key(race),card_result_json:JSON.stringify(result),error:null});
+ await updateReceipt(db,scope,job.url,{...row,status:result.kind==='formal'?'formal-saved':'predraw',next_at:result.kind==='formal'?stamp+86400000:predrawNextAttempt(stamp,race.date),parser_version:version,findings_json:JSON.stringify({kind:result.kind,pages:[],cards:[]}),card_key:key(race),card_result_json:JSON.stringify(result),error:null});
  return{status:result.kind==='formal'?(result.newlySaved===false?'existing-card-reconciled':'official-card-saved'):'predraw-page-preserved',formalCardSaved:result.kind==='formal'&&result.newlySaved!==false,card:result,predictionRebuilt:false};
 }
 export async function runSharedPageStep(db,{scope,races},deps={}){

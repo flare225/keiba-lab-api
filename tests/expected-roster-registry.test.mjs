@@ -14,6 +14,10 @@ test('source-separated immutable expected roster saves/readbacks, deduplicates a
 test('rejects fabricated numbering, absent text evidence, wrong source and after-race import',()=>{
  for(const patch of [{officialHorsePage:'https://attacker.invalid/horse.html'},{runners:[{horseName:'馬名A',age:3,horseNo:1}]},{runners:[{horseName:'未掲載',age:3}]},{sourceUrl:'https://attacker.invalid/'},{observedAt:'2026-10-26T00:00:00Z'},{date:'2026-10-18'}])assert.throws(()=>validateExpectedRoster({...input,...patch},stamp));
 });
+test('roster coverage cannot claim completeness or observed counts absent from the saved rows',()=>{
+ for(const rosterCoverage of [{observedRunnerCount:1,declaredRunnerCount:15,complete:false},{observedRunnerCount:2,declaredRunnerCount:15,complete:true},{observedRunnerCount:2,declaredRunnerCount:1,complete:false},{observedRunnerCount:2,declaredRunnerCount:null,complete:true}])assert.throws(()=>validateExpectedRoster({...input,rosterCoverage},stamp),/公開頭数/);
+ assert.deepEqual(validateExpectedRoster({...input,rosterCoverage:{observedRunnerCount:2,declaredRunnerCount:15,complete:false}},stamp).rosterCoverage,{observedRunnerCount:2,declaredRunnerCount:15,complete:false});
+});
 
 test('additional Niigata special registrations preserve race identity and individual ages',async()=>{
  const {NIIGATA_ADDITIONAL_ROSTER_SEEDS}=await import('../src/niigata-additional-rosters.js');

@@ -90,7 +90,7 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
  // due roster sources for the whole publication window. Only an explicit
  // no-work result may hand off this unused turn; failures/safety stops cannot.
  const officialCardFallback=cardCompletionFirst&&card?.ok!==false&&['complete','card-discovery-not-due'].includes(card?.status)&&!stops(card);
- const supplemental=await missing(db,event,{now,...(officialCardFallback?{officialCardFallback:true}:{})});if(supplemental&&(supplemental.externalRequests||supplemental.status==='cooldown'||supplemental.saveMayHaveSucceeded||['roster-saved','roster-reconciled'].includes(supplemental.status)))return acquisition(supplemental);
+ const supplemental=await missing(db,event,{now,...(officialCardFallback?{officialCardFallback:true}:{})});if(supplemental&&(supplemental.externalRequests||supplemental.status==='cooldown'||supplemental.saveMayHaveSucceeded||['roster-saved','partial-roster-saved','roster-reconciled'].includes(supplemental.status)))return acquisition(supplemental);
  rosters??=await registered(db,today,until);
  const officialFirst=!preparing&&(cardCompletionFirst||preferOfficialCards(rosters,now()));
  if(officialFirst&&!card)card=await cards(db,cardInput,deps);

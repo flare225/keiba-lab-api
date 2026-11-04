@@ -1,5 +1,5 @@
 import {sha256} from './card-evidence.js';
-import {saveExpectedRoster} from './expected-roster-registry.js';
+import {saveExpectedRoster,validateExpectedRoster} from './expected-roster-registry.js';
 import {targetInput} from './race-history-assessment-v3.31.0.js';
 const CODES={'札幌':'01','函館':'02','福島':'03','新潟':'04','東京':'05','中山':'06','中京':'07','京都':'08','阪神':'09','小倉':'10'};
 const text=s=>String(s).replace(/<[^>]*>/g,' ').replace(/&nbsp;|&#160;/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim();
@@ -72,6 +72,14 @@ export function parseSupplementaryRoster(html,program,url){
  }
  if(!runners.length||runners.length>100||new Set(runners.map(r=>r.horseName)).size!==runners.length)throw Error('補助出馬表の名簿公開を確認できません。');return runners;
 }
+function publishedRosterCoverage(html,url,runners){
+ if(new URL(url).hostname!=='own.netkeiba.com')return null;
+ const at=html.indexOf('競馬新聞'),heading=text(html.slice(0,at)),end=html.indexOf('※結果',at),section=text(html.slice(at,end>at?end:undefined));
+ const counts=[...new Set([...heading.matchAll(/(\d{1,3})\s*頭/g)].map(m=>Number(m[1])))],declared=counts.length===1?counts[0]:null;
+ const truncated=/続きは.{0,80}一口馬主コースPro/.test(section);
+ if(declared!==null&&(declared<runners.length||declared>100))throw Error('補助名簿の表示頭数が不正です。');
+ return declared!==null||truncated?{observedRunnerCount:runners.length,declaredRunnerCount:declared,complete:!truncated&&declared===runners.length}:null;
+}
 export async function collectMissingRoster(db,input=null,{now=Date.now,fetcher=fetch,officialCardFallback=false}={}){
  const stamp=now(),today=new Date(stamp+9*3600000).toISOString().slice(0,10),until=new Date(Date.parse(today)+7*86400000).toISOString().slice(0,10);if(input)targetInput(input);
  await db.prepare('CREATE TABLE IF NOT EXISTS lab_missing_roster_sources_v1(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_at INTEGER NOT NULL,source_url TEXT,http_status INTEGER,body_sha256 TEXT,body_html TEXT,observed_at TEXT,error TEXT)').run();
@@ -84,8 +92,9 @@ export async function collectMissingRoster(db,input=null,{now=Date.now,fetcher=f
    if(await sha256(stored.record_json)!==stored.snapshot_id)throw Error('名簿再照合ハッシュ不一致');
    const record=JSON.parse(stored.record_json),runners=record.runners;
    if(`${record.date}:${record.venue}:${record.raceNo}`!==pending.race_key||!Array.isArray(runners)||!runners.length||runners.length>100||new Set(runners.map(r=>r.horseName)).size!==runners.length)throw Error('名簿再照合の対象・頭数不一致');
-   await db.prepare("UPDATE lab_missing_roster_sources_v1 SET status='roster-saved',error=NULL WHERE race_key=?").bind(pending.race_key).run();
-   return{status:'roster-reconciled',target:pending.race_key,snapshotId:stored.snapshot_id,snapshotSha256:stored.snapshot_id,savedAt:stored.stored_at,storedRunners:runners.length,newRosterRaces:0,externalRequests:0,independentRosterReadback:true,formalCardSaved:false};
+   const partial=record.rosterCoverage?.complete===false;
+   await db.prepare("UPDATE lab_missing_roster_sources_v1 SET status=?,next_at=CASE WHEN ? THEN ? ELSE next_at END,error=NULL WHERE race_key=?").bind(partial?'partial-roster-saved':'roster-saved',partial?1:0,stamp+3600000,pending.race_key).run();
+   return{status:'roster-reconciled',target:pending.race_key,snapshotId:stored.snapshot_id,snapshotSha256:stored.snapshot_id,savedAt:stored.stored_at,storedRunners:runners.length,newRosterRaces:0,externalRequests:0,independentRosterReadback:true,formalCardSaved:false,...(record.rosterCoverage?{rosterComplete:!partial,declaredRunners:record.rosterCoverage.declaredRunnerCount}:{})};
   }
  }
  // Keep published official cards first from Thursday afternoon onward.
@@ -96,9 +105,11 @@ export async function collectMissingRoster(db,input=null,{now=Date.now,fetcher=f
  // retry (or initial program receipt) time plus its race deadline. An earlier
  // day gets the deadline-gap advantage, but an older later-day candidate can
  // overtake a recent retry. No epoch-zero preference or fixed date ratio.
- const p=await db.prepare(`SELECT p.*,q.body_html,q.body_sha256,q.observed_at,q.source_url receipt_source_url,q.status source_status FROM jra_race_program p LEFT JOIN lab_missing_roster_sources_v1 q ON q.race_key=p.race_date||':'||p.venue||':'||p.race_no WHERE p.race_date>? AND p.race_date<=? AND (COALESCE(q.next_at,0)<=? OR q.status IN ('source-received','pending-roster-readback')) AND NOT EXISTS(SELECT 1 FROM lab_expected_roster_registry r WHERE r.race_key=p.race_date||':'||p.venue||':'||p.race_no) AND NOT EXISTS(SELECT 1 FROM jra_races r WHERE r.race_date=p.race_date AND r.venue=p.venue AND r.race_no=p.race_no AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key))${filter} ORDER BY COALESCE(q.next_at,CAST(strftime('%s',p.fetched_at) AS INTEGER)*1000,CAST(strftime('%s',p.race_date,'-7 days') AS INTEGER)*1000)+CAST(strftime('%s',p.race_date) AS INTEGER)*1000,p.race_date,COALESCE(q.next_at,0),p.race_no,p.venue LIMIT 1`).bind(...args).first();if(!p)return{status:'no-due-missing-roster',externalRequests:0};
+ const legacyPartial="q.status='roster-saved' AND q.body_html LIKE '%続きは%' AND q.body_html LIKE '%一口馬主コースPro%'";
+ const p=await db.prepare(`SELECT p.*,q.body_html,q.body_sha256,q.observed_at,q.source_url receipt_source_url,q.status source_status,EXISTS(SELECT 1 FROM lab_expected_roster_registry r WHERE r.race_key=p.race_date||':'||p.venue||':'||p.race_no) previously_registered FROM jra_race_program p LEFT JOIN lab_missing_roster_sources_v1 q ON q.race_key=p.race_date||':'||p.venue||':'||p.race_no WHERE p.race_date>? AND p.race_date<=? AND (COALESCE(q.next_at,0)<=? OR q.status IN ('source-received','pending-roster-readback') OR (${legacyPartial})) AND (NOT EXISTS(SELECT 1 FROM lab_expected_roster_registry r WHERE r.race_key=p.race_date||':'||p.venue||':'||p.race_no) OR (SELECT CASE WHEN json_valid(r.record_json) THEN json_extract(r.record_json,'$.rosterCoverage.complete') END FROM lab_expected_roster_registry r WHERE r.race_key=p.race_date||':'||p.venue||':'||p.race_no ORDER BY r.stored_at DESC,r.rowid DESC LIMIT 1)=0 OR (${legacyPartial})) AND NOT EXISTS(SELECT 1 FROM jra_races r WHERE r.race_date=p.race_date AND r.venue=p.venue AND r.race_no=p.race_no AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key))${filter} ORDER BY COALESCE(q.next_at,CAST(strftime('%s',p.fetched_at) AS INTEGER)*1000,CAST(strftime('%s',p.race_date,'-7 days') AS INTEGER)*1000)+CAST(strftime('%s',p.race_date) AS INTEGER)*1000,p.race_date,COALESCE(q.next_at,0),p.race_no,p.venue LIMIT 1`).bind(...args).first();if(!p)return{status:'no-due-missing-roster',externalRequests:0};
  const key=`${p.race_date}:${p.venue}:${p.race_no}`;let url;try{url=expectedRosterSourceUrl(p)}catch(e){await db.prepare('INSERT INTO lab_missing_roster_sources_v1(race_key,status,next_at,error) VALUES(?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET status=excluded.status,next_at=excluded.next_at,error=excluded.error').bind(key,'program-identity-incomplete',stamp+6*3600000,String(e.message)).run();return{status:'program-identity-incomplete',target:key,externalRequests:0};}
- const reusableHtml=p.receipt_source_url===url&&['source-received','pending-roster-readback'].includes(p.source_status)&&typeof p.body_html==='string'&&p.body_html.length>0;
+ const repairingPartial=p.source_status==='roster-saved'&&p.body_html?.includes('続きは')&&p.body_html?.includes('一口馬主コースPro');
+ const reusableHtml=p.receipt_source_url===url&&(['source-received','pending-roster-readback'].includes(p.source_status)||repairingPartial)&&typeof p.body_html==='string'&&p.body_html.length>0;
  if(!reusableHtml&&Number(clock?.next_at)>stamp)return{status:'source-not-due',target:key,externalRequests:0,nextAttemptAt:new Date(Number(clock.next_at)).toISOString()};
  const gate=await db.prepare("SELECT next_batch_at,locked_until FROM lab_history_collection_budget WHERE name='jra-history'").first();if(!gate)return{status:'shared-gate-unavailable',externalRequests:0};const wait=reusableHtml?Number(gate.locked_until)||0:Math.max(Number(gate.next_batch_at)||0,Number(gate.locked_until)||0);if(wait>stamp)return{status:'cooldown',target:key,externalRequests:0,nextAttemptAt:new Date(wait).toISOString()};
  const token=crypto.randomUUID(),lease=reusableHtml
@@ -108,8 +119,17 @@ export async function collectMissingRoster(db,input=null,{now=Date.now,fetcher=f
  try{
  if(html){if(await sha256(html)!==p.body_sha256)throw Error('補助出典receiptのハッシュが一致しません。');}else{requests=1;await db.prepare("UPDATE lab_missing_roster_clock_v1 SET next_at=? WHERE name='source'").bind((Math.floor(stamp/3600000)+1)*3600000).run();const response=await fetcher(url,{redirect:'manual',headers:{accept:'text/html'},signal:AbortSignal.timeout(10000)});http=response.status;if(!response.ok){if([403,429,503].includes(http))pause=3600000;failedResponse=await failureResponseEvidence(response,url,stamp);throw Error('netkeiba HTTP '+http);}const bytes=await response.arrayBuffer();if(bytes.byteLength>1500000)throw Error('補助ページサイズ上限');html=decodeRosterHtml(bytes,response.headers.get('content-type')||'');observed=new Date(stamp).toISOString();await db.prepare('INSERT INTO lab_missing_roster_sources_v1 VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET status=excluded.status,next_at=excluded.next_at,source_url=excluded.source_url,http_status=excluded.http_status,body_sha256=excluded.body_sha256,body_html=excluded.body_html,observed_at=excluded.observed_at,error=NULL').bind(key,'source-received',stamp+3600000,url,http,await sha256(html),html,observed,null).run();}
  const runners=parseSupplementaryRoster(html,p,url),sourceText=`対象 ${p.race_date} ${p.venue}${p.race_no}R\n取得元HTML SHA256 ${await sha256(html)}\n`+runners.map(r=>r.horseName+' '+r.age+'歳').join('\n');
- const saved=await saveExpectedRoster(db,{date:p.race_date,venue:p.venue,raceNo:p.race_no,raceName:p.race_label,provider:'netkeiba',kind:'expected-runners',sourceUrl:url,observedAt:observed,sourceText,runners},stamp);
- await db.prepare("UPDATE lab_missing_roster_sources_v1 SET status='roster-saved',next_at=?,error=NULL WHERE race_key=?").bind(stamp+86400000,key).run();return{status:'roster-saved',target:key,storedRunners:runners.length,newRosterRaces:saved.idempotent?0:1,snapshotId:saved.snapshotId,externalRequests:requests,independentRosterReadback:true,formalCardSaved:false};
+ const rosterCoverage=publishedRosterCoverage(html,url,runners),partial=rosterCoverage?.complete===false;
+ const rosterInput={...(rosterCoverage?{rosterCoverage}:{}),date:p.race_date,venue:p.venue,raceNo:p.race_no,raceName:p.race_label,provider:'netkeiba',kind:'expected-runners',sourceUrl:url,observedAt:observed,sourceText,runners};
+ // A fresh request with the same visible subset is not a new roster revision.
+ // Retain the prior immutable snapshot's observation time only when every
+ // other normalized field (including source text/SHA and coverage) is equal.
+ if(partial&&p.previously_registered){
+  const prior=await db.prepare('SELECT record_json FROM lab_expected_roster_registry WHERE race_key=? ORDER BY stored_at DESC,rowid DESC LIMIT 1').bind(key).first();
+  if(prior){const previous=JSON.parse(prior.record_json),current=validateExpectedRoster(rosterInput,stamp);if(JSON.stringify({...previous,observedAt:null})===JSON.stringify({...current,observedAt:null}))rosterInput.observedAt=previous.observedAt;}
+ }
+ const saved=await saveExpectedRoster(db,rosterInput,stamp);
+ await db.prepare("UPDATE lab_missing_roster_sources_v1 SET status=?,next_at=?,error=NULL WHERE race_key=?").bind(partial?'partial-roster-saved':'roster-saved',stamp+(partial?3600000:86400000),key).run();return{status:partial?'partial-roster-saved':'roster-saved',target:key,storedRunners:runners.length,newRosterRaces:saved.idempotent||p.previously_registered?0:1,...(!saved.idempotent&&p.previously_registered?{newRosterRevisions:1}:{}),snapshotId:saved.snapshotId,externalRequests:requests,independentRosterReadback:true,formalCardSaved:false,...(partial&&!requests?{attempted:1}:{}),...(rosterCoverage?{rosterComplete:!partial,declaredRunners:rosterCoverage.declaredRunnerCount}:{})};
  }catch(e){if(e.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e))){quota=true;throw e;}const status=e.saveMayHaveSucceeded?'pending-roster-readback':[403,429,503].includes(http)?'source-blocked':/補助.*(?:確認|不正)|補助出馬表/.test(String(e.message||e))?'publication-unconfirmed':'fetch-failed';
  if(failedResponse){const f=failedResponse;await db.prepare('INSERT INTO lab_missing_roster_sources_v1 VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET status=excluded.status,next_at=excluded.next_at,source_url=excluded.source_url,http_status=excluded.http_status,body_sha256=excluded.body_sha256,body_html=excluded.body_html,observed_at=excluded.observed_at,error=excluded.error').bind(key,status,stamp+3600000,url,http,f.evidence.storedDecodedBodySha256||null,f.body,f.evidence.observedAt,JSON.stringify({version:'supplementary-http-failure-v1',message:String(e.message||e),responseEvidence:f.evidence})).run();}
  else await db.prepare('INSERT INTO lab_missing_roster_sources_v1(race_key,status,next_at,source_url,http_status,error) VALUES(?,?,?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET status=excluded.status,next_at=excluded.next_at,error=excluded.error,http_status=excluded.http_status').bind(key,status,stamp+3600000,url,http,String(e.message||e)).run();

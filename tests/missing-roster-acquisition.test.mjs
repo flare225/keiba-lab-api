@@ -1,6 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {collectMissingRoster,parseSupplementaryRoster,parseOwnExpectedRoster,supplementaryRosterUrl,expectedRosterSourceUrl} from '../src/missing-roster-acquisition.js';
 import {sha256} from '../src/card-evidence.js';
-import {storedExpectedSources} from '../src/expected-roster-registry.js';
+import {storedExpectedSources,saveExpectedRoster} from '../src/expected-roster-registry.js';
+import {buildProvisionalPrediction} from '../src/provisional-expected-prediction.js';
 import {scheduledProvisionalPrediction} from '../src/provisional-prediction-queue.js';
 import {readProvisionalPrediction} from '../src/provisional-prediction-snapshots.js';
 import {collectLiveHistory} from '../src/live-source-dispatch.js';
@@ -42,6 +43,41 @@ test('scheduled missing-roster wrapper carries the official no-work handoff into
  assert.equal(r.status,'roster-saved',JSON.stringify(r));assert.equal(requests,1);assert.equal(r.historyWorkStage,'acquisition');assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,1);
  const receipt=sql.prepare("SELECT result_json FROM lab_bounded_pipeline_runs WHERE job='missing-roster'").get();assert.equal(JSON.parse(receipt.result_json).status,'roster-saved');sql.close();
 });
+test('partial OWN publication remains due and later appends a complete roster without rewriting the first snapshot',async()=>{
+ const {db,sql}=fixture(),partial=ownHtml.replace('<a>競馬新聞</a>','<div>3頭</div><a>競馬新聞</a>').replace('<p>※結果','<p>続きは一口馬主コースPro 登録でご覧になれます</p><p>※結果');let calls=0;
+ const a=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>{calls++;return new Response(partial,{headers:{'content-type':'text/html; charset=utf-8'}})}});
+ assert.equal(a.status,'partial-roster-saved');assert.equal(a.storedRunners,1);assert.equal(a.declaredRunners,3);assert.equal(a.rosterComplete,false);
+ const original=sql.prepare('SELECT * FROM lab_expected_roster_registry').get(),source=(await storedExpectedSources(db,p.race_date,p.race_date))[0];
+ assert.deepEqual(source.rosterCoverage,{observedRunnerCount:1,declaredRunnerCount:3,complete:false});
+ const prediction=buildProvisionalPrediction(source,{surface:'芝',distance:2000,source_url:'https://www.jra.go.jp/program',race_label:'2歳新馬'},new Map(),now);assert.equal(prediction.preparation.candidateSetComplete,false);assert.match(prediction.preparation.label,/部分/);
+ const evaluate=stamp=>scheduledProvisionalPrediction(db,stamp,{prepareRoster:async()=>({saved:0,externalRequests:0}),sources:()=>storedExpectedSources(db,p.race_date,p.race_date),repair:async()=>({repaired:0}),build:async(_db,s)=>buildProvisionalPrediction(s,{surface:'芝',distance:2000,source_url:'https://www.jra.go.jp/program',race_label:'2歳新馬'},new Map(),stamp)});
+ const firstEvaluation=await evaluate(now);assert.equal(firstEvaluation.status,'verified',JSON.stringify(firstEvaluation));const firstRead=await readProvisionalPrediction(db,source);assert.equal(firstRead.snapshot.runnerCount,1);assert.equal(firstRead.snapshot.preparation.candidateSetComplete,false);
+ await collectMissingRoster(db,null,{now:()=>now+60000,fetcher:()=>assert.fail('same-hour retry')});assert.equal(calls,1);
+ const same=await collectMissingRoster(db,null,{now:()=>now+3600000,fetcher:async()=>new Response(partial,{headers:{'content-type':'text/html; charset=utf-8'}})});assert.equal(same.status,'partial-roster-saved');assert.equal(same.snapshotId,original.snapshot_id);assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,1);
+ const failed=await collectMissingRoster(db,null,{now:()=>now+7200000,fetcher:async()=>new Response('<p>not the requested card</p>',{headers:{'content-type':'text/html; charset=utf-8'}})});assert.equal(failed.status,'publication-unconfirmed');
+ const row=ownHtml.match(/<tr class="HorseList">[\s\S]*?<\/tr>/)[0];const full=ownHtml.replace('<a>競馬新聞</a>','<div>3頭</div><a>競馬新聞</a>').replace(row,[row,row.replaceAll('試験馬','試験馬2').replaceAll('2024000001','2024000002'),row.replaceAll('試験馬','試験馬3').replaceAll('2024000001','2024000003')].join(''));
+ const b=await collectMissingRoster(db,null,{now:()=>now+10800000,fetcher:async()=>new Response(full,{headers:{'content-type':'text/html; charset=utf-8'}})});
+ assert.equal(b.status,'roster-saved');assert.equal(b.storedRunners,3);assert.equal(b.rosterComplete,true);assert.equal(b.newRosterRaces,0);assert.equal(b.newRosterRevisions,1);
+ assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,2);assert.deepEqual(sql.prepare('SELECT * FROM lab_expected_roster_registry WHERE snapshot_id=?').get(original.snapshot_id),original);assert.equal((await storedExpectedSources(db,p.race_date,p.race_date))[0].names.length,3);
+ const secondEvaluation=await evaluate(now+10800000);assert.equal(secondEvaluation.status,'verified',JSON.stringify(secondEvaluation));assert.equal(secondEvaluation.saved,1);assert.equal(secondEvaluation.evaluationChanged,true);const fullSource=(await storedExpectedSources(db,p.race_date,p.race_date))[0],freshRead=await readProvisionalPrediction(db,fullSource);assert.equal(freshRead.snapshot.runnerCount,3);assert.equal(freshRead.snapshot.preparation.sourceSnapshotId,fullSource.snapshotId);assert.notEqual(freshRead.snapshotSha256,firstRead.snapshotSha256);assert.equal((await readProvisionalPrediction(db,source,{exact:true})).snapshotSha256,firstRead.snapshotSha256);sql.close();
+});
+
+test('legacy roster-saved truncated receipt is reclassified from its exact stored body without HTTP or gate mutation',async()=>{
+ const {db,sql}=fixture(),body=ownHtml.replace('<a>競馬新聞</a>','<div>15頭</div><a>競馬新聞</a>').replace('<p>※結果','<p>続きは一口馬主コースPro 登録でご覧になれます</p><p>※結果'),digest=await sha256(body);
+ await saveExpectedRoster(db,{date:p.race_date,venue:p.venue,raceNo:p.race_no,raceName:'2歳未勝利',provider:'netkeiba',kind:'expected-runners',sourceUrl:ownUrl,observedAt:new Date(now).toISOString(),sourceText:'対象レースの旧保存原典SHA '+digest+' 試験馬 2歳',runners:[{horseName:'試験馬',age:2}]},now);
+ sql.exec('CREATE TABLE lab_missing_roster_sources_v1(race_key TEXT PRIMARY KEY,status TEXT,next_at INTEGER,source_url TEXT,http_status INTEGER,body_sha256 TEXT,body_html TEXT,observed_at TEXT,error TEXT)');
+ sql.prepare('INSERT INTO lab_missing_roster_sources_v1 VALUES(?,?,?,?,?,?,?,?,?)').run('2026-10-24:東京:1','roster-saved',now+86400000,ownUrl,200,digest,body,new Date(now).toISOString(),null);
+ const gate=sql.prepare('SELECT * FROM lab_history_collection_budget').get();const r=await collectLiveHistory(db,{scheduledTime:now},{now:()=>now,cardCompletionFirst:true,cards:async()=>({status:'awaiting-official-publication',externalRequests:0}),missing:(d,e,o)=>collectMissingRoster(d,null,{...o,fetcher:()=>assert.fail('use stored body only')}),registered:()=>assert.fail('must return after the local roster save'),programs:()=>assert.fail('no second source stage')});assert.equal(r.historyWorkStage,'acquisition');
+ assert.equal(r.status,'partial-roster-saved');assert.equal(r.externalRequests,0);assert.equal(r.newRosterRaces,0);assert.equal(r.declaredRunners,15);assert.deepEqual(sql.prepare('SELECT * FROM lab_history_collection_budget').get(),gate);assert.equal(sql.prepare('SELECT status FROM lab_missing_roster_sources_v1').get().status,'partial-roster-saved');sql.close();
+});
+
+test('uncertain partial-roster save reconciles without promoting it to complete or requesting the source again',async()=>{
+ const {db,sql}=fixture(),body=ownHtml.replace('<a>競馬新聞</a>','<div>15頭</div><a>競馬新聞</a>');let fail=true,requests=0;
+ const wrapped={prepare(q){if(fail&&q==='SELECT record_json FROM lab_expected_roster_registry WHERE snapshot_id=?')return{bind(){return{async first(){return null}}}};return db.prepare(q)}};
+ const first=await collectMissingRoster(wrapped,null,{now:()=>now,fetcher:async()=>{requests++;return new Response(body,{headers:{'content-type':'text/html; charset=utf-8'}})}});assert.equal(first.status,'pending-roster-readback');fail=false;
+ const next=await collectMissingRoster(wrapped,null,{now:()=>now+3600000,fetcher:()=>assert.fail('read the saved snapshot')});assert.equal(next.status,'roster-reconciled');assert.equal(next.rosterComplete,false);assert.equal(next.declaredRunners,15);assert.equal(requests,1);assert.equal(sql.prepare('SELECT status FROM lab_missing_roster_sources_v1').get().status,'partial-roster-saved');sql.close();
+});
+
 test('OWN charset-only fix reuses declared encoding without relaxing identity or hourly source limits',async()=>{
  for(const [meta,contentType] of [['<meta charset="utf-8">','text/html'],['<meta http-equiv="Content-Type" content="text/html; charset=utf-8">','text/html'],['<meta charset="euc-jp">','text/html; charset="utf-8"']]){
   const {db,sql}=fixture();let calls=0;

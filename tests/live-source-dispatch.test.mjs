@@ -242,3 +242,32 @@ test('successful navigation also hands off formal history, while shared cooldown
  const r=await collectLiveHistory(db,{}, {...deps,previousHistoryWorkStage:'acquisition',previousCardSelection:first.cardSelection});
  assert.equal(calls.length,blocked?0:1);if(blocked)assert.equal(r.status,'cooldown');else assert.equal(r.status,'page-parsed');}
 });
+
+test('before numbering opens, a week without saved rosters discovers its selected upcoming card before unrelated calendar recovery',async()=>{
+ for(const [stamp,date] of [[Date.parse('2026-11-04T07:54:50Z'),'2026-11-07'],[Date.parse('2026-11-11T07:54:50Z'),'2026-11-14']]){
+  const seen=[],target={date,venue:'京都',raceNo:11};
+  const result=await collectLiveHistory({}, {scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,
+   cards:async(_,input)=>input.publicationWindowOnly?{status:'awaiting-official-publication',externalRequests:0}:(seen.push('upcoming-published-source'),{status:'predraw-page-preserved',target,externalRequests:1,formalCardSaved:false}),
+   registered:async()=>[],missing:async()=>null,
+   programs:async()=>{seen.push('unrelated-calendar');return{status:'source-unconfirmed',date:date.slice(0,8)+'09',externalRequests:1,error:'JRA program HTTP 403'}}});
+  assert.deepEqual(seen,['upcoming-published-source']);assert.deepEqual(result.target,target);assert.equal(result.historyWorkStage,'acquisition');assert.equal(result.externalRequests,1);assert.equal(result.formalCardSaved,false);
+ }
+});
+
+test('pre-publication card retry wait preserves a later program recovery opportunity without fetching the card twice',async()=>{
+ const stamp=Date.parse('2026-11-04T07:54:50Z');let cardPlans=0,programs=0;
+ const result=await collectLiveHistory({}, {scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,
+  cards:async(_,input)=>{cardPlans++;return input.publicationWindowOnly?{status:'awaiting-official-publication',externalRequests:0}:{status:'card-discovery-not-due',externalRequests:0}},
+  registered:async()=>[],missing:async()=>null,programs:async()=>{programs++;return{status:'verified-published-program',programRowsSaved:12,externalRequests:1}}});
+ assert.equal(cardPlans,2);assert.equal(programs,1);assert.equal(result.programRowsSaved,12);assert.equal(result.externalRequests,1);
+});
+
+test('fresh-week predraw discovery safety stops cannot fall through to program recovery',async()=>{
+ const stamp=Date.parse('2026-11-04T07:54:50Z');
+ for(const stop of [{status:'cooldown',externalRequests:0},{status:'lease-unavailable',externalRequests:0},{status:'paused',externalRequests:0},{status:'source-unconfirmed',externalRequests:1,error:'HTTP 403'}]){
+  const result=await collectLiveHistory({}, {scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,
+   cards:async(_,input)=>input.publicationWindowOnly?{status:'awaiting-official-publication',externalRequests:0}:stop,
+   registered:async()=>[],missing:async()=>null,programs:()=>assert.fail('no fallback after a safety stop')});
+  assert.equal(result.status,stop.status);assert.equal(result.externalRequests,stop.externalRequests);
+ }
+});

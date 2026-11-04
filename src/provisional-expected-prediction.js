@@ -10,7 +10,8 @@ export function buildProvisionalPrediction(source,conditions,histories,now=Date.
  if(!['芝','ダート','障害'].includes(conditions?.surface)||!Number.isInteger(Number(conditions?.distance))||Number(conditions.distance)<=0)throw Error('保存済み番組のコース・距離を確認できません。');
  const confirmed=source.rosterBasis==='confirmed-predraw';
  if(confirmed&&(source.provider!=='JRA'||source.confirmationVerified!==true))throw Error('枠順前名簿の確認根拠がありません。');
- const preparation={stage:confirmed?'entries-confirmed-predraw':'entries-unconfirmed',label:confirmed?'暫定予想・枠順未確定':'暫定評価・出走未確定',entriesConfirmed:confirmed,candidateSetComplete:confirmed?true:null,provider:source.provider||null,kind:source.kind||null,sourceUrl:source.sourceUrl||null,observedAt:source.observedAt||null,sourceSnapshotId:source.snapshotId||null,sourceSha256:source.sourceSha256||null,officialCard:false,formalLockEligible:false};
+ const preparation={stage:confirmed?'entries-confirmed-predraw':'entries-unconfirmed',label:confirmed?'暫定予想・枠順未確定':'暫定評価・出走未確定',entriesConfirmed:confirmed,candidateSetComplete:confirmed?true:source.rosterCoverage?.complete===false?false:null,provider:source.provider||null,kind:source.kind||null,sourceUrl:source.sourceUrl||null,observedAt:source.observedAt||null,sourceSnapshotId:source.snapshotId||null,sourceSha256:source.sourceSha256||null,officialCard:false,formalLockEligible:false};
+ if(source.rosterCoverage?.complete===false){preparation.label='暫定参考・部分名簿';preparation.rosterCoverage=source.rosterCoverage;}
  const debut=/^https:\/\/www\.jra\.go\.jp\//.test(conditions.source_url||'')&&/新馬/.test(conditions.race_label||'');
  const race={date:source.date,venue:source.venue,surface:conditions.surface,distance:Number(conditions.distance),...(debut?{raceType:'debut'}:{})};
  const rows=rankAssessment(source.names.map(horseName=>({horseName,horseNo:null,frameNo:null,assessment:assessExpectedHistory(histories.get(horseName),race,null,'recent-three-v1')})));

@@ -109,6 +109,15 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
   card=await cards(db,cardInput,deps);
   if(stops(card))return acquisition(card);
  }
+ // The fresh-card flag grants one immediate handoff, not all remaining horse
+ // batches. On later completion turns, formal-only cards still have no entry
+ // in the expected-roster registry. Try the existing bounded history queue
+ // before an unrelated program request can consume this turn and its gate.
+ if(cardCompletionFirst&&previousHistoryWorkStage==='acquisition'&&!checkedUpcoming){
+  checkedUpcoming=true;
+  const completion=await upcoming(db,{now,previousCardSelection:deps.previousCardSelection});
+  if(stops(completion))return history(completion);
+ }
  const recovery=await programs(db,{now});
  const programReadback=Number(recovery?.programRowsSaved)>0||Number(recovery?.readbackVerified)>0;
  if(recovery&&(recovery.externalRequests||recovery.status==='cooldown'||recovery.saveMayHaveSucceeded||programReadback))return acquisition(programReadback?{...recovery,attempted:true}:recovery);

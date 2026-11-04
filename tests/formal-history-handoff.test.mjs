@@ -38,3 +38,29 @@ test('formal-only handoff preserves source blocking cooldown and never falls thr
   assert.equal(sql.prepare("SELECT next_batch_at FROM lab_history_collection_budget WHERE name='jra-history'").get().next_batch_at,stamp+3600000);sql.close();
  }
 });
+
+test('remaining formal-only horses get their completion turn before unrelated calendar recovery after the one-shot flag clears',async()=>{
+ const {db,sql}=await fixture();sql.prepare('UPDATE jra_races SET runner_count=2').run();sql.prepare('INSERT INTO jra_runners VALUES(?,?,?,?)').run(key,2,'HorseB',5);
+ sql.prepare('INSERT INTO lab_history_profile_links VALUES(?,?,?,?,?,?)').run(key,'HorseB',5,profile.replace('105521','105522'),'https://www.jra.go.jp/card',stamp);
+ let requests=0,calendar=0,stampNow=stamp;
+ const deps={now:()=>stampNow,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',previousCardSelection:{lane:'discovery',priorityFormalHistoryPending:false},
+  cards:async()=>({ok:true,status:'card-discovery-not-due',externalRequests:0}),missing:async()=>({status:'source-not-due',externalRequests:0}),registered:async()=>[],
+  programs:async()=>{calendar++;return{ok:false,status:'source-unconfirmed',date:'2026-11-06',error:'JRA program HTTP 403',externalRequests:1}},
+  upcoming:(database,options)=>collectUpcomingOfficialHistory(database,{...options,collect:(d,input,ctx)=>collectHistoryBatch(d,input,{...ctx,wait:async()=>{},fetcher:async(u,o)=>{requests++;const name=new URLSearchParams(o.body).get('CNAME').includes('105522')?'HorseB':'HorseA';return new Response(html.replaceAll('HorseA',name),{headers:{'content-type':'text/html; charset=utf-8'}});}})})};
+ for(let i=0;i<2;i++){const r=await collectLiveHistory(db,{scheduledTime:stampNow},deps);assert.equal(r.addedRows,3,JSON.stringify(r));assert.equal(r.historyWorkStage,'history');stampNow+=18*60000;}
+ assert.equal(requests,2);assert.equal(calendar,0);assert.equal(sql.prepare('SELECT count(*) n FROM jra_past_performances').get().n,6);assert.equal(sql.prepare('SELECT count(DISTINCT horse_name) n FROM jra_past_performances').get().n,2);
+ const next=await collectLiveHistory(db,{scheduledTime:stampNow},{...deps,previousHistoryWorkStage:'history'});assert.equal(next.status,'source-unconfirmed');assert.equal(calendar,1);assert.equal(requests,2);
+ assert.equal(sql.prepare("SELECT count(*) n FROM sqlite_master WHERE name='lab_expected_roster_registry'").get().n,0);sql.close();
+});
+
+test('remaining formal-history turn keeps safety stops, one plan when idle, and quota propagation before calendar fallback',async()=>{
+ const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
+ for(const status of ['cooldown','lease-unavailable','shared-gate-unavailable','paused','idle','quota']){
+  let plans=0,calendars=0;
+  const deps={now:()=>stamp,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',previousCardSelection:{priorityFormalHistoryPending:false},cards:async()=>({ok:true,status:'card-discovery-not-due',externalRequests:0}),registered:async()=>[],missing:async()=>null,
+   upcoming:async()=>{plans++;if(status==='quota')throw Error('exceeded D1 daily row read limit');return status==='idle'?null:{status,externalRequests:0}},programs:async()=>{calendars++;return null},main:async()=>null,expected:async()=>({status:'idle',externalRequests:0}),details:async()=>({status:'idle',externalRequests:0})};
+  if(status==='quota')await assert.rejects(collectLiveHistory(db,{scheduledTime:stamp},deps),/daily row read limit/);
+  else{const r=await collectLiveHistory(db,{scheduledTime:stamp},deps);assert.equal(r.status,status);}
+  assert.equal(plans,1);assert.equal(calendars,status==='idle'?1:0);
+ }
+});

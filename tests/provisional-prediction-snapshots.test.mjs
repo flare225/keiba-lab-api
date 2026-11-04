@@ -26,3 +26,28 @@ test('unconfirmed and confirmed predraw snapshots coexist by source SHA without 
  const {default:app}=await import('../src/index-v3.49.0.js');const url='https://test/v1/lab/provisional-prediction-snapshot?date='+t.date+'&venue='+encodeURIComponent(t.venue)+'&race_no='+t.raceNo+'&basis=confirmed-predraw&source_sha256='+sha;
  const result=await app.fetch(new Request(url),{DB:db},{}),body=await result.json();assert.equal(result.status,200);assert.equal(body.snapshotSha256,fresh.snapshotSha256);assert.equal(body.snapshot.guardrails.locked,false);sql.close();
 });
+
+test('SHA-selected GET reads a witnessed expected revision despite predraw preference and stays race scoped',async()=>{
+ const {sql,db}=fixture(),{provisionalEvaluationFingerprint}=await import('../src/provisional-prediction-snapshots.js');
+ const initial=await saveProvisionalPrediction(db,t,async()=>sample(),now),sourceSha='a'.repeat(64);
+ const predraw=await saveProvisionalPrediction(db,{...t,basis:'confirmed-predraw',sourceSha256:sourceSha},async()=>({...sample(),preparation:{stage:'entries-confirmed-predraw',sourceSha256:sourceSha}}),now+1000);
+ const changed={...sample(),runners:[{...sample().runners[0],score:95}]},revisionSha256=await provisionalEvaluationFingerprint(changed);
+ const revised=await saveProvisionalPrediction(db,{...t,revisionSha256},async()=>changed,now+2000);
+ assert.equal((await readProvisionalPrediction(db,t)).snapshotSha256,predraw.snapshotSha256);
+ const {default:app}=await import('../src/index-v3.49.0.js');
+ const url='https://test/v1/lab/provisional-prediction-snapshot?date='+t.date+'&venue='+encodeURIComponent(t.venue)+'&race_no='+t.raceNo;
+ let writes=0;const readOnly={prepare(q){assert.match(q,/^SELECT/);writes++;return db.prepare(q)}};
+ const response=await app.fetch(new Request(url+'&snapshot_sha256='+revised.snapshotSha256),{DB:readOnly},{}),body=await response.json();
+ assert.equal(response.status,200);assert.equal(body.integrityVerified,true);assert.equal(body.snapshotSha256,revised.snapshotSha256);assert.equal(body.snapshot.runners[0].score,95);
+ const {createHash}=await import('node:crypto');assert.equal(createHash('sha256').update(JSON.stringify(body.snapshot)).digest('hex'),revised.snapshotSha256);assert.equal(writes,1);
+ for(const [params,available] of [['&race_no=10&snapshot_sha256='+revised.snapshotSha256,false],['&snapshot_sha256='+'f'.repeat(64),false],['&basis=confirmed-predraw&source_sha256='+sourceSha+'&snapshot_sha256='+revised.snapshotSha256,false]]){
+  const selectedUrl=params.startsWith('&race_no=10')?url.replace('race_no='+t.raceNo,'race_no=10')+params.replace('&race_no=10',''):url+params;
+  const r=await app.fetch(new Request(selectedUrl),{DB:db},{});assert.equal(r.status,200);assert.equal((await r.json()).available,available);
+ }
+ const invalid=await app.fetch(new Request(url+'&snapshot_sha256=bad'),{DB:readOnly},{});assert.equal(invalid.status,409);assert.match((await invalid.json()).error,/保存SHA/);
+ assert.equal((await readProvisionalPrediction(db,t,{exact:true})).snapshotSha256,initial.snapshotSha256);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,3);
+ const original=sql.prepare('SELECT * FROM lab_provisional_predictions_v1 WHERE snapshot_sha256=?').get(revised.snapshotSha256);
+ const corrupted={prepare(){return{bind(){return{async first(){return{...original,snapshot_json:original.snapshot_json+' '}}}}}}};
+ await assert.rejects(readProvisionalPrediction(corrupted,t,{snapshotSha256:revised.snapshotSha256}),/保存ハッシュ/);
+ sql.close();
+});

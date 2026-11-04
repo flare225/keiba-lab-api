@@ -74,7 +74,7 @@ test('old recovery inspects only a bounded keyset page then reaches later unveri
 });
 
 test('natural forecast and saved-readback queues propagate D1 exhaustion without any subsequent SQL or retry receipt',async()=>{
- for(const reconcile of [false,true])for(const marked of [false,true]){
+ for(const reconcile of [false,true])for(const marked of [false,true])for(const failurePoint of ['snapshot','official-start']){
   const {sql,db}=await fixture();
   if(reconcile)await captureAutomaticPrediction(db,target,now);
   const before=sql.prepare("SELECT name FROM sqlite_master WHERE name='lab_automatic_predictions_v1'").get()?sql.prepare('SELECT * FROM lab_automatic_predictions_v1').all():[];
@@ -82,7 +82,7 @@ test('natural forecast and saved-readback queues propagate D1 exhaustion without
   let stopped=false,after=0;
   const wrapped={prepare(q){
    if(stopped){after++;throw Error('SQL issued after daily quota');}
-   if(q.startsWith('SELECT * FROM lab_automatic_predictions_v1'))return{bind(){return{first:async()=>{stopped=true;throw error}}}};
+   if(q.startsWith(failurePoint==='snapshot'?'SELECT * FROM lab_automatic_predictions_v1':'SELECT start_time,source_url FROM jra_race_program'))return{bind(){return{first:async()=>{stopped=true;throw error}}}};
    return db.prepare(q);
   }};
   await assert.rejects(scheduledAutomaticPrediction(wrapped,now),e=>e===error);

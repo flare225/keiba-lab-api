@@ -3,9 +3,45 @@ import {sha256} from '../src/card-evidence.js';
 import {storedExpectedSources} from '../src/expected-roster-registry.js';
 import {scheduledProvisionalPrediction} from '../src/provisional-prediction-queue.js';
 import {readProvisionalPrediction} from '../src/provisional-prediction-snapshots.js';
+import {collectLiveHistory} from '../src/live-source-dispatch.js';
 const now=Date.parse('2026-10-21T02:00:00Z'),p={race_date:'2026-10-24',venue:'東京',race_no:1,meeting_no:4,day_no:8},url='https://race.netkeiba.com/race/shutuba.html?race_id=202605040801',ownUrl='https://own.netkeiba.com/race/shutuba.html?race_id=202605040801';
 const html='<a href="?kaisai_date=20261024">date</a><a href="?race_id=202605040801">1R</a><div>4回 東京 8日目</div><table><tr class="HorseList"><td><a href="https://db.netkeiba.com/horse/2024000001/">試験馬</a></td><td>牡2</td></tr></table>';
 const ownHtml='<div>10/24(土) 東京 1R</div><a>競馬新聞</a><table><thead><tr><th>馬名</th><th>年齢</th><th>騎手</th></tr></thead><tbody><tr class="HorseList"><td><a href="https://own.netkeiba.com/db/horse.html?id=2024000001">試験馬</a></td><td>牡2</td><td>未定</td></tr></tbody></table><p>※結果・成績・オッズなどは主催者発表を確認</p>';
+test('publication-window dispatch hands an idle official-card turn to a due OWN roster without weakening source limits',async()=>{
+ const stamp=Date.parse('2026-11-05T06:00:00Z');
+ for(const cardStatus of ['card-discovery-not-due','complete']){
+  const {db,sql}=fixture();sql.exec("UPDATE jra_race_program SET race_date='2026-11-07',meeting_no=5,day_no=1;INSERT INTO jra_race_program(race_date,venue,race_no,meeting_no,day_no,race_label) VALUES('2026-11-07','東京',2,5,1,'2歳未勝利')");
+  const body=ownHtml.replace('10/24(土)','11/7(土)'),calls=[];
+  const deps={now:()=>stamp,cardCompletionFirst:true,cards:async()=>{calls.push('official');return{ok:true,status:cardStatus,externalRequests:0}},missing:async(d,e,opts)=>collectMissingRoster(d,null,{...opts,fetcher:async u=>{calls.push(u);return new Response(body,{headers:{'content-type':'text/html; charset=utf-8'}})}}),registered:async()=>[],programs:async()=>null,main:async()=>null,upcoming:async()=>null,expected:async()=>({status:'idle',externalRequests:0})};
+  const result=await collectLiveHistory(db,{scheduledTime:stamp},deps);
+  assert.equal(result.status,'roster-saved',JSON.stringify(result));assert.equal(result.target,'2026-11-07:東京:1');assert.equal(result.externalRequests,1);
+  assert.deepEqual(calls,['official','https://own.netkeiba.com/race/shutuba.html?race_id=202605050101']);
+  const stored=sql.prepare('SELECT record_json,snapshot_id FROM lab_expected_roster_registry').get();assert.equal(await sha256(stored.record_json),stored.snapshot_id);assert.equal(JSON.parse(stored.record_json).runners[0].horseName,'試験馬');
+  calls.length=0;await collectLiveHistory(db,{scheduledTime:stamp},deps);assert.deepEqual(calls,['official']);sql.close();
+ }
+ const isolated=fixture();isolated.sql.exec("UPDATE jra_race_program SET race_date='2026-11-07'");
+ assert.equal((await collectMissingRoster(isolated.db,null,{now:()=>stamp,fetcher:()=>assert.fail('direct collector still defers to official priority')})).status,'official-card-priority');isolated.sql.close();
+});
+test('official no-work fallback still honors the source clock, shared cooldown, lease and blocked response',async()=>{
+ const stamp=Date.parse('2026-11-05T06:00:00Z');
+ for(const stop of ['clock','gate','lease','http403']){
+  const {db,sql}=fixture(stop==='gate'?stamp+3600000:0);sql.exec("UPDATE jra_race_program SET race_date='2026-11-07',meeting_no=5,day_no=1");
+  if(stop==='lease')sql.prepare('UPDATE lab_history_collection_budget SET locked_until=?').run(stamp+120000);
+  if(stop==='clock')sql.exec(`CREATE TABLE lab_missing_roster_clock_v1(name TEXT PRIMARY KEY,next_at INTEGER);INSERT INTO lab_missing_roster_clock_v1 VALUES('source',${stamp+3600000})`);
+  const before=sql.prepare('SELECT * FROM lab_history_collection_budget').get();let http=0;
+  const r=await collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,cards:async()=>({ok:true,status:'card-discovery-not-due',externalRequests:0}),missing:(d,e,opts)=>collectMissingRoster(d,null,{...opts,fetcher:async()=>{http++;assert.equal(stop,'http403');return new Response('',{status:403})}}),registered:async()=>[],programs:async()=>null,main:async()=>null,upcoming:async()=>null,expected:async()=>({status:'idle',externalRequests:0})});
+  assert.equal(http,stop==='http403'?1:0);assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);
+  const after=sql.prepare('SELECT * FROM lab_history_collection_budget').get();if(stop==='http403'){assert.equal(r.status,'source-blocked');assert.equal(after.next_batch_at,stamp+3600000);}else assert.deepEqual(after,before);
+  sql.close();
+ }
+});
+test('scheduled missing-roster wrapper carries the official no-work handoff into the real writer',async t=>{
+ const stamp=Date.parse('2026-11-05T06:00:00Z'),{db,sql}=fixture();sql.exec("UPDATE jra_race_program SET race_date='2026-11-07',meeting_no=5,day_no=1");let requests=0;
+ t.mock.method(globalThis,'fetch',async u=>{requests++;assert.equal(u,'https://own.netkeiba.com/race/shutuba.html?race_id=202605050101');return new Response(ownHtml.replace('10/24(土)','11/7(土)'),{headers:{'content-type':'text/html; charset=utf-8'}})});
+ const r=await collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,cards:async()=>({ok:true,status:'card-discovery-not-due',externalRequests:0}),registered:()=>assert.fail('saved roster must return before another stage')});
+ assert.equal(r.status,'roster-saved',JSON.stringify(r));assert.equal(requests,1);assert.equal(r.historyWorkStage,'acquisition');assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,1);
+ const receipt=sql.prepare("SELECT result_json FROM lab_bounded_pipeline_runs WHERE job='missing-roster'").get();assert.equal(JSON.parse(receipt.result_json).status,'roster-saved');sql.close();
+});
 test('OWN charset-only fix reuses declared encoding without relaxing identity or hourly source limits',async()=>{
  for(const [meta,contentType] of [['<meta charset="utf-8">','text/html'],['<meta http-equiv="Content-Type" content="text/html; charset=utf-8">','text/html'],['<meta charset="euc-jp">','text/html; charset="utf-8"']]){
   const {db,sql}=fixture();let calls=0;

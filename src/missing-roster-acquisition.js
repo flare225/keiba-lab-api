@@ -72,7 +72,7 @@ export function parseSupplementaryRoster(html,program,url){
  }
  if(!runners.length||runners.length>100||new Set(runners.map(r=>r.horseName)).size!==runners.length)throw Error('補助出馬表の名簿公開を確認できません。');return runners;
 }
-export async function collectMissingRoster(db,input=null,{now=Date.now,fetcher=fetch}={}){
+export async function collectMissingRoster(db,input=null,{now=Date.now,fetcher=fetch,officialCardFallback=false}={}){
  const stamp=now(),today=new Date(stamp+9*3600000).toISOString().slice(0,10),until=new Date(Date.parse(today)+7*86400000).toISOString().slice(0,10);if(input)targetInput(input);
  await db.prepare('CREATE TABLE IF NOT EXISTS lab_missing_roster_sources_v1(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_at INTEGER NOT NULL,source_url TEXT,http_status INTEGER,body_sha256 TEXT,body_html TEXT,observed_at TEXT,error TEXT)').run();
  await db.prepare('CREATE TABLE IF NOT EXISTS lab_missing_roster_clock_v1(name TEXT PRIMARY KEY,next_at INTEGER NOT NULL)').run();await db.prepare("INSERT OR IGNORE INTO lab_missing_roster_clock_v1 VALUES('source',0)").run();
@@ -89,7 +89,7 @@ export async function collectMissingRoster(db,input=null,{now=Date.now,fetcher=f
   }
  }
  // Keep published official cards first from Thursday afternoon onward.
- if([4,5,6,0].includes(new Date(stamp+9*3600000).getUTCDay())&&(new Date(stamp+9*3600000).getUTCDay()!==4||new Date(stamp+9*3600000).getUTCHours()>=15))return{status:'official-card-priority',externalRequests:0};
+ if(!officialCardFallback&&[4,5,6,0].includes(new Date(stamp+9*3600000).getUTCDay())&&(new Date(stamp+9*3600000).getUTCDay()!==4||new Date(stamp+9*3600000).getUTCHours()>=15))return{status:'official-card-priority',externalRequests:0};
  const filter=input?' AND p.race_date=? AND p.venue=? AND p.race_no=?':'';
  const args=[today,until,stamp,...(input?[input.date,input.venue,Number(input.raceNo??input.race_no)]:[])];
  // Keep the due/receipt eligibility above intact. Rank waiting work by its

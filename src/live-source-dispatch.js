@@ -22,7 +22,7 @@ export function preferOfficialCards(rosters,stamp){
  return rosters.some(r=>officialCardWindowOpen(r.date,stamp));
 }
 
-export async function scheduledMissingRoster(db,event,{now=Date.now}={}){return runPipelineJob(db,'missing-roster','scheduled',()=>measureD1Operation(db,m=>collectMissingRoster(m,null,{now})),{scheduledTime:event.scheduledTime});}
+export async function scheduledMissingRoster(db,event,{now=Date.now,officialCardFallback=false}={}){return runPipelineJob(db,'missing-roster','scheduled',()=>measureD1Operation(db,m=>collectMissingRoster(m,null,{now,officialCardFallback})),{scheduledTime:event.scheduledTime});}
 
 // Priorities belong inside the history lane, never ahead of the common fair
 // dispatcher: a nonempty card/history queue must not suppress result collection.
@@ -86,7 +86,11 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
     return {...early,historyWorkStage:'history',blockedStage:'profile-link-discovery'};
   }
  }
- const supplemental=await missing(db,event,{now});if(supplemental&&(supplemental.externalRequests||supplemental.status==='cooldown'||supplemental.saveMayHaveSucceeded||['roster-saved','roster-reconciled'].includes(supplemental.status)))return acquisition(supplemental);
+ // Official priority means try that collector first, not disable all other
+ // due roster sources for the whole publication window. Only an explicit
+ // no-work result may hand off this unused turn; failures/safety stops cannot.
+ const officialCardFallback=cardCompletionFirst&&card?.ok!==false&&['complete','card-discovery-not-due'].includes(card?.status)&&!stops(card);
+ const supplemental=await missing(db,event,{now,...(officialCardFallback?{officialCardFallback:true}:{})});if(supplemental&&(supplemental.externalRequests||supplemental.status==='cooldown'||supplemental.saveMayHaveSucceeded||['roster-saved','roster-reconciled'].includes(supplemental.status)))return acquisition(supplemental);
  rosters??=await registered(db,today,until);
  const officialFirst=!preparing&&(cardCompletionFirst||preferOfficialCards(rosters,now()));
  if(officialFirst&&!card)card=await cards(db,cardInput,deps);

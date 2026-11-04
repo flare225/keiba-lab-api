@@ -53,3 +53,11 @@ test('SQL coverage retains horses with one or two valid prior starts and ignores
  for(const n of [0,1,2,3]){const name='horse'+n;sql.prepare('INSERT INTO jra_runners VALUES(?,?,?)').run('race',name,3);for(let i=0;i<n;i++)sql.prepare('INSERT INTO jra_past_performances VALUES(?,?,?,?)').run(name,'2026-10-0'+(i+1),1,10);sql.prepare('INSERT INTO jra_past_performances VALUES(?,?,?,?)').run(name,'2026-10-17',1,10);}
  assert.equal(sql.prepare('SELECT '+missingRecentHistorySql("'race'","'2026-10-17'")+' AS missing').get().missing,3);sql.close();
 });
+
+test('formal-only handoff selects its saved target within the existing eligible plan without overriding today urgency',async()=>{
+ const later={raceKey:'2026-10-18:京都:2',date:'2026-10-18',venue:'京都',raceNo:2},first={...later,raceKey:'2026-10-18:京都:11',raceNo:11},today={...first,date:'2026-10-17',raceKey:'2026-10-17:京都:11'};
+ for(const [plan,target,expected] of [[[first,later],later.raceKey,later.raceKey],[[first,later], '2026-10-18:京都:99',first.raceKey],[[later,today],later.raceKey,today.raceKey]]){
+  let reads=0,calls=0;const r=await collectUpcomingOfficialHistory({}, {now:()=>stamp,previousCardSelection:{target,priorityFormalHistoryPending:true},plan:async()=>plan,status:async()=>{reads++;return{runners:[{storedRows:0,due:true}]};},collect:async()=>{calls++;return{status:'collected',externalRequests:1};}});
+  assert.equal(r.priorityRaceKey,expected);assert.equal(reads,1);assert.equal(calls,1);
+ }
+});

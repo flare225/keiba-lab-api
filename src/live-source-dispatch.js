@@ -52,7 +52,13 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
  // This mode cannot discover/fetch a roster for unresolved names. The common
  // gate above and the existing one-horse collector still own every source call.
  if(cardCompletionFirst&&previousHistoryWorkStage==='acquisition'&&(previousCardSelection?.savedPredrawHistoryPending||previousCardSelection?.priorityFormalHistoryPending)){
-  const saved=await priorityExpected(db,{...deps,knownProfilesOnly:true,...(previousCardSelection.priorityFormalHistoryPending?{includeFormalHistory:true}:{})});
+  // A formal card can be saved directly without any expected/predraw roster.
+  // Use the existing official-card history queue for that handoff; the
+  // registered-roster queue cannot discover formal-only inputs.
+  const formal=previousCardSelection.priorityFormalHistoryPending&&!previousCardSelection.savedPredrawHistoryPending;
+  let saved;
+  if(formal){checkedUpcoming=true;saved=await upcoming(db,{now,previousCardSelection});}
+  else saved=await priorityExpected(db,{...deps,knownProfilesOnly:true,...(previousCardSelection.priorityFormalHistoryPending?{includeFormalHistory:true}:{})});
   if(stops(saved))return {...history(saved),...(saved.externalRequests||saved.attempted?{cardSelection:{...previousCardSelection,savedPredrawHistoryPending:false,priorityFormalHistoryPending:false}}:{})};
   clearedPredrawSelection={...previousCardSelection,savedPredrawHistoryPending:false,priorityFormalHistoryPending:false};
   deps.previousCardSelection=clearedPredrawSelection;

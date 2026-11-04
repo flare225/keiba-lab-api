@@ -78,6 +78,9 @@ test('failure read exposes the newest error separately from an older evidence-be
  const {readPipelineFailure}=await import('../src/pipeline-runs-v3.40.0.js');
  const result=await readPipelineFailure(observed,'history');assert.equal(count,1);assert.equal(result.runId,'old-evidence');assert.deepEqual(result.failureEvidence,evidence);
  assert.deepEqual(result.latestFailure,{runId:'new-error',startedAt:new Date(start+3).toISOString(),finishedAt:new Date(start+4).toISOString(),status:'failed',error:'JRA取得 HTTP 403'});
+ put.run('result-error','history','scheduled',start+11,start+12,'failed',JSON.stringify({raceKey:'2026-11-08:東京:4',error:'保存した全馬と出馬表が一致しません。'}),null);
+ count=0;const scoped=await readPipelineFailure(observed,'history');assert.equal(count,1);assert.equal(scoped.latestFailure.raceKey,'2026-11-08:東京:4');assert.equal(scoped.latestFailure.runId,'result-error');assert.equal(scoped.runId,'old-evidence');
+ sql.exec("DELETE FROM lab_bounded_pipeline_runs WHERE run_id='result-error'");
  sql.exec("DELETE FROM lab_bounded_pipeline_runs WHERE run_id='new-error'");assert.equal((await readPipelineFailure(db,'history')).latestFailure.runId,'old-evidence');
  sql.exec("DELETE FROM lab_bounded_pipeline_runs WHERE job='history' AND trigger_kind='scheduled'");assert.equal((await readPipelineFailure(db,'history')).latestFailure,null);sql.close();
 });

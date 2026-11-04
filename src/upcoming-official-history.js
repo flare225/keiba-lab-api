@@ -22,9 +22,14 @@ export async function upcomingOfficialHistoryPlan(db,stamp=Date.now(),sources=EX
  }).sort((a,b)=>a.race_date.localeCompare(b.race_date)||Number(targets.has(b.race_key))-Number(targets.has(a.race_key))||b.race_no-a.race_no||a.venue.localeCompare(b.venue))
  .map(r=>({raceKey:r.race_key,date:r.race_date,venue:r.venue,raceNo:r.race_no,raceName:r.race_name,missingHorses:Number(r.missing_horses),targetMain:targets.has(r.race_key)}));
 }
-export async function collectUpcomingOfficialHistory(db,{now=Date.now,plan=upcomingOfficialHistoryPlan,status=collectionStatus,collect=collectHistoryBatch}={}){
+export async function collectUpcomingOfficialHistory(db,{now=Date.now,plan=upcomingOfficialHistoryPlan,status=collectionStatus,collect=collectHistoryBatch,previousCardSelection=null}={}){
  const stamp=now(),all=await plan(db,stamp),today=jstDay(stamp);
- const current=all.filter(r=>r.date===today),queue=current.length?current:all;
+ const current=all.filter(r=>r.date===today),eligible=current.length?current:all;
+ // A witnessed saved formal card gets its existing handoff turn even without
+ // a candidate roster. Only choose it inside the ordinary eligible plan;
+ // current-day urgency, cutoff checks, due receipts and rotation still apply.
+ const handed=previousCardSelection?.priorityFormalHistoryPending?eligible.find(r=>`${r.date}:${r.venue}:${r.raceNo}`===previousCardSelection.target):null;
+ const queue=handed?[handed,...eligible.filter(r=>r!==handed)]:eligible;
  // Always check the most urgent card; rotate five other cards so unknown
  // profiles in the first few races cannot starve the remainder of the week.
  const rest=queue.slice(1),offset=rest.length?(Math.floor(stamp/360000)*5)%rest.length:0;

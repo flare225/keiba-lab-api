@@ -94,7 +94,12 @@ export function planSharedPages(races,rows,stamp,parserVersion=SHARED_PAGE_POLIC
    // generic navigation and matching dated continuations keep their priority.
    const datedMeetings=(f?.pages||[]).map(metaFromMeetingListUrl).filter(Boolean);
    if(stamp-Number(row.observed_at)>=SHARED_PAGE_POLICY.refreshMs&&datedMeetings.length&&!datedMeetings.some(m=>m.date===race.date&&m.venue===race.venue)){add(url,race,depth);found=true;break;}
-   for(const child of f?.pages||[]){const meeting=metaFromMeetingListUrl(child);if(meeting&&(meeting.date!==race.date||meeting.venue!==race.venue))continue;queue.push({url:child,depth:depth+1});}
+   // A parent may publish many alphabetical groups beside the race index.
+   // Prefer that witnessed index before spending slots on name-group siblings;
+   // keep other child order, retry checks and cross-race deadlines unchanged.
+   const isIndex=value=>/^pw01dli00\//i.test(new URL(value).searchParams.get('CNAME')||'');
+   const children=(f?.pages||[]).slice().sort((a,b)=>Number(isIndex(b))-Number(isIndex(a)));
+   for(const child of children){const meeting=metaFromMeetingListUrl(child);if(meeting&&(meeting.date!==race.date||meeting.venue!==race.venue))continue;queue.push({url:child,depth:depth+1});}
    if(stamp-Number(row.observed_at)>=SHARED_PAGE_POLICY.refreshMs)refresh.push({url,depth});
   }
   if(!found&&refresh.length){const fallback=refresh.sort((a,b)=>b.depth-a.depth)[0];add(fallback.url,race,fallback.depth);found=true;}

@@ -58,3 +58,15 @@ test('uncertain scheduled LOCK is read-only reconciled even after start; quota s
  const first=await scheduledSavedAutomaticSeal(uncertain,{enabled:true,now:()=>now});assert.equal(first.status,'pending-readback');const seal=sql.prepare('SELECT * FROM lab_prospective_seals').get();reset();const recovery=await scheduledSavedAutomaticSeal(db,{enabled:true,now:()=>Date.parse(r.startAt)+1000});assert.equal(recovery.verificationOnly,true);assert.equal(recovery.sealed,0);assert.deepEqual(sql.prepare('SELECT * FROM lab_prospective_seals').get(),seal);assert.ok(!stats.executed.some(q=>q.startsWith('INSERT INTO lab_model_locks')));
  let calls=0;const exhausted={prepare(){calls++;throw Object.assign(Error('exceeded D1 daily row read limit'),{d1DailyReadLimit:true})}};await assert.rejects(scheduledSavedAutomaticSeal(exhausted,{enabled:true,now:()=>now}),e=>e.d1DailyReadLimit===true);assert.equal(calls,1);sql.close();
 });
+
+test('quota during saved forecast start evidence stops the LOCK handoff without bookkeeping or a seal',async()=>{
+ for(const marked of [false,true]){
+  const {db,sql,now}=await fixture('2026-10-31');await ensureProspectiveSealTables(db);
+  const forecast=sql.prepare('SELECT * FROM lab_automatic_predictions_v1').get(),receipt=sql.prepare('SELECT * FROM lab_automatic_prediction_receipts_v1').get();
+  const error=marked?Object.assign(Error('budget exhausted'),{d1DailyReadLimit:true}):Error("D1_ERROR: Your account has exceeded D1's free tier daily row read limit.");let stopped=false,after=0;
+  const limited={...db,prepare(q){if(stopped){after++;throw Error('SQL after quota');}if(q.startsWith('SELECT start_time,source_url FROM jra_race_program'))return{bind(){return{async first(){stopped=true;throw error;}}}};return db.prepare(q);}};
+  await assert.rejects(scheduledSavedAutomaticSeal(limited,{enabled:true,now:()=>now}),e=>e===error);
+  assert.equal(after,0);assert.deepEqual(sql.prepare('SELECT * FROM lab_automatic_prediction_receipts_v1').get(),receipt);assert.deepEqual(sql.prepare('SELECT * FROM lab_automatic_predictions_v1').get(),forecast);
+  assert.equal(sql.prepare('SELECT count(*) n FROM lab_prospective_seals').get().n,0);sql.close();
+ }
+});

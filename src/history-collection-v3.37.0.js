@@ -81,8 +81,9 @@ export async function collectHistoryBatch(db,input,deps={}){
    let profileUrl=item.profileUrl;
    try{
     if(item.storedRows>=limit){await saveReceipt(db,context.race.race_key,item,limit,'stored-enough',item.storedRows,now());results.push({horseName:item.horseName,status:'stored-enough',savedRows:0});continue}
-    const stored=await readStoredCardPriors(db,context,item,limit);
-    if(stored)profileUrl=stored.profileUrl;
+    const source=await readStoredCardPriors(db,context,item,limit,{includeProfileLink:true});
+    const stored=source?.performances?source:null;
+    if(source)profileUrl=officialUrl(source.profileUrl,true);
     if(!profileUrl){const known=await db.prepare('SELECT source_url FROM jra_past_performances WHERE horse_name=? AND race_date>=? AND race_date<? AND source_url IS NOT NULL ORDER BY fetched_at DESC LIMIT 1').bind(item.horseName,item.fromDate,context.race.race_date).first();try{profileUrl=officialUrl(known?.source_url,true)}catch{}}
     if(!profileUrl){const cached=await db.prepare('SELECT profile_url FROM lab_history_profile_links WHERE race_key=? AND horse_name=? AND age=? AND source_url=? AND (?<? OR checked_at>?)').bind(context.race.race_key,item.horseName,item.age,context.race.source_url,context.race.race_date,jstDay(now()),now()-86400000).first();if(cached)profileUrl=officialUrl(cached.profile_url,true)}
     if(!profileUrl&&!links&&!resultSourceChecked){

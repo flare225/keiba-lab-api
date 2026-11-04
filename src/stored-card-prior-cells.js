@@ -33,7 +33,7 @@ export function decodeStoredCardPriors(cells,sourceUrl){
 }
 // Only a body bound to the current strict official-card evidence is eligible.
 // This is called inside the existing collector lease; no network or new writer.
-export async function readStoredCardPriors(db,context,item,limit){
+export async function readStoredCardPriors(db,context,item,limit,{includeProfileLink=false}={}){
  const race=context.race;if(!race.source_url||!race.race_key||!/^\d{4}-\d{2}-\d{2}$/.test(race.race_date))return null;
  let row;
  try{row=await db.prepare(`SELECT b.body_html,b.byte_length,e.source_sha256 FROM lab_card_source_evidence e JOIN jra_races r ON r.race_key=e.race_key AND r.fetched_at=e.card_fetched_at JOIN lab_shared_page_bodies_v1 b ON b.page_url=e.source_url AND b.sha256=e.source_sha256 AND b.scope_key=r.race_date WHERE e.race_key=? AND e.source_url=? AND e.horse_numbers_observed=1 AND e.frames_observed=1 AND e.declared_count=r.runner_count AND e.parsed_count=r.runner_count LIMIT 1`).bind(race.race_key,race.source_url).first();}catch(e){if(/no such table/.test(String(e)))return null;throw e;}
@@ -42,5 +42,5 @@ export async function readStoredCardPriors(db,context,item,limit){
  const profileUrl=extractProfileLinks(row.body_html,[item.horseName],race.source_url).get(item.horseName);if(!profileUrl)return null;
  const performances=decodeStoredCardPriors(storedCardPriorCells(row.body_html,{horseName:item.horseName,profileUrl,beforeDate:race.race_date}),race.source_url).filter(p=>p.raceDate>=item.fromDate).filter((p,i,all)=>all.findIndex(q=>q.raceDate===p.raceDate&&q.venue===p.venue&&q.raceName===p.raceName)===i).slice(0,limit);
  // A partial card cannot mark profile collection complete or suppress fallback.
- return performances.length>=limit?{profileUrl,performances,sourceSha256:row.source_sha256}:null;
+ return performances.length>=limit?{profileUrl,performances,sourceSha256:row.source_sha256}:includeProfileLink?{profileUrl,performances:null,sourceSha256:row.source_sha256}:null;
 }

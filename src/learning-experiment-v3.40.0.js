@@ -62,7 +62,7 @@ export async function assertBeforeOfficialStart(db,context,now=Date.now()){
  return{ok:true,startTime:program.start_time,bufferMinutes:5};
 }
 export async function featureCapturedBeforeOfficialStart(db,race,capturedAt){
- let program;try{program=await db.prepare('SELECT start_time,source_url FROM jra_race_program WHERE race_date=? AND venue=? AND race_no=?').bind(race.date,race.venue,race.raceNo).first()}catch{return false}
+ let program;try{program=await db.prepare('SELECT start_time,source_url FROM jra_race_program WHERE race_date=? AND venue=? AND race_no=?').bind(race.date,race.venue,race.raceNo).first()}catch(e){if(e?.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;return false}
  const match=/^(\d{1,2}):(\d{2})$/.exec(String(program?.start_time||''));let official=false;try{const u=new URL(program?.source_url||'');official=u.protocol==='https:'&&['jra.go.jp','www.jra.go.jp','jra.jp','www.jra.jp'].includes(u.hostname)}catch{}
  if(!match||!official)return false;const hour=Number(match[1]),minute=Number(match[2]);if(hour>23||minute>59)return false;
  const start=Date.parse(`${race.date}T${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}:00+09:00`);

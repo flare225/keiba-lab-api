@@ -91,6 +91,14 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
  if(!early&&previousHistoryWorkStage==='acquisition'&&rosters.length&&!officialFirst){
   early=await expected(db,deps);if(early.externalRequests||early.attempted||early.status==='cooldown')return history(early);
  }
+ // Numbered-card publication is not the publication of a candidate roster.
+ // In a fresh week, discover due published pages before spending this source
+ // slot on an unrelated calendar day. Reuse the same collector/receipt/gate;
+ // no due card means program recovery still receives its ordinary turn.
+ if(preparing&&!rosters.length){
+  card=await cards(db,cardInput,deps);
+  if(stops(card))return acquisition(card);
+ }
  const recovery=await programs(db,{now});
  const programReadback=Number(recovery?.programRowsSaved)>0||Number(recovery?.readbackVerified)>0;
  if(recovery&&(recovery.externalRequests||recovery.status==='cooldown'||recovery.saveMayHaveSucceeded||programReadback))return acquisition(programReadback?{...recovery,attempted:true}:recovery);

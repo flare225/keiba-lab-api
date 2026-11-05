@@ -104,3 +104,23 @@ test('a failing priority revision keeps its two-hour backoff while Sunday uses t
  const retried=await scheduledProvisionalPrediction(db,stamp+7200000,mixed);assert.equal(retried.target,'2026-10-31:東京:11');assert.equal(retried.status,'verified');
  assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,2);sql.close();
 });
+test('orphaned revision-readback receipt cannot steal an odd-hour turn from a fresh roster',async()=>{
+ const {db,sql}=fixture(),stamp=Date.parse('2026-10-30T12:00:00Z'); // 21 JST: completion turn
+ const ghost={date:'2026-10-31',venue:'東京',raceNo:11};
+ const fresh={date:'2026-11-01',venue:'京都',raceNo:2};
+ const ghostKey='2026-10-31:東京:11',freshKey='2026-11-01:京都:2';
+ const orphanStatus='revision-readback:'+'a'.repeat(64);
+ sql.exec('CREATE TABLE lab_provisional_queue_v1(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_at INTEGER NOT NULL,error TEXT)');
+ sql.prepare('INSERT INTO lab_provisional_queue_v1 VALUES(?,?,?,NULL)').run(ghostKey,orphanStatus,stamp-1000);
+ // There is no persisted snapshot for ghost. The fresh candidate is due at zero.
+ // Before the guard, readbacks[0] incorrectly chooses ghost over fresh.
+ const result=await scheduledProvisionalPrediction(db,stamp,{...deps,sources:async()=>[ghost,fresh]});
+ assert.equal(result.status,'verified');assert.equal(result.target,freshKey);assert.equal(result.saved,1);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,1);
+ assert.equal(sql.prepare('SELECT status FROM lab_provisional_queue_v1 WHERE race_key=?').get(ghostKey).status,orphanStatus);
+ const read=await readProvisionalPrediction(db,fresh,{exact:true});
+ assert.equal(read.integrityVerified,true);assert.equal(read.snapshotSha256,result.snapshotSha256);
+ assert.equal((await scheduledProvisionalPrediction(db,stamp+1000,{...deps,sources:async()=>[ghost,fresh]})).status,'not-due');
+ sql.close();
+});
+

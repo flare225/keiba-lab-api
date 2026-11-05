@@ -234,3 +234,13 @@ test('HTTP failure evidence decodes HTML meta UTF-8 without relaxing 403 cooldow
  assert.equal(sql.prepare('SELECT next_batch_at FROM lab_history_collection_budget').get().next_batch_at,now+3600000);
  assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);sql.close();
 });
+
+test('unsupported HTTP failure charset preserves bounded evidence and 403 cooldown',async()=>{
+ const {db,sql}=fixture();const body='<p>source unavailable</p>';
+ const r=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>new Response(new TextEncoder().encode(body),{status:403,headers:{'content-type':'text/html; charset=not-a-real-charset'}})});
+ assert.equal(r.status,'source-blocked');assert.equal(r.httpStatus,403);
+ assert.equal(r.failureEvidence.charsetSource,'unsupported-declared-charset-euc-jp-fallback');
+ assert.equal(sql.prepare('SELECT body_html FROM lab_missing_roster_sources_v1').get().body_html,body);
+ assert.equal(sql.prepare('SELECT next_batch_at FROM lab_history_collection_budget').get().next_batch_at,now+3600000);
+ assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);sql.close();
+});

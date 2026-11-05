@@ -182,7 +182,7 @@ test('idle saved history falls through once and a returned safety stop cannot re
   let history=0,missing=0;const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
   const r=await collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,previousHistoryWorkStage:'acquisition',cardCompletionFirst:true,
    cards:async()=>({status:'awaiting-official-publication',externalRequests:0}),registered:async()=>[{date:'2026-11-01'}],
-   expected:async()=>{history++;return{status,externalRequests:0}},missing:async()=>{missing++;return{status:'roster-saved',externalRequests:1}},programs:()=>assert.fail('stop')});
+   expected:async()=>{history++;return{status,externalRequests:0}},upcoming:async()=>null,missing:async()=>{missing++;return{status:'roster-saved',externalRequests:1}},programs:()=>assert.fail('stop')});
   assert.equal(history,1);assert.equal(missing,status==='idle'?1:0);assert.equal(r.status,status==='idle'?'roster-saved':status);
  }
 });
@@ -205,7 +205,7 @@ test('unresolved saved profiles retain the history turn without starving the nex
  const stamp=Date.parse('2026-10-29T00:31:00Z'),seen=[];
  const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
  const waiting=[{raceKey:'2026-10-31:東京:11',missingProfileLinks:['fixture'],pendingHorses:1}];
- const deps={now:()=>stamp,cardCompletionFirst:true,
+ const deps={now:()=>stamp,cardCompletionFirst:true,upcoming:async()=>null,
   cards:async()=>({status:'discovery-not-due',externalRequests:0}),registered:async()=>[{date:'2026-10-31'}],
   expected:async()=>{seen.push('history');return{ok:true,status:'awaiting-source-readiness',waiting,externalRequests:0}},
   missing:async()=>{seen.push('roster');return{status:'publication-unconfirmed',externalRequests:1}},programs:()=>assert.fail('no unrelated work')};
@@ -271,3 +271,4 @@ test('fresh-week predraw discovery safety stops cannot fall through to program r
   assert.equal(result.status,stop.status);assert.equal(result.externalRequests,stop.externalRequests);
  }
 });
+

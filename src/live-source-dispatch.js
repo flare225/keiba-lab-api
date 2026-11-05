@@ -79,13 +79,21 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
   rosters=await registered(db,today,until);
   if(rosters.length){
    early=await priorityExpected(db,deps);if(stops(early))return history(early);
-   // A saved-roster history turn must retain its unresolved-profile evidence.
-   // Do not spend that turn on a different roster request. Rotate the existing
-   // stage so the following invocation still gives acquisition its fair turn.
-   if(early?.status==='awaiting-source-readiness'&&early.waiting?.some(r=>r.missingProfileLinks?.length))
-    return {...early,historyWorkStage:'history',blockedStage:'profile-link-discovery'};
   }
  }
+ // An unresolved expected roster is not a shared safety stop. Before returning
+ // its waiting evidence or spending this history turn on another acquisition,
+ // let saved formal-only cards use the existing bounded history plan once.
+ // This also covers later turns after the one-shot fresh-card flag clears.
+ if(cardCompletionFirst&&previousHistoryWorkStage==='acquisition'&&!checkedUpcoming){
+  checkedUpcoming=true;
+  const completion=await upcoming(db,{now,previousCardSelection:deps.previousCardSelection});
+  if(stops(completion))return history(completion);
+ }
+ // If no saved card can advance, retain the unresolved-profile evidence and
+ // rotate the existing stage; never fall through to an unrelated roster here.
+ if(early?.status==='awaiting-source-readiness'&&early.waiting?.some(r=>r.missingProfileLinks?.length))
+  return {...early,historyWorkStage:'history',blockedStage:'profile-link-discovery'};
  // Official priority means try that collector first, not disable all other
  // due roster sources for the whole publication window. Only an explicit
  // no-work result may hand off this unused turn; failures/safety stops cannot.
@@ -109,15 +117,6 @@ export async function collectLiveHistory(db,event,{now=Date.now,previousCardSele
   card=await cards(db,cardInput,deps);
   if(stops(card))return acquisition(card);
  }
- // The fresh-card flag grants one immediate handoff, not all remaining horse
- // batches. On later completion turns, formal-only cards still have no entry
- // in the expected-roster registry. Try the existing bounded history queue
- // before an unrelated program request can consume this turn and its gate.
- if(cardCompletionFirst&&previousHistoryWorkStage==='acquisition'&&!checkedUpcoming){
-  checkedUpcoming=true;
-  const completion=await upcoming(db,{now,previousCardSelection:deps.previousCardSelection});
-  if(stops(completion))return history(completion);
- }
  const recovery=await programs(db,{now});
  const programReadback=Number(recovery?.programRowsSaved)>0||Number(recovery?.readbackVerified)>0;
  if(recovery&&(recovery.externalRequests||recovery.status==='cooldown'||recovery.saveMayHaveSucceeded||programReadback))return acquisition(programReadback?{...recovery,attempted:true}:recovery);
@@ -140,3 +139,4 @@ export function cardCompletionPriorities(value){
 export async function dispatchLiveSources(event,env,{now=Date.now,archive=collectArchiveBatch,results=scheduledRichResult,history=collectLiveHistory}={}){
  return runSourceCoordinator(event,env,{now,jobs:{archive:()=>archive(env.DB,{now}),results:()=>results(env.DB,{now}),history:context=>history(env.DB,event,{now,previousCardSelection:context.previousCardSelection,previousHistoryWorkStage:context.previousHistoryWorkStage,previousExpectedHistoryWorkKind:context.previousExpectedHistoryWorkKind,cardCompletionFirst:true,completionPriorityRaceKeys:cardCompletionPriorities(env.LAB_CARD_COMPLETION_PRIORITIES),...(env.LAB_SHARED_PAGE_ACQUISITION==='true'?{discover:discoverSharedSelectedCard}:{})})}});
 }
+

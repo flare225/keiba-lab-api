@@ -64,3 +64,31 @@ test('remaining formal-history turn keeps safety stops, one plan when idle, and 
   assert.equal(plans,1);assert.equal(calendars,status==='idle'?1:0);
  }
 });
+
+test('unresolved expected profiles cannot strand another saved formal card after the handoff flag clears',async()=>{
+ const {db,sql}=await fixture();let requests=0;
+ const waiting=[{raceKey:'2026-11-08:東京:5',missingProfileLinks:['Unresolved'],pendingHorses:1}];
+ const result=await collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',previousCardSelection:{priorityFormalHistoryPending:false},
+  cards:async()=>({ok:true,status:'card-discovery-not-due',externalRequests:0}),
+  registered:async()=>[{date:'2026-11-08',venue:'東京',raceNo:5}],
+  expected:async()=>({ok:true,status:'awaiting-source-readiness',waiting,externalRequests:0}),
+  missing:()=>assert.fail('unresolved profiles must not fall through to another roster'),programs:()=>assert.fail('no unrelated calendar request'),
+  upcoming:(database,options)=>collectUpcomingOfficialHistory(database,{...options,collect:(d,input,ctx)=>collectHistoryBatch(d,input,{...ctx,wait:async()=>{},fetcher:async()=>{requests++;return new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}});}})})});
+ assert.equal(result.addedRows,3,JSON.stringify(result));assert.equal(result.priorityRaceKey,key);assert.equal(result.historyWorkStage,'history');assert.equal(requests,1);
+ assert.equal(sql.prepare('SELECT count(*) n FROM jra_past_performances').get().n,3);sql.close();
+});
+
+test('mixed roster completion checks one bounded plan and retains safety stops or original waiting evidence',async()=>{
+ const waiting=[{raceKey:'2026-11-08:東京:5',missingProfileLinks:['Unresolved']}];
+ for(const status of ['cooldown','lease-unavailable','shared-gate-unavailable','paused','idle','quota']){
+  let plans=0;const db={prepare(){return{async first(){return{next_batch_at:0,locked_until:0}}}}};
+  const deps={now:()=>stamp,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',cards:async()=>({status:'card-discovery-not-due',externalRequests:0}),registered:async()=>[{date:'2026-11-08'}],
+   expected:async()=>({ok:true,status:'awaiting-source-readiness',waiting,externalRequests:0}),
+   upcoming:async()=>{plans++;if(status==='quota')throw Error('exceeded D1 daily row read limit');return status==='idle'?null:{status,externalRequests:0}},
+   missing:()=>assert.fail('no supplemental fallback'),programs:()=>assert.fail('no calendar fallback')};
+  if(status==='quota')await assert.rejects(collectLiveHistory(db,{scheduledTime:stamp},deps),/daily row read limit/);
+  else{const r=await collectLiveHistory(db,{scheduledTime:stamp},deps);assert.equal(r.status,status==='idle'?'awaiting-source-readiness':status);if(status==='idle'){assert.deepEqual(r.waiting,waiting);assert.equal(r.blockedStage,'profile-link-discovery');assert.equal(r.historyWorkStage,'history');}}
+  assert.equal(plans,1);
+ }
+});
+

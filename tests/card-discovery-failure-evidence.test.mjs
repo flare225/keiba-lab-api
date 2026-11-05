@@ -47,3 +47,18 @@ test('oversized card evidence retains the failing runner cells instead of only t
  const r=await cardDiscoveryFailureEvidence(body,url,source,{httpStatus:200,observedAt:new Date(stamp).toISOString()});
  assert.equal(r.fullBodyIncluded,false);assert.equal(r.cardInspection.sourceRowCount,1);assert.equal(r.cardInspection.parsedRunnerCount,0);assert.match(r.cardInspection.problemRows[0].connectionCell,/年齢欠損/);assert.match(r.cardInspection.problemRows[0].horseCell,/テスト馬/);assert.equal(r.bodySha256,await sha256(body));assert.ok(Buffer.byteLength(JSON.stringify(r))<=8192);
 });
+
+
+test('oversized selector failure retains literal controls and publication text instead of only CSS links',async()=>{
+ let seed=1234567;const noise=Array.from({length:20000},()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return(seed>>>0).toString(16).padStart(8,'0')}).join('');
+ const page='<title>出馬表 開催選択 JRA</title>'+Array.from({length:80},(_,i)=>`<link href="/common/css/file${i}.css">`).join('')+'<head>'+noise+'</head><h2>出馬表は発表後にご覧いただけます</h2><button onclick="doAction(cardAction, cardCode)">東京</button><input type="hidden" name="CNAME" value="pw01dli00/F3"><a onclick="doAction(\'/JRADB/accessD.html\',\'pw01dle2026102408/AA\')">開催</a>';
+ const {db,sql}=fixture();let requests=0;const r=await runPipelineJob(db,'history','scheduled',()=>discoverExpectedCard(db,source,{now:()=>stamp,fetcher:async()=>{requests++;return response(page)}}),{now:()=>stamp,scheduledTime:stamp});
+ assert.equal(r.status,'failed');assert.equal(requests,1);const e=r.failureEvidence;assert.equal(e.fullBodyIncluded,false);assert.match(e.navigationInspection.title,/開催選択/);assert.equal(e.navigationInspection.doActionOccurrences,2);assert.equal(e.navigationInspection.literalActionPairs,1);assert.ok(e.navigationInspection.controls.some(c=>c.html.includes('doAction(cardAction, cardCode)')));assert.ok(e.navigationInspection.controls.some(c=>c.html.includes('name="CNAME"')));assert.ok(e.navigationInspection.publicationText.some(t=>t.includes('発表後')));assert.ok(e.navigationInspection.controls.length<=6);assert.ok(Buffer.byteLength(JSON.stringify(e))<=8192);assert.equal(e.bodySha256,await sha256(page));
+ const saved=(await pipelineStatus(db,stamp)).jobs.find(j=>j.job==='history').scheduled.result.failureEvidence;assert.deepEqual(saved.navigationInspection,e.navigationInspection);assert.equal(sql.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE name IN ('jra_races','lab_automatic_predictions_v1')").get().n,0);sql.close();
+});
+
+test('navigation fragments remain within the original envelope even with JSON-expanding control characters',async()=>{
+ const raw=Array.from({length:12},()=>'<button onclick="doAction('+String.fromCharCode(1).repeat(500)+')">x</button>').join('');
+ const e=await cardDiscoveryFailureEvidence(raw,index,source,{httpStatus:200,observedAt:new Date(stamp).toISOString()});
+ assert.ok(Buffer.byteLength(JSON.stringify(e))<=8192);assert.equal(e.navigationInspection.executable,false);assert.equal(e.navigationInspection.fragmentsOnly,true);assert.equal(e.navigationInspection.controlsTruncated,true);
+});

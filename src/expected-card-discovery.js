@@ -13,6 +13,25 @@ export function isPublishedCardNavigation(value,target){
  const m=metaFromMeetingListUrl(value);return !!m&&m.date===target.date&&m.venue===target.venue;
 }
 
+// Preserve literal navigation evidence from the response already fetched.
+// These fragments are diagnostic only: never evaluate handlers or follow them.
+function inspectNavigationControls(html,clip){
+ const plain=s=>String(s).replace(/<script\b[\s\S]*?<\/script>/gi,' ').replace(/<style\b[\s\S]*?<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
+ const controls=[];let controlCount=0;
+ for(const m of html.matchAll(/<(?:a|button|input|form)\b[^>]*>/gi)){
+  const raw=m[0];if(!/doAction|CNAME|pw01d|\/JRADB\/accessD\.html/i.test(raw))continue;
+  controlCount++;
+  const priority=/doAction\s*\(/i.test(raw)?0:/CNAME/i.test(raw)?1:2;
+  controls.push({priority,html:clip(raw,280)});controls.sort((a,b)=>a.priority-b.priority);controls.splice(6);
+ }
+ const publicationText=[];
+ for(const m of html.matchAll(/<(h[1-6]|p)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi)){
+  const value=plain(m[2]);if(!/出馬表|開催|発表|公開|更新/.test(value))continue;
+  publicationText.push(clip(value,180));if(publicationText.length===4)break;
+ }
+ return {title:clip(plain(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]||''),200),doActionOccurrences:[...html.matchAll(/\bdoAction\s*\(/gi)].length,literalActionPairs:[...html.matchAll(/doAction\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*\)/gi)].length,controlCount,controls:controls.map(({html})=>({html})),controlsTruncated:controlCount>controls.length,publicationText,fragmentsOnly:true,executable:false};
+}
+
 // Failure evidence from the response already received. No extra request/SQL.
 // Full decoded-body SHA is distinct from the bounded, non-replayable excerpt.
 export async function cardDiscoveryFailureEvidence(html,url,source,{httpStatus,observedAt,charset,receivedBytes},links=extractLinks(html,url)){
@@ -29,6 +48,7 @@ export async function cardDiscoveryFailureEvidence(html,url,source,{httpStatus,o
  // Keep the actual rejected cells when a full race page cannot fit the envelope.
  // This is bounded diagnostic evidence, never a replacement card or full HTML.
  const cardMeta=metaFromRacecardUrl(url);
+ if(!cardMeta)result.navigationInspection=inspectNavigationControls(html,clip);
  if(cardMeta&&cardMeta.date===target.date&&cardMeta.venue===target.venue&&cardMeta.raceNo===target.raceNo){
   const inspection=inspectSourceCard(html),plain=v=>String(v||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim(),problemRows=[];
   const rows=[...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(m=>m[1]).filter(row=>/父：/.test(plain(row))&&/母：/.test(plain(row)));
@@ -41,6 +61,8 @@ export async function cardDiscoveryFailureEvidence(html,url,source,{httpStatus,o
   result.cardInspection={sourceRowCount:inspection.sourceRowCount,declaredCount:inspection.declaredCount,parsedRunnerCount:inspection.raw.length,horseNumbers:inspection.raw.slice(0,36).map(r=>r.horseNo),allHorseNumbersObserved:inspection.allHorseNumbersObserved,allFramesObserved:inspection.allFramesObserved,problemRows,problemRowsLimit:2,fullRowsIncluded:false};
  }
  while(encode.encode(JSON.stringify(result)).length>8192&&samples.length){samples.pop();result.samplesTruncated=true;}
+ while(encode.encode(JSON.stringify(result)).length>8192&&result.navigationInspection?.controls.length){result.navigationInspection.controls.pop();result.navigationInspection.controlsTruncated=true;}
+ while(encode.encode(JSON.stringify(result)).length>8192&&result.navigationInspection?.publicationText.length)result.navigationInspection.publicationText.pop();
  // Keep a complete replayable decoded body only when compressed evidence fits
  // the same 8KiB envelope. Otherwise record the limit explicitly; never truncate
  // a compressed body and pretend it can be replayed or hashed independently.

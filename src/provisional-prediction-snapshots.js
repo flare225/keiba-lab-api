@@ -11,7 +11,9 @@ export async function provisionalEvaluationFingerprint(prediction){
  // Hash only inputs and outputs of the unchanged LABO evaluation. This lets a
  // later history completion append a new immutable revision without rewriting
  // the first saved provisional snapshot.
- return sha256(JSON.stringify(stable({modelVersion:prediction?.modelVersion||null,race:prediction?.race||null,histories:prediction?.histories||[],runners:(prediction?.runners||[]).map(r=>({horseName:r.horseName,assessment:r.assessment||null,score:r.score??null,rank:r.rank??null,mark:r.mark??null}))})));
+ // Only new coverage-aware snapshots opt in. Old revision keys retain their
+ // original fingerprint, including old snapshots that already carry coverage.
+ return sha256(JSON.stringify(stable({modelVersion:prediction?.modelVersion||null,race:prediction?.race||null,histories:prediction?.histories||[],runners:(prediction?.runners||[]).map(r=>({horseName:r.horseName,assessment:r.assessment||null,score:r.score??null,rank:r.rank??null,mark:r.mark??null})),...(prediction?.evaluationFingerprintVersion===2?{rosterCoverage:prediction?.preparation?.rosterCoverage||null}:{})})));
 }
 export function provisionalStorageKey(input){
  const base=key(targetInput(input));let storageKey=base;

@@ -104,3 +104,36 @@ test('a failing priority revision keeps its two-hour backoff while Sunday uses t
  const retried=await scheduledProvisionalPrediction(db,stamp+7200000,mixed);assert.equal(retried.target,'2026-10-31:東京:11');assert.equal(retried.status,'verified');
  assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,2);sql.close();
 });
+
+
+test('same-horse roster reclassification appends partial-coverage evidence instead of retaining the old complete-looking evaluation',async()=>{
+ const {buildProvisionalPrediction}=await import('../src/provisional-expected-prediction.js');
+ const {db,sql}=fixture();let stage=0;
+ const source={...sources[1],names:['同じ馬'],ages:{'同じ馬':2},snapshotId:'registered:legacy-three'};
+ const one={...deps,sources:async()=>[{...source,snapshotId:stage?'registered:coverage-'+stage:source.snapshotId,...(stage?{rosterCoverage:{observedRunnerCount:1,declaredRunnerCount:stage===1?15:1,complete:stage===2}}:{})}],build:async(_db,s,stamp)=>buildProvisionalPrediction(s,{surface:'芝',distance:2000,source_url:'https://www.jra.go.jp/program',race_label:'2歳新馬'},new Map(),stamp)};
+ const first=await scheduledProvisionalPrediction(db,now,one);assert.equal(first.status,'verified');const old=await readProvisionalPrediction(db,source,{exact:true});
+ stage=1;const next=await scheduledProvisionalPrediction(db,now+3600000,one);assert.equal(next.status,'verified');assert.equal(next.saved,1);assert.equal(next.evaluationChanged,true);
+ const fresh=await readProvisionalPrediction(db,source);assert.equal(fresh.snapshot.preparation.candidateSetComplete,false);assert.equal(fresh.snapshot.preparation.rosterCoverage.declaredRunnerCount,15);assert.equal(fresh.snapshot.preparation.label,'暫定参考・部分名簿');assert.equal((await readProvisionalPrediction(db,source,{exact:true})).snapshotSha256,old.snapshotSha256);
+ const repeat=await scheduledProvisionalPrediction(db,now+7200000,one);assert.equal(repeat.status,'no-due-registered-roster');assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,2);
+ stage=2;const complete=await scheduledProvisionalPrediction(db,now+10800000,one);assert.equal(complete.saved,1);const final=await readProvisionalPrediction(db,source);assert.equal(final.snapshot.preparation.rosterCoverage.complete,true);assert.equal(final.snapshot.preparation.label,'暫定評価・出走未確定');assert.equal(final.snapshot.runners[0].score,fresh.snapshot.runners[0].score);assert.equal(final.snapshot.guardrails.locked,false);assert.equal((await readProvisionalPrediction(db,source,{exact:true})).snapshotSha256,old.snapshotSha256);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,3);sql.close();
+});
+test('orphaned revision-readback receipt cannot steal an odd-hour turn from a fresh roster',async()=>{
+ const {db,sql}=fixture(),stamp=Date.parse('2026-10-30T12:00:00Z'); // 21 JST: completion turn
+ const ghost={date:'2026-10-31',venue:'東京',raceNo:11};
+ const fresh={date:'2026-11-01',venue:'京都',raceNo:2};
+ const ghostKey='2026-10-31:東京:11',freshKey='2026-11-01:京都:2';
+ const orphanStatus='revision-readback:'+'a'.repeat(64);
+ sql.exec('CREATE TABLE lab_provisional_queue_v1(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_at INTEGER NOT NULL,error TEXT)');
+ sql.prepare('INSERT INTO lab_provisional_queue_v1 VALUES(?,?,?,NULL)').run(ghostKey,orphanStatus,stamp-1000);
+ // There is no persisted snapshot for ghost. The fresh candidate is due at zero.
+ // Before the guard, readbacks[0] incorrectly chooses ghost over fresh.
+ const result=await scheduledProvisionalPrediction(db,stamp,{...deps,sources:async()=>[ghost,fresh]});
+ assert.equal(result.status,'verified');assert.equal(result.target,freshKey);assert.equal(result.saved,1);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,1);
+ assert.equal(sql.prepare('SELECT status FROM lab_provisional_queue_v1 WHERE race_key=?').get(ghostKey).status,orphanStatus);
+ const read=await readProvisionalPrediction(db,fresh,{exact:true});
+ assert.equal(read.integrityVerified,true);assert.equal(read.snapshotSha256,result.snapshotSha256);
+ assert.equal((await scheduledProvisionalPrediction(db,stamp+1000,{...deps,sources:async()=>[ghost,fresh]})).status,'not-due');
+ sql.close();
+});
+

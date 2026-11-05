@@ -15,6 +15,8 @@ test('observed nested card cells decode race name, valid finish and rich fields'
 test('stored source hash is verified and insufficient card history falls back',async()=>{let html=row('対象馬',url,'2026年10月2日').replace('<div class="date">2026年10月2日</div>',cell);const source={body_html:html,byte_length:Buffer.byteLength(html),source_sha256:createHash('sha256').update(html).digest('hex')};const db={prepare(){return{bind(){return{async first(){return source}}}}}};const context={race:{source_url:'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604100620261031/FD',race_key:'2026-10-31:東京:6',race_date:'2026-10-31'}};const item={horseName:'対象馬',fromDate:'2025-01-01'};assert.equal((await readStoredCardPriors(db,context,item,1)).performances.length,1);assert.equal(await readStoredCardPriors(db,context,item,3),null);source.source_sha256='bad';await assert.rejects(readStoredCardPriors(db,context,item,1),/hash mismatch/);});
 import {DatabaseSync} from 'node:sqlite';
 import {collectHistoryBatch} from '../src/history-collection-v3.37.0.js';
+import {saveConfirmedPredraw} from '../src/confirmed-predraw-roster.js';
+import {collectUpcomingExpectedHistory,expectedHistoryContext} from '../src/expected-history-collection-v3.46.0.js';
 test('natural collector reuses evidence-bound body, saves rows, reads back and obeys cooldown without HTTP',async()=>{
  const sql=new DatabaseSync(':memory:');
  const sourceUrl='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604100620261031/FD';
@@ -28,4 +30,55 @@ test('natural collector reuses evidence-bound body, saves rows, reads back and o
  assert.equal((await collectHistoryBatch(db,input,{now,fetcher})).attempted,0);
  sql.prepare('UPDATE jra_past_performances SET last3f=33.1,corner_positions=\'1-1\' WHERE race_date=\'2026-10-02\'').run();sql.prepare('DELETE FROM jra_past_performances WHERE race_date<>\'2026-10-02\'').run();sql.prepare('DELETE FROM lab_history_collection_receipts').run();sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=0').run();const resumed=await collectHistoryBatch(db,input,{now,fetcher});assert.equal(resumed.addedRows,2);assert.equal(resumed.externalRequests,0);const rich=sql.prepare('SELECT last3f,corner_positions FROM jra_past_performances WHERE race_date=\'2026-10-02\'').get();assert.equal(rich.last3f,33.1);assert.equal(rich.corner_positions,'1-1');
  sql.prepare('DELETE FROM lab_history_collection_receipts').run();sql.prepare('DELETE FROM jra_past_performances').run();sql.prepare('UPDATE lab_history_collection_budget SET locked_until=?').run(now()+3600000);assert.equal((await collectHistoryBatch(db,input,{now,fetcher})).status,'cooldown');assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_past_performances').get().n,0);sql.close();
+});
+
+async function predrawFixture(count=3){
+ const sql=new DatabaseSync(':memory:');
+ const db={prepare(q){const w=(a=[])=>({bind(...v){return w(v)},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}},async run(){return{meta:{changes:Number(sql.prepare(q).run(...a).changes)}}}});return w()},async batch(ss){sql.exec('BEGIN');try{const out=[];for(const s of ss)out.push(await s.run());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}};
+ const source={date:'2026-11-07',venue:'京都',raceNo:11,snapshotId:'confirmed-predraw:2026-11-07:京都:11',names:['対象馬'],priority:50};
+ const sourceUrl='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202605011120261107%2F13';
+ const priors=Array.from({length:count},(_,i)=>'<td class="past p'+(i+1)+'">'+cell.replaceAll('10月2日',(10-i)+'月2日')+'</td>').join('');
+ const html='<table><caption>2026年11月7日 京都<img alt="11レース"></caption><thead></thead><tbody><tr><td class="waku"></td><td class="num"></td><td class="horse"><div class="name_line"><div class="name"><a href="'+url+'">対象馬</a></div></div></td><td class="jockey"><p class="age">牡3/鹿</p><p class="weight">56.0</p><p class="jockey">騎手</p></td>'+priors+'</tr></tbody></table>';
+ const now=()=>Date.parse('2026-11-05T09:42:52.196Z'),hash=await sha256(html);
+ await saveConfirmedPredraw(db,html,sourceUrl,source,{observedAt:new Date(now()).toISOString()});
+ sql.exec('CREATE TABLE lab_shared_page_bodies_v1(scope_key TEXT,page_url TEXT,sha256 TEXT,body_html TEXT,byte_length INTEGER,observed_at INTEGER,http_status INTEGER);CREATE TABLE lab_provisional_queue_v1(race_key TEXT,status TEXT,next_at INTEGER,error TEXT)');
+ sql.prepare('INSERT INTO lab_shared_page_bodies_v1 VALUES(?,?,?,?,?,?,?)').run(source.date,sourceUrl,hash,html,Buffer.byteLength(html),now(),200);
+ sql.prepare('INSERT INTO lab_provisional_queue_v1 VALUES(?,?,?,?)').run('2026-11-07:京都:11','verified',now()+3600000,null);
+ return{sql,db,source,sourceUrl,now,hash};
+}
+import {sha256} from '../src/card-evidence.js';
+test('saved confirmed-predraw body feeds the real history writer and reevaluation queue without HTTP or a formal card',async()=>{
+ const {sql,db,source,now,hash}=await predrawFixture();
+ const result=await collectUpcomingExpectedHistory(db,{sources:[source],now,knownProfilesOnly:true,fetcher:()=>assert.fail('verified stored pre-draw priors must not fetch')});
+ assert.equal(result.addedRows,3,JSON.stringify(result));assert.equal(result.externalRequests,0);assert.equal(result.results[0].sourceSha256,hash);assert.equal(result.provisionalEvaluationQueued,1);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_past_performances').get().n,3);
+ assert.equal(sql.prepare('SELECT status FROM lab_provisional_queue_v1').get().status,'history-updated');
+ assert.equal(sql.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE name IN ('jra_races','jra_runners')").get().n,0);
+ assert.equal((await collectUpcomingExpectedHistory(db,{sources:[source],now,knownProfilesOnly:true,fetcher:()=>assert.fail('do not refetch successful history')})).externalRequests,0);sql.close();
+});
+
+test('pre-draw reuse rejects changed evidence, observations and identities rather than trusting context alone',async()=>{
+ for(const change of ['body','roster','age','observation','scope','url-spelling']){
+  const {sql,db,source,now,hash}=await predrawFixture();const context=await expectedHistoryContext(db,source,now());
+  const item={horseName:'対象馬',age:3,fromDate:'2025-01-01'};
+  if(change==='body')sql.prepare("UPDATE lab_shared_page_bodies_v1 SET body_html=body_html||'tampered'").run();
+  if(change==='roster')sql.prepare("UPDATE lab_confirmed_predraw_rosters SET runners_json=replace(runners_json,'対象馬','隣馬')").run();
+  if(change==='age')item.age=4;
+  if(change==='observation')sql.prepare('UPDATE lab_shared_page_bodies_v1 SET observed_at=observed_at+1').run();
+  if(change==='scope')sql.prepare("UPDATE lab_shared_page_bodies_v1 SET scope_key='2026-11-08'").run();
+  if(change==='url-spelling')sql.prepare("UPDATE lab_shared_page_bodies_v1 SET page_url=replace(page_url,'%2F','/')").run();
+  if(['body','roster','age','observation'].includes(change))await assert.rejects(readStoredCardPriors(db,context,item,3),/mismatch/);
+  else{const result=await readStoredCardPriors(db,context,item,3);assert.equal(result?.sourceSha256??null,change==='scope'?null:hash);}
+  sql.close();
+ }
+});
+
+test('short pre-draw history keeps profile fallback and shared cooldown prevents even cached imports',async()=>{
+ const {sql,db,source,now}=await predrawFixture(2),context=await expectedHistoryContext(db,source,now());
+ const result=await readStoredCardPriors(db,context,{horseName:'対象馬',age:3,fromDate:'2025-01-01'},3,{includeProfileLink:true});
+ assert.equal(result.performances,null);assert.equal(result.profileUrl,url);
+ const {ensureCollectionTables}=await import('../src/history-collection-v3.37.0.js');await ensureCollectionTables(db);
+ sql.prepare("UPDATE lab_history_collection_budget SET next_batch_at=? WHERE name='jra-history'").run(now()+3600000);
+ const blocked=await collectHistoryBatch(db,{historyLimit:3,batchSize:1},{now,context,fetcher:()=>assert.fail('cooldown forbids network')});
+ assert.equal(blocked.status,'cooldown');assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_past_performances').get().n,0);sql.close();
 });

@@ -199,3 +199,27 @@ test('legacy-source receipt is not reused as OWN and a fresh OWN request waits f
  assert.equal(saved.status,'roster-saved',JSON.stringify(saved));assert.equal(saved.externalRequests,1);assert.equal(calls,1);assert.equal(saved.storedRunners,1);
  assert.equal(sql.prepare('SELECT source_url FROM lab_missing_roster_sources_v1').get().source_url,ownUrl);assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,1);sql.close();
 });
+test('invalid stored race identity defers without HTTP, gate lease or source slot and the next valid race still advances',async()=>{
+ for(const invalid of [0,13,1.5]){
+  const {db,sql}=fixture();sql.prepare('UPDATE jra_race_program SET race_no=?').run(invalid);
+  const gateBefore=sql.prepare('SELECT * FROM lab_history_collection_budget').get();let calls=0;
+  const fetcher=async()=>{calls++;return new Response(ownHtml.replace('1R','2R'),{headers:{'content-type':'text/html; charset=utf-8'}});};
+  const held=await collectMissingRoster(db,null,{now:()=>now,fetcher});
+  assert.equal(held.status,'program-identity-incomplete');assert.equal(held.externalRequests,0);assert.equal(calls,0);
+  assert.deepEqual(sql.prepare('SELECT * FROM lab_history_collection_budget').get(),gateBefore);
+  assert.equal(sql.prepare('SELECT next_at FROM lab_missing_roster_clock_v1').get().next_at,0);
+  assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);
+  const receipt=sql.prepare('SELECT * FROM lab_missing_roster_sources_v1').get();assert.equal(receipt.next_at,now+6*3600000);
+  sql.exec("INSERT INTO jra_race_program(race_date,venue,race_no,meeting_no,day_no,race_label) VALUES('2026-10-24','東京',2,4,8,'2歳未勝利')");
+  const next=await collectMissingRoster(db,null,{now:()=>now,fetcher});
+  assert.equal(next.status,'roster-saved');assert.equal(next.target,'2026-10-24:東京:2');assert.equal(calls,1);assert.equal(next.independentRosterReadback,true);sql.close();
+ }
+});
+
+test('supplementary identities reject noncanonical dates while valid race boundary URLs remain unchanged',()=>{
+ for(const race_date of [null,20261024,'2026-1-24','2026-02-30','2026-11-31','2026-10-24T00:00:00Z','not-a-date']){
+  assert.throws(()=>supplementaryRosterUrl({...p,race_date}));assert.throws(()=>expectedRosterSourceUrl({...p,race_date}));
+ }
+ for(const race_no of [1,12]){const suffix=String(race_no).padStart(2,'0');assert.equal(supplementaryRosterUrl({...p,race_no}),'https://race.netkeiba.com/race/shutuba.html?race_id=2026050408'+suffix);assert.equal(expectedRosterSourceUrl({...p,race_no}),'https://own.netkeiba.com/race/shutuba.html?race_id=2026050408'+suffix);}
+});
+

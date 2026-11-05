@@ -22,7 +22,7 @@ async function failureResponseEvidence(response,url,stamp){
   if(!reader)evidence.bodyComplete=true;
   else for(;;){const part=await reader.read();if(part.done){evidence.bodyComplete=true;break;}const take=part.value.subarray(0,FAILURE_BYTES-size);chunks.push(take);size+=take.length;if(take.length<part.value.length){await reader.cancel();break;}}
   evidence.rawBytesStored=size;const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
-  body=new TextDecoder(charset).decode(bytes);evidence.storedDecodedBodySha256=await sha256(body);
+  body=decodeRosterHtml(bytes,contentType);evidence.charsetSource='response-header-or-html-meta-fallback';evidence.storedDecodedBodySha256=await sha256(body);
  }catch(e){evidence.bodyReadError=String(e.message||e).slice(0,300);try{await reader?.cancel();}catch{}}
  return{body,evidence};
 }

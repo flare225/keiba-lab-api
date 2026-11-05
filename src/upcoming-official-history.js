@@ -12,15 +12,17 @@ export async function upcomingOfficialHistoryPlan(db,stamp=Date.now(),sources=EX
  WHERE r.race_date>=? AND r.race_date<=? AND r.runner_count>0
  AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key)
  ) SELECT * FROM coverage WHERE missing_horses>0
- ORDER BY race_date,race_no DESC,venue LIMIT 120`).bind(today,until).all()).results||[];
+ ORDER BY race_date,(race_no=11) DESC,race_no DESC,venue LIMIT 120`).bind(today,until).all()).results||[];
  const targets=new Set(sources.filter(s=>s.priority===0).map(s=>s.raceKey||`${s.date}:${s.venue}:${s.raceNo}`));
  return races.filter(r=>{
   if(r.race_date>today)return true;
   let official=false;try{const u=new URL(r.program_source_url);official=u.protocol==='https:'&&['jra.go.jp','www.jra.go.jp','jra.jp','www.jra.jp'].includes(u.hostname)}catch{}
   const cutoff=/^\d{2}:\d{2}$/.test(r.start_time||'')?Date.parse(`${today}T${r.start_time}:00+09:00`)-300000:NaN;
   return official&&Number.isFinite(cutoff)&&stamp<cutoff;
- }).sort((a,b)=>a.race_date.localeCompare(b.race_date)||Number(targets.has(b.race_key))-Number(targets.has(a.race_key))||b.race_no-a.race_no||a.venue.localeCompare(b.venue))
- .map(r=>({raceKey:r.race_key,date:r.race_date,venue:r.venue,raceNo:r.race_no,raceName:r.race_name,missingHorses:Number(r.missing_horses),targetMain:targets.has(r.race_key)}));
+ // Match card acquisition's weekly 11R priority without requiring another
+ // dated EXPECTED_SOURCES entry. Date and explicit target precedence remain.
+ }).sort((a,b)=>a.race_date.localeCompare(b.race_date)||Number(targets.has(b.race_key))-Number(targets.has(a.race_key))||Number(b.race_no===11)-Number(a.race_no===11)||b.race_no-a.race_no||a.venue.localeCompare(b.venue))
+ .map(r=>({raceKey:r.race_key,date:r.race_date,venue:r.venue,raceNo:r.race_no,raceName:r.race_name,missingHorses:Number(r.missing_horses),targetMain:targets.has(r.race_key)||r.race_no===11}));
 }
 export async function collectUpcomingOfficialHistory(db,{now=Date.now,plan=upcomingOfficialHistoryPlan,status=collectionStatus,collect=collectHistoryBatch,previousCardSelection=null}={}){
  const stamp=now(),all=await plan(db,stamp),today=jstDay(stamp);

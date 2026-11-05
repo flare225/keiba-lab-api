@@ -61,3 +61,25 @@ test('formal-only handoff selects its saved target within the existing eligible 
   assert.equal(r.priorityRaceKey,expected);assert.equal(reads,1);assert.equal(calls,1);
  }
 });
+
+test('new-week stored 11R precedes 12R without a fixed roster, preserving date and explicit target priority',async()=>{
+ const sql=new DatabaseSync(':memory:');
+ sql.exec(`CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,race_name TEXT,runner_count INTEGER);
+ CREATE TABLE jra_runners(race_key TEXT,horse_name TEXT,age INTEGER);
+ CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,start_time TEXT,source_url TEXT);
+ CREATE TABLE jra_past_performances(horse_name TEXT,race_date TEXT,finish_position INTEGER,field_size INTEGER)`);
+ const keys=[];
+ for(const date of ['2026-11-07','2026-11-08'])for(const no of [12,11,10]){
+  const key=`${date}:京都:${no}`;keys.push(key);
+  sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?,?)').run(key,date,'京都',no,'合成カード',1);
+  sql.prepare('INSERT INTO jra_runners VALUES(?,?,?)').run(key,key,4);
+ }
+ const db={prepare(q){return{bind(...args){return{async all(){return{results:sql.prepare(q).all(...args)}}}}}}};
+ const now=Date.parse('2026-11-06T16:00:00+09:00');
+ const plan=await upcomingOfficialHistoryPlan(db,now);
+ assert.deepEqual(plan.map(r=>r.raceNo),[11,12,10,11,12,10]);
+ assert.equal(plan[0].targetMain,true);
+ const explicit=await upcomingOfficialHistoryPlan(db,now,[{raceKey:keys[2],priority:0},{raceKey:keys[3],priority:0}]);
+ assert.deepEqual(explicit.map(r=>r.raceKey),[keys[2],keys[1],keys[0],keys[3],keys[4],keys[5]]);
+ sql.close();
+});

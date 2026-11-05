@@ -27,7 +27,7 @@ async function failureResponseEvidence(response,url,stamp){
  return{body,evidence};
 }
 export function supplementaryRosterUrl(program){
- if(!CODES[program.venue]||!Number.isInteger(program.meeting_no)||program.meeting_no<1||program.meeting_no>12||!Number.isInteger(program.day_no)||program.day_no<1||program.day_no>12)throw Error('保存済み開催回・日次を確認できません。');
+ if(!CODES[program.venue]||!Number.isInteger(program.meeting_no)||program.meeting_no<1||program.meeting_no>12||!Number.isInteger(program.day_no)||program.day_no<1||program.day_no>12||!Number.isInteger(program.race_no)||program.race_no<1||program.race_no>12||typeof program.race_date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(program.race_date)||Number.isNaN(Date.parse(program.race_date))||new Date(program.race_date).toISOString().slice(0,10)!==program.race_date)throw Error('保存済み開催日・開催回・日次・レース番号を確認できません。');
  const id=program.race_date.slice(0,4)+CODES[program.venue]+String(program.meeting_no).padStart(2,'0')+String(program.day_no).padStart(2,'0')+String(program.race_no).padStart(2,'0');return'https://race.netkeiba.com/race/shutuba.html?race_id='+id;
 }
 // OWN publishes the expected runner list as server-rendered HTML. Keep this

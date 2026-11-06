@@ -223,3 +223,24 @@ test('supplementary identities reject noncanonical dates while valid race bounda
  for(const race_no of [1,12]){const suffix=String(race_no).padStart(2,'0');assert.equal(supplementaryRosterUrl({...p,race_no}),'https://race.netkeiba.com/race/shutuba.html?race_id=2026050408'+suffix);assert.equal(expectedRosterSourceUrl({...p,race_no}),'https://own.netkeiba.com/race/shutuba.html?race_id=2026050408'+suffix);}
 });
 
+
+test('HTTP failure evidence decodes HTML meta UTF-8 without relaxing 403 cooldown',async()=>{
+ const {db,sql}=fixture();const body='<meta charset="utf-8"><p>取得制限中・しばらくお待ちください</p>';
+ const r=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>new Response(new TextEncoder().encode(body),{status:403,headers:{'content-type':'text/html'}})});
+ assert.equal(r.status,'source-blocked');assert.equal(r.httpStatus,403);
+ assert.equal(r.failureEvidence.storedDecodedBodySha256,await sha256(body));
+ const saved=sql.prepare('SELECT body_html FROM lab_missing_roster_sources_v1').get();
+ assert.equal(saved.body_html,body);
+ assert.equal(sql.prepare('SELECT next_batch_at FROM lab_history_collection_budget').get().next_batch_at,now+3600000);
+ assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);sql.close();
+});
+
+test('unsupported HTTP failure charset preserves bounded evidence and 403 cooldown',async()=>{
+ const {db,sql}=fixture();const body='<p>source unavailable</p>';
+ const r=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>new Response(new TextEncoder().encode(body),{status:403,headers:{'content-type':'text/html; charset=not-a-real-charset'}})});
+ assert.equal(r.status,'source-blocked');assert.equal(r.httpStatus,403);
+ assert.equal(r.failureEvidence.charsetSource,'unsupported-declared-charset-euc-jp-fallback');
+ assert.equal(sql.prepare('SELECT body_html FROM lab_missing_roster_sources_v1').get().body_html,body);
+ assert.equal(sql.prepare('SELECT next_batch_at FROM lab_history_collection_budget').get().next_batch_at,now+3600000);
+ assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);sql.close();
+});

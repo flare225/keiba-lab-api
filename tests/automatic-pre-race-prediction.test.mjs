@@ -132,3 +132,19 @@ test('held-history diagnostic rejects invalid selectors and never reads another 
  queries.length=0;await assert.rejects(readAutomaticPrediction(db,target,{includePending:false,historyHorseNo:2}),/include_pending/);assert.equal(queries.length,0);
  queries.length=0;await assert.rejects(readAutomaticPrediction(db,target,{includePending:true,historyHorseNo:1}),/保留根拠/);assert.equal(queries.some(q=>q.startsWith('SELECT p.race_date')),false);sql.close();
 });
+
+
+test('card-only past entry cannot hide valid profile finish in either history reader or automatic forecast',async()=>{
+ const {sql,db}=await fixture();
+ sql.exec("DELETE FROM jra_past_performances WHERE horse_name='HorseA' AND race_date<>'2026-09-15';INSERT INTO jra_races VALUES('prior-card','2026-09-15','京都',1,'試験','芝',2000,12);INSERT INTO jra_runners VALUES('prior-card',1,'HorseA',3,1)");
+ const {historyForExpected}=await import('../src/expected-runner-preview-v3.30.0.js');
+ const history=await historyForExpected(db,{...target,surface:'芝',distance:2000,age:3,snapshotId:'no-expected-supplement'},'HorseA');
+ assert.equal(history.recent.find(r=>r.date==='2026-09-15').finish,2);assert.equal(history.recent.find(r=>r.date==='2026-09-15').dbSource,'stored-profile-history');
+ // Empty placeholder result records are not actual result observations either.
+ sql.exec("INSERT INTO lab_race_outcomes VALUES('prior-card',1,NULL);INSERT INTO lab_race_result_details(race_key,horse_no,finish_status) VALUES('prior-card',1,' ')");
+ const out=await captureAutomaticPrediction(db,target,now);assert.equal(out.saved,1);assert.equal(out.snapshot.runners[0].assessment.validFinishRows,1);
+ // An actual stored official non-finish remains authoritative over a profile.
+ sql.exec("INSERT INTO lab_race_result_details(race_key,horse_no,finish_status) VALUES('prior-card',1,'取消')");
+ const cancelled=await historyForExpected(db,{...target,surface:'芝',distance:2000,age:3,snapshotId:'no-expected-supplement'},'HorseA');
+ assert.equal(cancelled.recent.find(r=>r.date==='2026-09-15').dbSource,'official-result');assert.equal(cancelled.recent.find(r=>r.date==='2026-09-15').finish,null);assert.equal(cancelled.recent.find(r=>r.date==='2026-09-15').finishStatus,'取消');sql.close();
+});

@@ -11,13 +11,21 @@ async function ensure(db){
  await db.prepare(`CREATE TABLE IF NOT EXISTS ${RECEIPTS}(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_attempt_at INTEGER NOT NULL,detail_json TEXT NOT NULL)`).run();
  for(const action of ['UPDATE','DELETE'])await db.prepare(`CREATE TRIGGER IF NOT EXISTS automatic_prediction_no_${action.toLowerCase()} BEFORE ${action} ON ${TABLE} BEGIN SELECT RAISE(ABORT,'automatic prediction is immutable'); END`).run();
 }
-export async function readAutomaticPrediction(db,input,{includePending=false}={}){
+export async function readAutomaticPrediction(db,input,{includePending=false,historyHorseNo=null}={}){
  const t=targetInput(input);let row;
+ if(historyHorseNo!==null&&(!includePending||!/^([1-9]|1[0-8])$/.test(String(historyHorseNo))))throw Error('保留履歴の読取にはinclude_pending=1と馬番1〜18が必要です。');
  try{row=await db.prepare(`SELECT * FROM ${TABLE} WHERE race_key=?`).bind(`${t.date}:${t.venue}:${t.raceNo}`).first()}catch(e){if(/no such table/i.test(String(e)))return{ok:true,available:false};throw e}
  if(!row){
   if(!includePending)return{ok:true,available:false};
   let pending;try{pending=await db.prepare(`SELECT status,next_attempt_at,detail_json FROM ${RECEIPTS} WHERE race_key=?`).bind(`${t.date}:${t.venue}:${t.raceNo}`).first()}catch(e){if(!/no such table/i.test(String(e)))throw e;}
-  return{ok:true,available:false,target:t,pending:pending?{status:pending.status,nextAttemptAt:new Date(pending.next_attempt_at).toISOString(),detail:JSON.parse(pending.detail_json)}:null};
+  const detail=pending?JSON.parse(pending.detail_json):null;let storedHistory;
+  if(historyHorseNo!==null){
+   const held=detail?.missingHistoryDetails?.find(r=>r.horseNo===Number(historyHorseNo));
+   if(!held)throw Error('指定馬は保存された保留根拠に含まれていません。');
+   const rows=(await db.prepare(`SELECT p.race_date,p.venue,p.race_name,p.surface,p.distance,p.finish_position,p.field_size,p.time_text,p.last3f,p.source_url,p.fetched_at FROM jra_past_performances p JOIN jra_runners r ON r.horse_name=p.horse_name WHERE r.race_key=? AND r.horse_no=? AND r.horse_name=? AND r.age BETWEEN 2 AND 20 AND p.race_date>=MAX('2016-01-01',printf('%d-01-01',CAST(substr(?,1,4) AS INTEGER)-r.age+2)) AND p.race_date<? ORDER BY p.race_date DESC,p.venue,p.race_name LIMIT 3`).bind(`${t.date}:${t.venue}:${t.raceNo}`,Number(historyHorseNo),held.horseName,t.date,t.date).all()).results||[];
+   storedHistory={horseNo:Number(historyHorseNo),horseName:held.horseName,readOnly:true,limit:3,targetDateExcluded:true,rows};
+  }
+  return{ok:true,available:false,target:t,pending:pending?{status:pending.status,nextAttemptAt:new Date(pending.next_attempt_at).toISOString(),detail}:null,...(storedHistory?{storedHistory}:{})};
  }
  if(await sha256(row.snapshot_json)!==row.snapshot_sha256)throw Error('自動事前予想のハッシュが一致しません。');
  const snapshot=JSON.parse(row.snapshot_json);

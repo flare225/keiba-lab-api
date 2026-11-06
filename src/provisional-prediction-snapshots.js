@@ -67,7 +67,10 @@ export async function saveProvisionalPrediction(db,input,build,now=Date.now()){
 export async function markProvisionalHistoryUpdated(db,input,now=Date.now()){
  const raceKey=key(targetInput(input));
  try{
-  const result=await db.prepare("UPDATE lab_provisional_queue_v1 SET status='history-updated',next_at=?,error=NULL WHERE status='verified' AND (race_key=? OR (race_key>=? AND race_key<?))").bind(now,raceKey,raceKey+':predraw:',raceKey+':predraw;').run();
+  // New persisted input can also unblock a first evaluation held for missing
+  // data. Keep it on the initial-build path; do not reopen uncertain writes.
+  const result=await db.prepare("UPDATE lab_provisional_queue_v1 SET status=CASE WHEN status='verified' THEN 'history-updated' ELSE status END,next_at=?,error=NULL WHERE status IN ('verified','awaiting-data') AND (race_key=? OR (race_key>=? AND race_key<?))").bind(now,raceKey,raceKey+':predraw:',raceKey+':predraw;').run();
   return Number(result.meta?.changes)||0;
  }catch(e){if(/no such table/i.test(String(e)))return 0;throw e;}
 }
+

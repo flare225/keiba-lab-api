@@ -156,7 +156,7 @@ export default {
     let result;
     if(request.method==='GET'){
      const target={date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')};
-     result=await readAutomaticPrediction(env.DB,target,{includePending:u.searchParams.get('include_pending')==='1'});
+     result=await readAutomaticPrediction(env.DB,target,{includePending:u.searchParams.get('include_pending')==='1',historyHorseNo:u.searchParams.get('history_horse_no')});
      if(result.available&&u.searchParams.get('include_lock')==='1'){
       try{const {snapshot,...lock}=await readSavedAutomaticSeal(env.DB,target,{includePending:true});result.lock=lock;}
       catch(e){if(e.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;result.lock={ok:false,available:false,locked:false,status:'verification-failed'};}

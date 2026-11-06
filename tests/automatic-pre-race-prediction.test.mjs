@@ -112,3 +112,23 @@ test('real scheduled entry returns quota pause before LOCK or source handoff',as
  assert.equal(flagReads,1);assert.equal(afterQuota,0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_automatic_prediction_receipts_v1').get().n,0);
  sql.close();
 });
+
+
+test('one held horse exposes bounded stored prior values through opt-in GET without writes or recalculation',async()=>{
+ const {sql,db,queries}=await fixture();sql.exec("UPDATE jra_past_performances SET field_size=1 WHERE horse_name='HorseB'");
+ await scheduledAutomaticPrediction(db,now);
+ // Add a third real prior, an age-window-excluded row and a different horse.
+ for(const [name,date] of [['HorseB','2026-08-01'],['HorseB','2024-08-01'],['Other','2026-10-17']])sql.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,finish_position,field_size,source_url,fetched_at) VALUES(?,?,?,?,?,?,?,?)').run(name,date,'京都','試験',6,1,'https://www.jra.go.jp/profile','saved');
+ queries.length=0;const {default:app}=await import('../src/index-v3.49.0.js');
+ const r=await app.fetch(new Request('https://test/v1/lab/automatic-prediction?date=2026-10-18&venue='+encodeURIComponent('京都')+'&race_no=11&include_pending=1&history_horse_no=2'),{DB:db},{}),j=await r.json();
+ assert.equal(r.status,200);assert.equal(j.ok,true);assert.equal(j.available,false);assert.equal(j.storedHistory.horseName,'HorseB');assert.equal(j.storedHistory.readOnly,true);assert.equal(j.storedHistory.rows.length,3);
+ assert.deepEqual(j.storedHistory.rows.map(r=>r.race_date),['2026-09-15','2026-09-01','2026-08-01']);assert.equal(j.storedHistory.rows[0].field_size,1);assert.equal(j.storedHistory.rows[0].finish_position,2);
+ assert.equal(queries.filter(q=>q.startsWith('SELECT p.race_date')).length,1);assert.equal(queries.length,3);assert.ok(queries.every(q=>q.startsWith('SELECT')));assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_automatic_predictions_v1').get().n,0);sql.close();
+});
+
+test('held-history diagnostic rejects invalid selectors and never reads another horse outside the stored hold',async()=>{
+ const {sql,db,queries}=await fixture();sql.exec("UPDATE jra_past_performances SET finish_position=NULL WHERE horse_name='HorseB'");await scheduledAutomaticPrediction(db,now);
+ for(const n of ['0','19','1 OR 1=1','2.0','']){queries.length=0;await assert.rejects(readAutomaticPrediction(db,target,{includePending:true,historyHorseNo:n}),/馬番/);assert.equal(queries.length,0);}
+ queries.length=0;await assert.rejects(readAutomaticPrediction(db,target,{includePending:false,historyHorseNo:2}),/include_pending/);assert.equal(queries.length,0);
+ queries.length=0;await assert.rejects(readAutomaticPrediction(db,target,{includePending:true,historyHorseNo:1}),/保留根拠/);assert.equal(queries.some(q=>q.startsWith('SELECT p.race_date')),false);sql.close();
+});

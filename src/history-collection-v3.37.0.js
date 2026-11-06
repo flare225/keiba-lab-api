@@ -60,7 +60,8 @@ export async function collectHistoryBatch(db,input,deps={}){
  const now=deps.now||Date.now,fetcher=deps.fetcher||fetch,wait=deps.wait||(ms=>new Promise(r=>setTimeout(r,ms)));
  const limit=integer(input.historyLimit??10,10,1,20),batchSize=limit>10?1:integer(input.batchSize??1,1,1,2);
  await ensureCollectionTables(db);const context=deps.context||await raceContext(db,input),before=await collectionStatus(db,{...input,historyLimit:limit},now(),deps.context||null);
- const selected=before.runners.filter(r=>r.due&&(!deps.context||r.profileUrl||r.storedRows>=limit)).sort((a,b)=>Number(a.collectionState==='failed')-Number(b.collectionState==='failed')||a.storedRows-b.storedRows||(a.collectionState==='failed'?String(a.lastCheckedAt).localeCompare(String(b.lastCheckedAt)):0)||a.horseNo-b.horseNo).slice(0,batchSize);
+ const cachedBatchSize=limit>10?batchSize:Math.max(batchSize,integer(input.storedBatchSize??batchSize,batchSize,1,COLLECTION_POLICY.maxHorsesPerBatch));
+ const selected=before.runners.filter(r=>r.due&&(!deps.context||r.profileUrl||r.storedRows>=limit)).sort((a,b)=>Number(a.collectionState==='failed')-Number(b.collectionState==='failed')||a.storedRows-b.storedRows||(a.collectionState==='failed'?String(a.lastCheckedAt).localeCompare(String(b.lastCheckedAt)):0)||a.horseNo-b.horseNo).slice(0,cachedBatchSize);
  if(!selected.length)return{ok:true,status:deps.context&&before.remainingHorses?'awaiting-profile-links':'complete',attempted:0,externalRequests:0,before,after:before,policy:COLLECTION_POLICY};
  const stamp=now(),token=crypto.randomUUID();
  const claim=await db.prepare("UPDATE lab_history_collection_budget SET locked_until=?,lock_token=? WHERE name='jra-history' AND locked_until<=? AND next_batch_at<=?").bind(stamp+120000,token,stamp,stamp).run();
@@ -77,12 +78,16 @@ export async function collectHistoryBatch(db,input,deps={}){
  }
  try{
   let links=null,resultSourceChecked=false;
-  for(const item of selected){
+  for(const [index,item] of selected.entries()){
+   // Extra scheduled work may only reuse verified stored priors, never HTTP.
+   const storedOnly=index>=batchSize;
+   if(storedOnly&&!results.at(-1)?.reusedStoredCard)break;
    let profileUrl=item.profileUrl;
    try{
     if(item.storedRows>=limit){await saveReceipt(db,context.race.race_key,item,limit,'stored-enough',item.storedRows,now());results.push({horseName:item.horseName,status:'stored-enough',savedRows:0});continue}
     const source=await readStoredCardPriors(db,context,item,limit,{includeProfileLink:true});
     const stored=source?.performances?source:null;
+    if(storedOnly&&!stored)break;
     if(source)profileUrl=officialUrl(source.profileUrl,true);
     if(!profileUrl){const known=await db.prepare('SELECT source_url FROM jra_past_performances WHERE horse_name=? AND race_date>=? AND race_date<? AND source_url IS NOT NULL ORDER BY fetched_at DESC LIMIT 1').bind(item.horseName,item.fromDate,context.race.race_date).first();try{profileUrl=officialUrl(known?.source_url,true)}catch{}}
     if(!profileUrl){const cached=await db.prepare('SELECT profile_url FROM lab_history_profile_links WHERE race_key=? AND horse_name=? AND age=? AND source_url=? AND (?<? OR checked_at>?)').bind(context.race.race_key,item.horseName,item.age,context.race.source_url,context.race.race_date,jstDay(now()),now()-86400000).first();if(cached)profileUrl=officialUrl(cached.profile_url,true)}

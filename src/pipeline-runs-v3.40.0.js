@@ -13,7 +13,11 @@ export async function pipelineStatus(db,now=Date.now()){
 // Explicit diagnostic READ only. Default status/cron paths never call this.
 export async function readPipelineFailure(db,job,trigger='scheduled'){
  if(!['archive','history','results','learning','prior-details'].includes(job)||!['scheduled','manual'].includes(trigger))throw Error('Unsupported pipeline failure scope');
- let rows;try{rows=(await db.prepare("SELECT run_id,started_at,finished_at,status,error,json_extract(result_json,'$.error') result_error,json_extract(result_json,'$.failureEvidence') evidence_json FROM lab_bounded_pipeline_runs WHERE job=? AND trigger_kind=? ORDER BY started_at DESC LIMIT 32").bind(job,trigger).all()).results||[];}catch(e){if(!/no such table/.test(String(e)))throw e;rows=[];}
+ let rows;try{rows=(await db.prepare("SELECT run_id,started_at,finished_at,status,error,json_extract(result_json,'$.error') result_error,json_extract(result_json,'$.raceKey') race_key,json_extract(result_json,'$.failureEvidence') evidence_json FROM lab_bounded_pipeline_runs WHERE job=? AND trigger_kind=? ORDER BY started_at DESC LIMIT 32").bind(job,trigger).all()).results||[];}catch(e){if(!/no such table/.test(String(e)))throw e;rows=[];}
  const row=rows.find(r=>r.evidence_json)||rows.find(r=>r.error||r.result_error);
- return{ok:true,job,trigger,available:!!row,scannedRuns:rows.length,windowLimit:32,olderRunsChecked:false,...(row?{runId:row.run_id,startedAt:new Date(row.started_at).toISOString(),finishedAt:row.finished_at?new Date(row.finished_at).toISOString():null,status:row.status,error:row.error||row.result_error||null,failureEvidence:row.evidence_json?JSON.parse(row.evidence_json):null}:{})};
+ // Preserve the evidence-first response, but never hide a newer plain error
+ // behind that older body. Reuse the same bounded rows; no extra SQL or HTTP.
+ const latest=rows.find(r=>r.error||r.result_error||r.evidence_json);
+ const summary=r=>({runId:r.run_id,startedAt:new Date(r.started_at).toISOString(),finishedAt:r.finished_at?new Date(r.finished_at).toISOString():null,status:r.status,error:r.error||r.result_error||null,...(typeof r.race_key==='string'&&r.race_key?{raceKey:r.race_key}:{})});
+ return{ok:true,job,trigger,available:!!row,scannedRuns:rows.length,windowLimit:32,olderRunsChecked:false,latestFailure:latest?summary(latest):null,...(row?{...summary(row),failureEvidence:row.evidence_json?JSON.parse(row.evidence_json):null}:{})};
 }

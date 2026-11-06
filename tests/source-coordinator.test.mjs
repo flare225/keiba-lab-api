@@ -65,6 +65,26 @@ test('explicit failure read retrieves saved evidence hidden by cooldown with one
 });
 
 
+test('failure read exposes the newest error separately from an older evidence-bearing run without another SELECT',async()=>{
+ const {db,sql}=fixture();await runSourceCoordinator({cron:SOURCE_CRON,scheduledTime:start},{DB:db},{now:()=>start,jobs:{archive:async()=>({status:'idle'})}});
+ const put=sql.prepare('INSERT INTO lab_bounded_pipeline_runs(run_id,job,trigger_kind,started_at,finished_at,status,result_json,error) VALUES(?,?,?,?,?,?,?,?)');
+ const evidence={httpStatus:200,target:{date:'2026-11-08',venue:'東京',raceNo:4}};
+ put.run('old-evidence','history','scheduled',start+1,start+2,'failed',JSON.stringify({error:'card link not confirmed',failureEvidence:evidence}),null);
+ put.run('new-error','history','scheduled',start+3,start+4,'failed','{}','JRA取得 HTTP 403');
+ put.run('other-job','results','scheduled',start+5,start+6,'failed','{}','different job');
+ put.run('manual','history','manual',start+7,start+8,'failed','{}','manual error');
+ put.run('cooldown','history','scheduled',start+9,start+10,'cooldown','{}',null);
+ let count=0;const observed={prepare(q){count++;assert.match(q,/^SELECT/);assert.match(q,/LIMIT 32$/);return db.prepare(q)}};
+ const {readPipelineFailure}=await import('../src/pipeline-runs-v3.40.0.js');
+ const result=await readPipelineFailure(observed,'history');assert.equal(count,1);assert.equal(result.runId,'old-evidence');assert.deepEqual(result.failureEvidence,evidence);
+ assert.deepEqual(result.latestFailure,{runId:'new-error',startedAt:new Date(start+3).toISOString(),finishedAt:new Date(start+4).toISOString(),status:'failed',error:'JRA取得 HTTP 403'});
+ put.run('result-error','history','scheduled',start+11,start+12,'failed',JSON.stringify({raceKey:'2026-11-08:東京:4',error:'保存した全馬と出馬表が一致しません。'}),null);
+ count=0;const scoped=await readPipelineFailure(observed,'history');assert.equal(count,1);assert.equal(scoped.latestFailure.raceKey,'2026-11-08:東京:4');assert.equal(scoped.latestFailure.runId,'result-error');assert.equal(scoped.runId,'old-evidence');
+ sql.exec("DELETE FROM lab_bounded_pipeline_runs WHERE run_id='result-error'");
+ sql.exec("DELETE FROM lab_bounded_pipeline_runs WHERE run_id='new-error'");assert.equal((await readPipelineFailure(db,'history')).latestFailure.runId,'old-evidence');
+ sql.exec("DELETE FROM lab_bounded_pipeline_runs WHERE job='history' AND trigger_kind='scheduled'");assert.equal((await readPipelineFailure(db,'history')).latestFailure,null);sql.close();
+});
+
 test('expected discovery fairness survives acquisition and safety stops in the existing history receipt',async()=>{
  const {db,sql}=fixture();let stamp=start;const seen=[];
  const jobs={archive:async()=>({status:'idle'}),results:async()=>({status:'idle'}),history:async context=>{

@@ -20,6 +20,20 @@ async function fixture(){
  return{db,sql};
 }
 const html='<h1>HorseA</h1><table>'+['2026年10月3日','2026年9月1日','2026年8月1日'].map(d=>'<tr>'+[d,'京都','合成過去走','芝2400','良','18','2','1','騎手','57','480(+2)','2:24.1','111','勝馬'].map(v=>'<td>'+v+'</td>').join('')+'</tr>').join('')+'</table>';
+test('diagnostic reads real nested collector failure and exact race without fetching again or changing shared cooldown',async()=>{
+ const {db,sql}=await fixture();
+ const {runPipelineJob,readPipelineFailure}=await import('../src/pipeline-runs-v3.40.0.js');let requests=0;
+ await runPipelineJob(db,'history','scheduled',async()=>({status:'failed',error:'older unrelated error'}),{now:()=>stamp-3600000,scheduledTime:stamp-3600000});
+ await runPipelineJob(db,'history','scheduled',()=>collectHistoryBatch(db,{date,venue:'京都',raceNo:11,historyLimit:3,batchSize:1},{now:()=>stamp,fetcher:async()=>{requests++;return new Response('',{status:403})}}),{now:()=>stamp,scheduledTime:stamp});
+ await runPipelineJob(db,'history','scheduled',async()=>({status:'cooldown',externalRequests:0}),{now:()=>stamp+1000,scheduledTime:stamp+1000});
+ let reads=0;const observed={prepare(q){reads++;assert.match(q,/^SELECT/);assert.match(q,/LIMIT 32$/);return db.prepare(q)}};
+ const read=await readPipelineFailure(observed,'history');
+ assert.equal(read.latestFailure.startedAt,new Date(stamp).toISOString());assert.equal(read.latestFailure.status,'partial');
+ assert.equal(read.latestFailure.error,'JRA取得 HTTP 403');assert.equal(read.latestFailure.raceKey,key);assert.equal(read.latestFailure.horseName,'HorseA');
+ assert.equal(read.latestFailure.nextBatchAt,new Date(stamp+3600000).toISOString());assert.equal(requests,1);assert.equal(reads,1);
+ assert.equal(sql.prepare("SELECT next_batch_at FROM lab_history_collection_budget WHERE name='jra-history'").get().next_batch_at,stamp+3600000);
+ assert.equal(sql.prepare('SELECT count(*) n FROM jra_past_performances').get().n,0);sql.close();
+});
 test('a fresh formal-only card reaches real natural history storage before the next card, without a candidate registry',async()=>{
  const {db,sql}=await fixture();let requests=0;
  const result=await collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',previousCardSelection:{lane:'card',target:key,priorityFormalHistoryPending:true},

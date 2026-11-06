@@ -98,3 +98,15 @@ test('expected discovery fairness survives acquisition and safety stops in the e
  assert.deepEqual(seen,[null,'discovery','discovery','discovery','known']);
  assert.equal(sql.prepare("SELECT COUNT(*) n FROM lab_bounded_pipeline_runs WHERE job='results'").get().n,5);sql.close();
 });
+
+test('nested failure read checks the second bounded horse slot, trims errors and keeps existing evidence first',async()=>{
+ const {db,sql}=fixture();const {runPipelineJob,readPipelineFailure}=await import('../src/pipeline-runs-v3.40.0.js');
+ await runPipelineJob(db,'history','scheduled',async()=>({status:'failed',failureEvidence:{httpStatus:200},error:'older source evidence'}),{now:()=>start,scheduledTime:start});
+ const record=results=>({status:'partial',before:{race:{raceKey:'expected:confirmed-predraw:2026-11-07:東京:11'}},nextBatchAt:'2026-11-06T01:00:00Z',results});
+ await runPipelineJob(db,'history','scheduled',async()=>record([{status:'checked',error:'ignore nonfailed item'},{status:'failed',horseName:'TargetHorse',error:'x'.repeat(5000)}]),{now:()=>start+1,scheduledTime:start+1});
+ const read=await readPipelineFailure(db,'history');assert.equal(read.error,'older source evidence');assert.equal(read.failureEvidence.httpStatus,200);
+ assert.equal(read.latestFailure.error.length,4000);assert.equal(read.latestFailure.horseName,'TargetHorse');assert.equal(read.latestFailure.raceKey,'expected:confirmed-predraw:2026-11-07:東京:11');
+ sql.exec('DELETE FROM lab_bounded_pipeline_runs');
+ await runPipelineJob(db,'history','scheduled',async()=>record([{status:'checked',error:'ignore'},{status:'failed',error:403},{status:'failed',error:'outside two-horse bound'}]),{now:()=>start+2,scheduledTime:start+2});
+ assert.equal((await readPipelineFailure(db,'history')).latestFailure,null);sql.close();
+});

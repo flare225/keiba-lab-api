@@ -114,3 +114,38 @@ test('stored expansion remains opt-in and cannot import during shared lease or c
   assert.equal(out.attempted,mode==='default'?1:0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_past_performances').get().n,mode==='default'?3:0);sql.close();
  }
 });
+
+
+test('explicit same-horse career total admits complete one/two-start cached histories; partial evidence still falls back',async()=>{
+ for(const [starts,count,accepted] of [[1,1,true],[2,2,true],[3,2,false],[0,1,false],[2,1,false]]){
+  const {sql,db,source,now}=await predrawFixture(count);let body=sql.prepare('SELECT body_html FROM lab_shared_page_bodies_v1').get().body_html;
+  body=body.replace('</div></div></td>','</div></div><div class="result_line"><div class="cell result">(0.0.0.'+starts+')</div></div></td>');
+  const hash=await sha256(body);
+  sql.prepare('UPDATE lab_shared_page_bodies_v1 SET body_html=?,byte_length=?,sha256=?').run(body,Buffer.byteLength(body),hash);
+  sql.prepare('UPDATE lab_confirmed_predraw_rosters SET source_sha256=?').run(hash);
+  const context=await expectedHistoryContext(db,source,now());
+  const out=await readStoredCardPriors(db,context,{horseName:'対象馬',age:3,fromDate:'2025-01-01'},3,{includeProfileLink:true});
+  assert.equal(!!out.performances,accepted);
+  if(accepted){
+   assert.equal(out.coverageBasis,'observed-short-career-record');
+   const result=await collectUpcomingExpectedHistory(db,{sources:[source],now,knownProfilesOnly:true,fetcher:()=>assert.fail('complete observed short career needs no HTTP')});
+   assert.equal(result.externalRequests,0);assert.equal(result.addedRows,count);assert.equal(result.after.pendingHorses,0);
+   assert.equal(sql.prepare('SELECT finish_position,last3f FROM jra_past_performances').get().finish_position,2);
+  }sql.close();
+ }
+});
+
+
+test('short-career proof rejects invalid finish, future prior, duplicate prior and conflicting totals',async()=>{
+ for(const change of ['finish','future','duplicate','totals']){
+  const {sql,db,source,now}=await predrawFixture(1);let body=sql.prepare('SELECT body_html FROM lab_shared_page_bodies_v1').get().body_html;
+  const record='<div class="cell result">(0.0.0.1)</div>';
+  body=body.replace('</div></div></td>','</div></div>'+record+(change==='totals'?record:'')+'</td>');
+  if(change==='finish')body=body.replace('2<span>着','取消<span>着');
+  if(change==='future')body=body.replace('2026年10月2日','2026年11月7日');
+  if(change==='duplicate')body=body.replace('</tr>','<td class="past p2">'+cell+'</td></tr>');
+  const hash=await sha256(body);sql.prepare('UPDATE lab_shared_page_bodies_v1 SET body_html=?,byte_length=?,sha256=?').run(body,Buffer.byteLength(body),hash);sql.prepare('UPDATE lab_confirmed_predraw_rosters SET source_sha256=?').run(hash);
+  const context=await expectedHistoryContext(db,source,now());const result=await readStoredCardPriors(db,context,{horseName:'対象馬',age:3,fromDate:'2025-01-01'},3,{includeProfileLink:true});
+  assert.equal(result.performances,null,change);sql.close();
+ }
+});

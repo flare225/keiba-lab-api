@@ -10,12 +10,15 @@ export function storedCardPriorCells(html,{horseName,profileUrl,beforeDate}){
   if(!name||text(name[2])!==horseName)continue;
   const actual=new URL(name[1].replace(/&amp;/g,'&'),profileUrl);
   if(actual.origin!==wanted.origin||actual.pathname!==wanted.pathname||actual.searchParams.get('CNAME')!==wanted.searchParams.get('CNAME'))throw Error('Stored card horse identity mismatch');
+  const records=[...row.matchAll(/<div\b[^>]*class=["']cell result["'][^>]*>\s*\((\d+)\.(\d+)\.(\d+)\.(\d+)\)\s*<\/div>/gi)];
+  const record=records.length===1?records[0]:null;
+  const observedCareerStarts=record?record.slice(1).reduce((n,x)=>n+Number(x),0):null;
   for(const c of row.matchAll(/<td\b[^>]*class=["']past\s+p[1-4][^"']*["'][^>]*>([\s\S]*?)<\/td>/gi)){
    const cell=c[1],d=cell.match(/class=["']date["'][^>]*>\s*(\d{4})年(\d{1,2})月(\d{1,2})日/);
    if(!d)continue;
    const raceDate=`${d[1]}-${d[2].padStart(2,'0')}-${d[3].padStart(2,'0')}`;
    if(raceDate>=beforeDate)continue;
-   out.push({horseName,raceDate,cellHtml:cell});
+   out.push({horseName,raceDate,cellHtml:cell,...(observedCareerStarts!==null?{observedCareerStarts}:{})});
   }
  }
  return out;
@@ -53,8 +56,11 @@ export async function readStoredCardPriors(db,context,item,limit,{includeProfile
   if(!Number.isFinite(Date.parse(row.checked_at))||Date.parse(row.checked_at)!==Number(row.observed_at)||JSON.stringify(parsed.runners)!==row.runners_json||!parsed.runners.some(r=>r.horse_name===item.horseName&&r.age===item.age))throw Error('Stored pre-draw prior identity mismatch');
  }
  const profileUrl=extractProfileLinks(row.body_html,[item.horseName],race.source_url).get(item.horseName);if(!profileUrl)return null;
- const performances=decodeStoredCardPriors(storedCardPriorCells(row.body_html,{horseName:item.horseName,profileUrl,beforeDate:race.race_date}),race.source_url).filter(p=>p.raceDate>=item.fromDate).filter((p,i,all)=>all.findIndex(q=>q.raceDate===p.raceDate&&q.venue===p.venue&&q.raceName===p.raceName)===i).slice(0,limit);
- // A partial card cannot mark profile collection complete or suppress fallback.
- return performances.length>=limit?{profileUrl,performances,sourceSha256:row.source_sha256}:includeProfileLink?{profileUrl,performances:null,sourceSha256:row.source_sha256}:null;
+ const cells=storedCardPriorCells(row.body_html,{horseName:item.horseName,profileUrl,beforeDate:race.race_date});
+ const performances=decodeStoredCardPriors(cells,race.source_url).filter(p=>p.raceDate>=item.fromDate).filter((p,i,all)=>all.findIndex(q=>q.raceDate===p.raceDate&&q.venue===p.venue&&q.raceName===p.raceName)===i).slice(0,limit);
+ // Fewer than three visible cells alone do not prove a short career. Require
+ // the same horse's explicit official career total and every prior to decode.
+ const shortCareer=performances.length>0&&performances.length<limit&&performances.length<3&&cells.length===performances.length&&cells.every(c=>c.observedCareerStarts===performances.length);
+ return performances.length>=limit||shortCareer?{profileUrl,performances,sourceSha256:row.source_sha256,...(shortCareer?{coverageBasis:'observed-short-career-record'}:{})}:includeProfileLink?{profileUrl,performances:null,sourceSha256:row.source_sha256}:null;
 }
 

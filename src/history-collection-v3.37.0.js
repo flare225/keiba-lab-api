@@ -32,6 +32,15 @@ export function collectionDue(receiptRow,date,limit,now){
  if(receiptRow.status==='checked'&&Number(receiptRow.rows_found)===0)return now-Number(receiptRow.checked_at)>=86400000;
  return date>=jstDay(now)&&now-Number(receiptRow.checked_at)>=COLLECTION_POLICY.futureRefreshMs;
 }
+// Wake only an existing missing-history receipt after new formal-race rows
+// were read back. No capture, source gate, or saved prediction is changed.
+export async function wakeAutomaticPredictionForHistory(db,race,addedRows,now){
+ if(!(addedRows>0)||race.race_date<jstDay(now)||race.race_key!==`${race.race_date}:${race.venue}:${race.race_no}`)return 0;
+ try{
+  const result=await db.prepare("UPDATE lab_automatic_prediction_receipts_v1 SET next_attempt_at=? WHERE race_key=? AND status='awaiting-prior-history' AND next_attempt_at>?").bind(now,race.race_key,now).run();
+  return Number(result.meta?.changes)||0;
+ }catch(e){if(/no such table: lab_automatic_prediction_receipts_v1/.test(String(e)))return 0;throw e;}
+}
 async function raceContext(db,input){
  const t=targetInput(input);const race=await db.prepare('SELECT race_key,race_date,venue,race_no,race_name,source_url,runner_count FROM jra_races WHERE race_date=? AND venue=? AND race_no=?').bind(t.date,t.venue,t.raceNo).first();
  if(!race)throw Error('正式出馬表が未保存です。保存後に収集します。');
@@ -116,7 +125,9 @@ export async function collectHistoryBatch(db,input,deps={}){
   }
  }finally{await db.prepare("UPDATE lab_history_collection_budget SET locked_until=0,next_batch_at=?,lock_token=NULL WHERE name='jra-history' AND lock_token=?").bind(now()+cooldown,token).run()}
  const after=await collectionStatus(db,{...input,historyLimit:limit},now(),deps.context||null);
- return{ok:results.every(r=>r.status!=='failed'),status:results.some(r=>r.status==='failed')?'partial':'collected',attempted:results.length,externalRequests:requests,results,before,after,addedRows:after.totalStoredRows-before.totalStoredRows,nextBatchAt:new Date(now()+cooldown).toISOString(),policy:COLLECTION_POLICY,guardrails:{targetDateExcluded:true,officialSourceOnly:true,lockedPredictionWrites:false,noOddsIngested:true,last3fMayRemainMissing:true}};
+ const addedRows=after.totalStoredRows-before.totalStoredRows;
+ const automaticPredictionQueued=await wakeAutomaticPredictionForHistory(db,context.race,addedRows,now());
+ return{ok:results.every(r=>r.status!=='failed'),status:results.some(r=>r.status==='failed')?'partial':'collected',attempted:results.length,externalRequests:requests,results,before,after,addedRows,automaticPredictionQueued,nextBatchAt:new Date(now()+cooldown).toISOString(),policy:COLLECTION_POLICY,guardrails:{targetDateExcluded:true,officialSourceOnly:true,lockedPredictionWrites:false,noOddsIngested:true,last3fMayRemainMissing:true}};
 }
 export async function scheduledCollection(db,deps={}){
  const now=deps.now||Date.now;await ensureCollectionTables(db);const today=jstDay(now());

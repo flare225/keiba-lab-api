@@ -39,7 +39,11 @@ for(const stored of [false,true])test('current-week '+(stored?'verified cached':
   assert.equal(out.addedRows,stored?6:3,JSON.stringify(out));assert.equal(out.externalRequests,stored?0:1);now+=61000;
  }
  assert.equal(historyRequests,stored?0:2);assert.equal(sql.prepare('SELECT count(*) n FROM jra_past_performances').get().n,6);
+ // A historical card without outcomes/details is not a result observation.
+ sql.prepare('INSERT INTO jra_races(race_key,race_date,venue,race_no,race_name,surface,distance,runner_count,fetched_at) VALUES(?,?,?,?,?,?,?,?,?)').run('old-card','2026-10-03','京都',1,'合成過去走','芝',1600,12,new Date(now).toISOString());
+ sql.prepare('INSERT INTO jra_runners(race_key,horse_no,horse_name,age,frame_no,fetched_at) VALUES(?,?,?,?,?,?)').run('old-card',1,'テストア',2,1,new Date(now).toISOString());
  const saved=await scheduledAutomaticPrediction(db,now);assert.equal(saved.saved,1,JSON.stringify(saved));
+ assert.equal(saved.snapshot.runners.find(r=>r.horseName==='テストア').assessment.validFinishRows,3);
  const independent=await readAutomaticPrediction(db,race);assert.equal(independent.integrityVerified,true);assert.equal(await sha256(JSON.stringify(independent.snapshot)),saved.snapshotSha256);
  now+=61000;await ensureProspectiveSealTables(db);
  const locked=await scheduledSavedAutomaticSeal(db,{enabled:true,now:()=>now});assert.equal(locked.sealed,1,JSON.stringify(locked));

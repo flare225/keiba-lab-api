@@ -24,7 +24,7 @@ export async function upcomingOfficialHistoryPlan(db,stamp=Date.now(),sources=EX
  }).sort((a,b)=>a.race_date.localeCompare(b.race_date)||Number(targets.has(b.race_key))-Number(targets.has(a.race_key))||Number(b.race_no===11)-Number(a.race_no===11)||b.race_no-a.race_no||a.venue.localeCompare(b.venue))
  .map(r=>({raceKey:r.race_key,date:r.race_date,venue:r.venue,raceNo:r.race_no,raceName:r.race_name,missingHorses:Number(r.missing_horses),targetMain:targets.has(r.race_key)||r.race_no===11}));
 }
-export async function collectUpcomingOfficialHistory(db,{now=Date.now,plan=upcomingOfficialHistoryPlan,status=collectionStatus,collect=collectHistoryBatch,previousCardSelection=null}={}){
+export async function collectUpcomingOfficialHistory(db,{now=Date.now,plan=upcomingOfficialHistoryPlan,status=collectionStatus,collect=collectHistoryBatch,previousCardSelection=null,rotationState={cursor:0}}={}){
  const stamp=now(),all=await plan(db,stamp),today=jstDay(stamp);
  const current=all.filter(r=>r.date===today),eligible=current.length?current:all;
  // A witnessed saved formal card gets its existing handoff turn even without
@@ -34,7 +34,12 @@ export async function collectUpcomingOfficialHistory(db,{now=Date.now,plan=upcom
  const queue=handed?[handed,...eligible.filter(r=>r!==handed)]:eligible;
  // Always check the most urgent card; rotate five other cards so unknown
  // profiles in the first few races cannot starve the remainder of the week.
- const rest=queue.slice(1),offset=rest.length?(Math.floor(stamp/360000)*5)%rest.length:0;
+ const rest=queue.slice(1),cursor=Number.isSafeInteger(rotationState.cursor)&&rotationState.cursor>=0?rotationState.cursor:0;
+ const offset=rest.length?cursor%rest.length:0;
+ // Advance by inspected windows, never wall-clock buckets: real 18/36-minute
+ // opportunities can alias the old time stride and omit the same cards forever.
+ rotationState.cursor=rest.length?(offset+5)%rest.length:0;
+ rotationState.inspected=true;
  const window=queue.length?[queue[0],...rest.slice(offset),...rest.slice(0,offset)].slice(0,6):[];
  for(const race of window){
   const input={date:race.date,venue:race.venue,raceNo:race.raceNo,historyLimit:3,batchSize:1,storedBatchSize:2};

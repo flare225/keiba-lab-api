@@ -111,6 +111,27 @@ test('deadline priority, per-page retry exclusion, urgent override and aged dist
  sun.enqueued=FIXTURE_STAMP-7*3600000;p=planSharedPages([sat,sun],[],FIXTURE_STAMP);assert.equal(p.jobs[0].url,sun.rootUrl);
  sat.start=FIXTURE_STAMP+3600000;p=planSharedPages([sat,sun],[],FIXTURE_STAMP);assert.equal(p.jobs[0].url,sat.rootUrl);
 });
+test('shared acquisition prioritizes an equally waiting same-day main without overriding urgent or older work',async()=>{
+ const stamp=Date.parse('2026-11-06T09:10:00+09:00');
+ const race=(date,raceNo,hour)=>({date,venue:'東京',raceNo,startAt:`${date}T${hour}:00:00+09:00`,enqueuedAt:new Date(stamp).toISOString(),rootUrl:cardUrl({date,venue:'東京',raceNo})});
+ const flat=race('2026-11-07',1,'10'),main=race('2026-11-07',11,'15'),later=race('2026-11-08',11,'15');
+ const parsed=r=>({...r,start:Date.parse(r.startAt),enqueued:stamp});
+ assert.equal(planSharedPages([flat,main,later].map(parsed),[],stamp).jobs[0].url,main.rootUrl);
+ // A not-due main is excluded before sorting; no private retry is bypassed.
+ assert.equal(planSharedPages([flat,main].map(parsed),[{page_url:main.rootUrl,status:'http-or-source-failed',next_at:stamp+1}],stamp).jobs[0].url,flat.rootUrl);
+ const old={...parsed(flat),enqueued:stamp-7*3600000};
+ assert.equal(planSharedPages([parsed(main),old],[],stamp).jobs[0].url,flat.rootUrl);
+ const urgent={...parsed(flat),start:stamp+3600000};
+ assert.equal(planSharedPages([parsed(main),urgent],[],stamp).jobs[0].url,flat.rootUrl);
+ assert.equal(planSharedPages([parsed(later),parsed(flat)],[],stamp).jobs[0].url,flat.rootUrl);
+ // Same bound and real card writer: one request saves the chosen main only.
+ const {db,sql}=await fixtureDatabase(),requests=[];
+ const out=await runSharedPageStep(db,{scope:'2026-11-06',races:[flat,main,later]},{now:()=>stamp,fetcher:fixtureFetcher(new Map([[main.rootUrl,drawnHtml(main)]]),requests)});
+ assert.deepEqual(requests,[main.rootUrl]);assert.equal(out.formalCardSaved,true);
+ assert.equal(sql.prepare('SELECT race_key FROM jra_races').get().race_key,'2026-11-07:東京:11');
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_runners').get().n,2);
+ sql.close();
+});
 test('finished/complete races and wrong-date card links never become fetchable formal cards',async()=>{
  const {db,sql}=await fixtureDatabase(),race=racesFixture()[0];let calls=0;
  const r=await runSharedPageStep(db,input([{...race,formalSaved:true}]),{now:()=>FIXTURE_STAMP,fetcher:()=>calls++});assert.equal(r.status,'complete');assert.equal(calls,0);

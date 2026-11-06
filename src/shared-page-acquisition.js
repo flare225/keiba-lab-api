@@ -112,7 +112,10 @@ export function planSharedPages(races,rows,stamp,parserVersion=SHARED_PAGE_POLIC
   const pastOnly=upcoming.length===0;
   const since=Number(job.row?.last_attempt_at)||Math.min(...job.races.map(r=>r.enqueued));
   const focus=pastOnly?Math.min(...job.races.map(r=>completionOrder.get(key(r))??completionOrder.size)):0;
-  return[pastOnly?2:urgent?0:1,focus,urgent?start:Math.min(start,since+SHARED_PAGE_POLICY.maxWaitMs),start,job.url];
+  // Equal wait deadlines on the same day should complete published main
+  // cards first. Urgency, older work and cross-day fairness still lead.
+  const mainFocus=!pastOnly&&!urgent&&job.races.some(r=>r.raceNo===11&&day(r.start)===day(start))?0:1;
+  return[pastOnly?2:urgent?0:1,focus,urgent?start:Math.min(start,since+SHARED_PAGE_POLICY.maxWaitMs),day(start),mainFocus,start,job.url];
  };
  const compare=(a,b)=>{const x=priority(a),y=priority(b);for(let i=0;i<x.length;i++){if(x[i]!==y[i])return typeof x[i]==='number'?x[i]-y[i]:x[i].localeCompare(y[i]);}return 0;};
  return{jobs:[...jobs.values()].sort(compare),complete,waiting};

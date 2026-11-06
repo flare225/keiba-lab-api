@@ -37,7 +37,7 @@ export async function collectUpcomingOfficialHistory(db,{now=Date.now,plan=upcom
  const rest=queue.slice(1),offset=rest.length?(Math.floor(stamp/360000)*5)%rest.length:0;
  const window=queue.length?[queue[0],...rest.slice(offset),...rest.slice(0,offset)].slice(0,6):[];
  for(const race of window){
-  const input={date:race.date,venue:race.venue,raceNo:race.raceNo,historyLimit:3,batchSize:1};
+  const input={date:race.date,venue:race.venue,raceNo:race.raceNo,historyLimit:3,batchSize:1,storedBatchSize:2};
   const coverage=await status(db,input,stamp);
   if(!coverage.runners.some(r=>r.storedRows<3&&r.due))continue;
   return {...await collect(db,input,{now}),stage:'upcoming-official-missing-history',priorityRaceKey:race.raceKey};

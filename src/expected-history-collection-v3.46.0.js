@@ -82,12 +82,12 @@ export async function collectUpcomingExpectedHistory(db,deps={}){
   const formal=await rows(db,'SELECT r.race_key FROM jra_races r WHERE r.race_date=? AND r.venue=? AND r.race_no=? AND r.runner_count>0 AND r.runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key)',[source.date,source.venue,source.raceNo]);
   if(formal.length){
    if(deps.knownProfilesOnly&&!deps.includeFormalHistory)continue;
-   if(source.priority===0||source.snapshotId?.startsWith('registered:')){const r=await collectHistoryBatch(db,{date:source.date,venue:source.venue,raceNo:source.raceNo,historyLimit:3,batchSize:1},deps),provisionalEvaluationQueued=await markReevaluation(source,r);if(r.attempted||r.status==='cooldown')return {...r,stage:'main-race-official-history',...(r.attempted||r.externalRequests?{expectedHistoryWorkKind:'known'}:{}),provisionalEvaluationQueued};waiting.push({raceKey:source.raceKey,status:r.status,pendingHorses:r.before?.pendingHorses,provisionalEvaluationQueued});}
+   if(source.priority===0||source.snapshotId?.startsWith('registered:')){const r=await collectHistoryBatch(db,{date:source.date,venue:source.venue,raceNo:source.raceNo,historyLimit:3,batchSize:1,storedBatchSize:2},deps),provisionalEvaluationQueued=await markReevaluation(source,r);if(r.attempted||r.status==='cooldown')return {...r,stage:'main-race-official-history',...(r.attempted||r.externalRequests?{expectedHistoryWorkKind:'known'}:{}),provisionalEvaluationQueued};waiting.push({raceKey:source.raceKey,status:r.status,pendingHorses:r.before?.pendingHorses,provisionalEvaluationQueued});}
    continue;
   }
   const context=await expectedHistoryContext(db,source,stamp);
   if(deps.knownProfilesOnly&&!context.runners.some(r=>r.profile_url))continue;
-  const r=await collectHistoryBatch(db,{historyLimit:3,batchSize:1},{...deps,context});
+  const r=await collectHistoryBatch(db,{historyLimit:3,batchSize:1,storedBatchSize:2},{...deps,context});
   const provisionalEvaluationQueued=await markReevaluation(source,r);
   if(r.attempted||r.status==='cooldown')return {...r,stage:'expected-runner-prior-history',...(r.attempted||r.externalRequests?{expectedHistoryWorkKind:'known'}:{}),snapshotId:source.snapshotId,authoritativeForCard:false,provisionalEvaluationQueued};
   waiting.push({raceKey:source.raceKey||`${source.date}:${source.venue}:${source.raceNo}`,snapshotId:source.snapshotId,status:r.status,pendingHorses:r.before?.pendingHorses,missingProfileLinks:r.before?.runners.filter(h=>h.storedRows<3&&!h.profileUrl).map(h=>h.horseName),provisionalEvaluationQueued});

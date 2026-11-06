@@ -32,13 +32,13 @@ test('natural collector reuses evidence-bound body, saves rows, reads back and o
  sql.prepare('DELETE FROM lab_history_collection_receipts').run();sql.prepare('DELETE FROM jra_past_performances').run();sql.prepare('UPDATE lab_history_collection_budget SET locked_until=?').run(now()+3600000);assert.equal((await collectHistoryBatch(db,input,{now,fetcher})).status,'cooldown');assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_past_performances').get().n,0);sql.close();
 });
 
-async function predrawFixture(count=3){
+async function predrawFixture(count=3,names=['対象馬']){
  const sql=new DatabaseSync(':memory:');
  const db={prepare(q){const w=(a=[])=>({bind(...v){return w(v)},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}},async run(){return{meta:{changes:Number(sql.prepare(q).run(...a).changes)}}}});return w()},async batch(ss){sql.exec('BEGIN');try{const out=[];for(const s of ss)out.push(await s.run());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}};
- const source={date:'2026-11-07',venue:'京都',raceNo:11,snapshotId:'confirmed-predraw:2026-11-07:京都:11',names:['対象馬'],priority:50};
+ const source={date:'2026-11-07',venue:'京都',raceNo:11,snapshotId:'confirmed-predraw:2026-11-07:京都:11',names,priority:50};
  const sourceUrl='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202605011120261107%2F13';
  const priors=Array.from({length:count},(_,i)=>'<td class="past p'+(i+1)+'">'+cell.replaceAll('10月2日',(10-i)+'月2日')+'</td>').join('');
- const html='<table><caption>2026年11月7日 京都<img alt="11レース"></caption><thead></thead><tbody><tr><td class="waku"></td><td class="num"></td><td class="horse"><div class="name_line"><div class="name"><a href="'+url+'">対象馬</a></div></div></td><td class="jockey"><p class="age">牡3/鹿</p><p class="weight">56.0</p><p class="jockey">騎手</p></td>'+priors+'</tr></tbody></table>';
+ const html='<table><caption>2026年11月7日 京都<img alt="11レース"></caption><thead></thead><tbody>'+names.map((name,i)=>'<tr><td class="waku"></td><td class="num"></td><td class="horse"><div class="name_line"><div class="name"><a href="'+url.replace('100001',String(100001+i))+'">'+name+'</a></div></div></td><td class="jockey"><p class="age">牡3/鹿</p><p class="weight">56.0</p><p class="jockey">騎手</p></td>'+(Array.isArray(count)?Array.from({length:count[i]},(_,j)=>'<td class="past p'+(j+1)+'">'+cell.replaceAll('10月2日',(10-j)+'月2日')+'</td>').join(''):priors)+'</tr>').join('')+'</tbody></table>';
  const now=()=>Date.parse('2026-11-05T09:42:52.196Z'),hash=await sha256(html);
  await saveConfirmedPredraw(db,html,sourceUrl,source,{observedAt:new Date(now()).toISOString()});
  sql.exec('CREATE TABLE lab_shared_page_bodies_v1(scope_key TEXT,page_url TEXT,sha256 TEXT,body_html TEXT,byte_length INTEGER,observed_at INTEGER,http_status INTEGER);CREATE TABLE lab_provisional_queue_v1(race_key TEXT,status TEXT,next_at INTEGER,error TEXT)');
@@ -81,4 +81,36 @@ test('short pre-draw history keeps profile fallback and shared cooldown prevents
  sql.prepare("UPDATE lab_history_collection_budget SET next_batch_at=? WHERE name='jra-history'").run(now()+3600000);
  const blocked=await collectHistoryBatch(db,{historyLimit:3,batchSize:1},{now,context,fetcher:()=>assert.fail('cooldown forbids network')});
  assert.equal(blocked.status,'cooldown');assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_past_performances').get().n,0);sql.close();
+});
+
+
+test('natural pre-draw completion saves at most two verified cached horses without HTTP and wakes first evaluation',async()=>{
+ const {sql,db,source,now,hash}=await predrawFixture(3,['対象馬','隣馬','三頭目']);
+ sql.prepare("UPDATE lab_provisional_queue_v1 SET status='awaiting-data'").run();
+ const out=await collectUpcomingExpectedHistory(db,{sources:[source],now,knownProfilesOnly:true,fetcher:()=>assert.fail('cached expansion must never fetch')});
+ assert.equal(out.attempted,2);assert.equal(out.addedRows,6);assert.equal(out.externalRequests,0);assert.equal(out.after.pendingHorses,1);
+ assert.deepEqual(out.results.map(x=>[x.horseName,x.reusedStoredCard,x.sourceSha256]),[['対象馬',true,hash],['隣馬',true,hash]]);
+ assert.equal(out.provisionalEvaluationQueued,1);assert.equal(sql.prepare('SELECT status,next_at FROM lab_provisional_queue_v1').get().status,'awaiting-data');
+ assert.equal(sql.prepare("SELECT COUNT(*) n FROM jra_past_performances WHERE horse_name='三頭目'").get().n,0);
+ sql.close();
+});
+
+test('cached expansion never fetches short second history; external first horse keeps original one-horse bound',async()=>{
+ for(const counts of [[3,2],[2,3]]){
+  const {sql,db,source,now}=await predrawFixture(counts,['対象馬','隣馬']);let calls=0;
+  const context=await expectedHistoryContext(db,source,now());
+  const out=await collectHistoryBatch(db,{historyLimit:3,batchSize:1,storedBatchSize:2},{now,context,fetcher:async()=>{calls++;return new Response('',{status:403});}});
+  assert.equal(out.attempted,1);assert.equal(out.externalRequests,counts[0]===3?0:1);assert.equal(calls,out.externalRequests);
+  assert.equal(out.addedRows,counts[0]===3?3:0);assert.equal(sql.prepare("SELECT COUNT(*) n FROM lab_history_collection_receipts WHERE horse_name='隣馬'").get().n,0);sql.close();
+ }
+});
+
+test('stored expansion remains opt-in and cannot import during shared lease or cooldown',async()=>{
+ for(const mode of ['default','lease','cooldown']){
+  const {sql,db,source,now}=await predrawFixture(3,['対象馬','隣馬']);const context=await expectedHistoryContext(db,source,now());
+  const {ensureCollectionTables}=await import('../src/history-collection-v3.37.0.js');await ensureCollectionTables(db);
+  if(mode!=='default')sql.prepare('UPDATE lab_history_collection_budget SET '+(mode==='lease'?'locked_until':'next_batch_at')+'=?').run(now()+3600000);
+  const out=await collectHistoryBatch(db,{historyLimit:3,batchSize:1,...(mode==='default'?{}:{storedBatchSize:2})},{now,context,fetcher:()=>assert.fail('no HTTP')});
+  assert.equal(out.attempted,mode==='default'?1:0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_past_performances').get().n,mode==='default'?3:0);sql.close();
+ }
 });

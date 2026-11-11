@@ -3,6 +3,7 @@ import {ensureCollectionTables,officialUrl} from './history-collection-v3.37.0.j
 import {expectedAge} from './expected-runner-preview-v3.30.0.js';
 import {extractProfileLinks} from './collection-profile-parser-v3.32.0.js';
 import {parsePrecardHorsePage} from './precard-context-v3.8.5.js';
+const quota=e=>e?.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e));
 export async function discoverExpectedProfiles(db,source,deps={}){
  const page=await readExpectedProfilePage(db,source);
  if(!page)return discoverExpectedProfilePage(db,source,deps);
@@ -15,7 +16,7 @@ export async function discoverExpectedProfiles(db,source,deps={}){
  if(Number(previous?.next_attempt_at)>stamp)return {ok:true,status:'discovery-not-due',externalRequests:0};
  const token=crypto.randomUUID(),claim=await db.prepare("UPDATE lab_history_collection_budget SET locked_until=?,lock_token=? WHERE name='jra-history' AND locked_until<=? AND next_batch_at<=?").bind(stamp+120000,token,stamp,stamp).run();
  if(Number(claim.meta?.changes)!==1)return {ok:true,status:'cooldown',externalRequests:0};
- let pause=60000,next=stamp+86400000;
+ let pause=60000,next=stamp+86400000,quotaStopped=false;
  try{
   const response=await (deps.fetcher||fetch)(url,{headers:{'user-agent':'KEIBA-LABO bounded official expected-profile discovery',accept:'text/html'},signal:AbortSignal.timeout(10000),redirect:'follow'});
   if(response.url&&response.url!==url)throw Error('JRA出走馬情報の取得元が変更されています。');
@@ -30,6 +31,11 @@ export async function discoverExpectedProfiles(db,source,deps={}){
   await db.batch(valid.map(h=>db.prepare('INSERT INTO lab_expected_jra_profile_links VALUES(?,?,?,?,?,?) ON CONFLICT(snapshot_id,horse_name) DO UPDATE SET age=excluded.age,profile_url=excluded.profile_url,source_url=excluded.source_url,checked_at=excluded.checked_at').bind(source.snapshotId,h.name,h.age,officialUrl(links.get(h.name),true),url,now())));
   await db.prepare('INSERT OR REPLACE INTO lab_expected_profile_discovery VALUES(?,?,?,?,?)').bind(source.snapshotId,now(),next,'checked',null).run();
   return {ok:true,status:'discovered',stage:'expected-official-profile-discovery',snapshotId:source.snapshotId,profileLinksFound:valid.length,externalRequests:1,officialCardsCreated:false};
- }catch(e){next=now()+3600000;await db.prepare('INSERT OR REPLACE INTO lab_expected_profile_discovery VALUES(?,?,?,?,?)').bind(source.snapshotId,now(),next,'failed',String(e.message||e)).run();return {ok:false,status:'failed',externalRequests:1,error:String(e.message||e)};
- }finally{await db.prepare("UPDATE lab_history_collection_budget SET locked_until=0,next_batch_at=?,lock_token=NULL WHERE name='jra-history' AND lock_token=?").bind(now()+pause,token).run();}
+ }catch(e){
+  if(quota(e)){quotaStopped=true;throw e;}
+  next=now()+3600000;
+  try{await db.prepare('INSERT OR REPLACE INTO lab_expected_profile_discovery VALUES(?,?,?,?,?)').bind(source.snapshotId,now(),next,'failed',String(e.message||e)).run();}
+  catch(writeError){if(quota(writeError))quotaStopped=true;throw writeError;}
+  return {ok:false,status:'failed',externalRequests:1,error:String(e.message||e)};
+ }finally{if(!quotaStopped)await db.prepare("UPDATE lab_history_collection_budget SET locked_until=0,next_batch_at=?,lock_token=NULL WHERE name='jra-history' AND lock_token=?").bind(now()+pause,token).run();}
 }

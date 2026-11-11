@@ -31,6 +31,15 @@ test('shared safety wait exits before target plans; formal card goes only to its
  const blocked=gateDb({blocked:stamp+3600000});const a=await collectFocusedRace(blocked,target,{}, {now:()=>stamp});assert.equal(a.status,'cooldown');assert.equal(blocked.queries.length,1);
  const db=gateDb({formal:true});let calls=0;const r=await collectFocusedRace(db,target,{}, {now:()=>stamp,collect:async(_,input)=>{calls++;assert.deepEqual(input,{...target,historyLimit:3,batchSize:1,storedBatchSize:2});return{status:'collected',savedRows:1,externalRequests:0}},cards:()=>assert.fail('saved card must not be refetched'),sources:()=>assert.fail('formal history needs no roster scan')});assert.equal(calls,1);assert.equal(r.historyWorkStage,'history');
 });
+test('ordinary prediction/LOCK failures cannot block target supplementation, but quota stops every later stage',async()=>{
+ for(const phase of ['prediction','lock'])for(const quota of [false,true]){
+  const calls=[],error=Object.assign(Error('stage failed'),quota?{d1DailyReadLimit:true}:{});
+  const deps={now:()=>stamp,predict:async()=>{calls.push('prediction');if(phase==='prediction')throw error},seal:async()=>{calls.push('lock');if(phase==='lock')throw error},coordinate:async(e,env,o)=>o.jobs.history({}),collect:async()=>{calls.push('history');return{status:'collected',externalRequests:1}}};
+  const run=runFocusedScheduled(sourceEvent,{DB:{}},target,deps);
+  if(quota){await assert.rejects(run,e=>e===error);assert.deepEqual(calls,phase==='prediction'?['prediction']:['prediction','lock']);}
+  else{const r=await run;assert.deepEqual(calls,['prediction','lock','history']);assert.equal(r.stageErrors[0].stage,phase);}
+ }
+});
 test('target-only card/history handoff cannot fall through to another race or netkeiba roster',async()=>{
  const db=gateDb(),calls=[];
  const deps={now:()=>stamp,shared:true,sources:async(_,t)=>{assert.deepEqual(t,target);return[]},expected:async(_,o)=>{calls.push('history');assert.deepEqual(o.sources,[]);return{status:'idle',externalRequests:0}},cards:async(_,input)=>{calls.push('card');assert.equal(input.date,target.date);assert.equal(input.venue,target.venue);assert.equal(input.raceNo,11);return{status:'confirmed-predraw-saved',attempted:true,externalRequests:1}}};

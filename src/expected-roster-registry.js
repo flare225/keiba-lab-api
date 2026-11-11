@@ -42,7 +42,8 @@ export async function readExpectedRosterSnapshot(db,input){
  if(snapshot.date!==t.date||snapshot.venue!==t.venue||snapshot.raceNo!==t.raceNo||typeof snapshot.sourceText!=='string'||await sha256(snapshot.sourceText)!==row.source_sha256)throw Error('保存名簿の根拠・対象が一致しません。');
  return{ok:true,available:true,integrityVerified:true,snapshotSha256:hash,sourceSha256:row.source_sha256,savedAt:row.stored_at,snapshotJson:row.record_json,snapshot,formalCardSaved:false,externalRequests:0,guardrails:{readOnly:true,eligibleForProspectiveSeal:false,horseNumbersNeverInferred:true}};
 }
-export async function storedExpectedSources(db,from,to){
- let rows;try{rows=(await db.prepare('SELECT snapshot_id,record_json FROM lab_expected_roster_registry WHERE substr(race_key,1,10) BETWEEN ? AND ? ORDER BY stored_at DESC,rowid DESC LIMIT 120').bind(from,to).all()).results||[]}catch(e){if(/no such table/.test(String(e)))return [];throw e;}
+export async function storedExpectedSources(db,from,to,target=null){
+ const t=target?targetInput(target):null;
+ let rows;try{rows=(await db.prepare(`SELECT snapshot_id,record_json FROM lab_expected_roster_registry WHERE ${t?'race_key=?':'substr(race_key,1,10) BETWEEN ? AND ?'} ORDER BY stored_at DESC,rowid DESC LIMIT 120`).bind(...(t?[`${t.date}:${t.venue}:${t.raceNo}`]:[from,to])).all()).results||[]}catch(e){if(/no such table/.test(String(e)))return [];throw e;}
  const result=[],seen=new Set();for(const row of rows){if(await sha256(row.record_json)!==row.snapshot_id)throw Error('登録・想定名簿のハッシュが一致しません。');const s=JSON.parse(row.record_json),key=`${s.date}:${s.venue}:${s.raceNo}`;if(seen.has(key))continue;seen.add(key);result.push({...s,sourceText:undefined,runners:undefined,snapshotId:'registered:'+row.snapshot_id,raceKey:key,names:s.runners.map(r=>r.horseName),ages:Object.fromEntries(s.runners.map(r=>[r.horseName,r.age])),priority:50,rosterBasis:'expected-snapshot'});}return result;
 }

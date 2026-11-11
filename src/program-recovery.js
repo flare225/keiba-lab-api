@@ -1,12 +1,14 @@
 import {ensureCollectionTables,jstDay} from './history-collection-v3.37.0.js';
+import {targetInput} from './race-history-assessment-v3.31.0.js';
 import {ensureProgramTable} from './index-v3.4.0.js';
 import {parseArchiveProgram} from './archive-program-parser-v3.38.0.js';
 import {jraPageRequest} from './jra-page-request.js';
 import {sha256} from './card-evidence.js';
 const TABLE='lab_program_recovery_v1',CLOCK='lab_program_recovery_clock_v1';
 const quota=e=>e?.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e));
-export async function recoverMissingPrograms(db,{now=Date.now,fetcher=fetch,parse=parseArchiveProgram}={}){
+export async function recoverMissingPrograms(db,{now=Date.now,fetcher=fetch,parse=parseArchiveProgram,target=null}={}){
  const stamp=now(),today=jstDay(stamp),dates=Array.from({length:8},(_,i)=>new Date(Date.parse(today+'T00:00:00Z')+i*86400000).toISOString().slice(0,10));
+ if(target){const t=targetInput(target);if(!dates.includes(t.date))throw Error('Focused program date outside upcoming window');dates.splice(0,dates.length,t.date);}
  await db.prepare(`CREATE TABLE IF NOT EXISTS ${CLOCK}(name TEXT PRIMARY KEY,next_attempt_at INTEGER NOT NULL)`).run();
  await db.prepare(`INSERT OR IGNORE INTO ${CLOCK} VALUES('program',0)`).run();
  const clock=await db.prepare(`SELECT next_attempt_at FROM ${CLOCK} WHERE name='program'`).first();if(Number(clock?.next_attempt_at)>stamp)return null;

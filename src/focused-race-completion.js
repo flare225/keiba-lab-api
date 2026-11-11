@@ -1,0 +1,74 @@
+import {targetInput} from './race-history-assessment-v3.31.0.js';
+import {jstDay,collectHistoryBatch} from './history-collection-v3.37.0.js';
+import {collectMissingOfficialCard} from './missing-official-cards.js';
+import {recoverMissingPrograms} from './program-recovery.js';
+import {storedExpectedSources} from './expected-roster-registry.js';
+import {readConfirmedPredraw} from './confirmed-predraw-roster.js';
+import {confirmedPredrawSource} from './confirmed-predraw-history-source.js';
+import {collectUpcomingExpectedHistory} from './expected-history-collection-v3.46.0.js';
+import {discoverSharedSelectedCard} from './shared-page-acquisition.js';
+import {runSourceCoordinator} from './source-coordinator-v3.40.0.js';
+import {scheduledAutomaticPrediction} from './automatic-pre-race-prediction.js';
+import {scheduledSavedAutomaticSeal} from './saved-automatic-seal-queue.js';
+import {scheduledProvisionalPrediction} from './provisional-prediction-queue.js';
+
+// Explicit, temporary one-race scope. Invalid/expired scope never falls back to
+// the broad queue. Source slots, persisted retry clocks and budget remain owned
+// by the existing collectors and coordinator.
+export function focusedRaceTarget(value){
+ if(value==null||value==='')return null;
+ const v=JSON.parse(value),t=targetInput(v),expires=Date.parse(v.expiresAt);
+ if(!Number.isFinite(expires)||jstDay(expires)!==t.date)throw Error('Focused race expiry must be on its race date');
+ return {...t,expiresAt:new Date(expires).toISOString()};
+}
+export function focusScheduleState(target,event,stamp){
+ const today=jstDay(stamp),until=jstDay(stamp+7*86400000);
+ if(target.date<today||target.date>until||stamp>=Date.parse(target.expiresAt))return 'focus-expired-or-outside-window';
+ return ['*/3 * * * *','0 * * * *'].includes(event.cron)?'active':'focus-background-deferred';
+}
+const key=t=>`${t.date}:${t.venue}:${t.raceNo}`;
+const worked=r=>r&&(r.attempted||r.externalRequests||r.saveMayHaveSucceeded||r.formalCardSaved||['roster-saved','partial-roster-saved','roster-reconciled','cooldown','paused','lease-unavailable','shared-gate-unavailable'].includes(r.status));
+async function optionalFirst(db,sql,args){try{return await db.prepare(sql).bind(...args).first();}catch(e){if(/no such table/i.test(String(e)))return null;throw e;}}
+export async function focusedStoredSources(db,target,stamp){
+ const predraw=await readConfirmedPredraw(db,target),confirmed=predraw&&confirmedPredrawSource(predraw,stamp);
+ return confirmed?[confirmed]:(await storedExpectedSources(db,target.date,target.date,target)).filter(s=>s.provider==='JRA');
+}
+export async function collectFocusedRace(db,target,context={},deps={}){
+ const now=deps.now||Date.now,stamp=now();
+ const gate=await optionalFirst(db,"SELECT next_batch_at,locked_until FROM lab_history_collection_budget WHERE name='jra-history'",[]);
+ if(!gate)return{ok:true,status:'shared-gate-unavailable',externalRequests:0};
+ const wait=Math.max(Number(gate.next_batch_at)||0,Number(gate.locked_until)||0);
+ if(wait>stamp)return{ok:true,status:'cooldown',externalRequests:0,nextBatchAt:new Date(wait).toISOString()};
+ const program=await optionalFirst(db,'SELECT start_time FROM jra_race_program WHERE race_date=? AND venue=? AND race_no=? LIMIT 1',[target.date,target.venue,target.raceNo]);
+ if(!program)return await(deps.programs||recoverMissingPrograms)(db,{now,target})||{ok:true,status:'focused-program-not-due',externalRequests:0};
+ const start=/^\d{2}:\d{2}$/.test(program.start_time||'')?Date.parse(`${target.date}T${program.start_time}:00+09:00`):NaN;
+ if(!Number.isFinite(start)||stamp>=start-300000)return{ok:true,status:'focus-start-unverified-or-cutoff',externalRequests:0};
+ const formal=await optionalFirst(db,'SELECT race_key FROM jra_races r WHERE race_date=? AND venue=? AND race_no=? AND runner_count>0 AND runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key) LIMIT 1',[target.date,target.venue,target.raceNo]);
+ if(formal)return{...await(deps.collect||collectHistoryBatch)(db,{...target,historyLimit:3,batchSize:1,storedBatchSize:2},{now}),historyWorkStage:'history',focusRaceKey:key(target)};
+ const history=async()=>{
+  const sources=await(deps.sources||focusedStoredSources)(db,target,stamp);
+  return(deps.expected||collectUpcomingExpectedHistory)(db,{now,sources,previousExpectedHistoryWorkKind:context.previousExpectedHistoryWorkKind});
+ };
+ if(context.previousHistoryWorkStage==='acquisition'){
+  const r=await history();if(worked(r))return{...r,historyWorkStage:'history'};
+ }
+ const card=await(deps.cards||collectMissingOfficialCard)(db,{...target,publicationWindowOnly:true},{now,previousCardSelection:context.previousCardSelection,...(deps.shared?{discover:discoverSharedSelectedCard}:{})});
+ if(worked(card)||card?.reusedBody)return{...card,historyWorkStage:'acquisition'};
+ if(context.previousHistoryWorkStage!=='acquisition'){
+  const r=await history();if(worked(r))return{...r,historyWorkStage:'history'};
+ }
+ // No supplementary netkeiba roster or unrelated calendar fallback.
+ return{ok:true,status:'focus-awaiting-jra-card-or-profiles',historyWorkStage:'history',focusRaceKey:key(target),externalRequests:0};
+}
+export async function runFocusedScheduled(event,env,target,deps={}){
+ const now=deps.now||Date.now,stamp=now(),state=focusScheduleState(target,event,stamp);
+ if(state!=='active')return{ok:true,status:state,focusRaceKey:key(target),externalRequests:0};
+ const db=env.DB;
+ if(event.cron==='0 * * * *')return(deps.provisional||scheduledProvisionalPrediction)(db,stamp,{prepareRoster:async()=>({status:'focus-no-broad-seeding'}),sources:()=>focusedStoredSources(db,target,stamp)});
+ await(deps.predict||scheduledAutomaticPrediction)(db,stamp,target);
+ await(deps.seal||scheduledSavedAutomaticSeal)(db,{enabled:env.LAB_SAVED_AUTOMATIC_LOCK==='true',now,target});
+ const deferred=async()=>({ok:true,status:'focus-background-deferred',focusRaceKey:key(target),externalRequests:0});
+ // Retain the existing 3-lane rotation: do not turn deferred archive/result
+ // slots into extra source requests while reserving DB work for this target.
+ return(deps.coordinate||runSourceCoordinator)(event,env,{now,jobs:{archive:deferred,results:deferred,history:context=>(deps.collect||collectFocusedRace)(db,target,context,{now,shared:env.LAB_SHARED_PAGE_ACQUISITION==='true'})}});
+}

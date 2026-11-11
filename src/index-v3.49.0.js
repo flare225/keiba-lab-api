@@ -1,3 +1,4 @@
+import {focusedRaceTarget,focusScheduleState,runFocusedScheduled} from './focused-race-completion.js';
 import {readWithdrawalEvidence} from './reviewed-withdrawal-card.js';
 import {readMissingRosterEvidence} from './missing-roster-evidence.js';
 import {readSharedPageEvidence} from './shared-page-evidence.js';
@@ -319,8 +320,11 @@ export default {
  },
  async scheduled(event,env,ctx){
   if(!shouldRunScheduled(event))return;
+  const focus=focusedRaceTarget(env.LAB_COMPLETION_FOCUS);
+  if(focus&&focusScheduleState(focus,event,Date.now())!=='active')return;
   return runWithScheduledReadBudget(env.DB,async db=>{
   const budgetEnv={...env,DB:db};
+  if(focus)return runFocusedScheduled(event,budgetEnv,focus);
   if(event.cron==='*/3 * * * *'){
    try{await scheduledAutomaticPrediction(db);}catch(e){if(e.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;console.error('automatic-prediction',String(e));}
    // Explicit activation approval is separate from deploying the read adapter.

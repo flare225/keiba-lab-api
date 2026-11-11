@@ -72,10 +72,11 @@ export async function captureAutomaticPrediction(db,input,now=Date.now()){
  return{...read,saved:Number(result.meta?.changes)||0,externalRequests:0};
  }catch(e){e.saveMayHaveSucceeded=true;throw e;}
 }
-export async function scheduledAutomaticPrediction(db,now=Date.now()){
+export async function scheduledAutomaticPrediction(db,now=Date.now(),target=null){
+ const focus=target?targetInput(target):null;
  await ensure(db);const today=jstDay(now),since=new Date(Date.parse(today+'T00:00:00Z')-7*86400000).toISOString().slice(0,10),until=new Date(Date.parse(today+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);
  // One indexed, bounded queue, independent of user marks and frozen experiments.
- const rows=(await db.prepare(`SELECT r.race_date AS date,r.venue,r.race_no AS raceNo,(a.race_key IS NOT NULL) AS existingSnapshot FROM jra_races r JOIN jra_race_program p ON p.race_date=r.race_date AND p.venue=r.venue AND p.race_no=r.race_no LEFT JOIN ${TABLE} a ON a.race_key=r.race_date||':'||r.venue||':'||r.race_no LEFT JOIN ${RECEIPTS} c ON c.race_key=r.race_date||':'||r.venue||':'||r.race_no WHERE r.race_date BETWEEN ? AND ? AND r.runner_count>0 AND COALESCE(c.next_attempt_at,0)<=? AND ((a.race_key IS NOT NULL AND COALESCE(c.status,'')<>'saved') OR (a.race_key IS NULL AND r.race_date>=? AND datetime(p.race_date||'T'||p.start_time||':00+09:00')>datetime(?,'unixepoch','+5 minutes'))) ORDER BY COALESCE(c.next_attempt_at,0),r.race_date,p.start_time,r.venue,r.race_no LIMIT 1`).bind(since,until,now,today,now/1000).all()).results||[];
+ const rows=(await db.prepare(`SELECT r.race_date AS date,r.venue,r.race_no AS raceNo,(a.race_key IS NOT NULL) AS existingSnapshot FROM jra_races r JOIN jra_race_program p ON p.race_date=r.race_date AND p.venue=r.venue AND p.race_no=r.race_no LEFT JOIN ${TABLE} a ON a.race_key=r.race_date||':'||r.venue||':'||r.race_no LEFT JOIN ${RECEIPTS} c ON c.race_key=r.race_date||':'||r.venue||':'||r.race_no WHERE r.race_date BETWEEN ? AND ? ${focus?'AND r.race_date=? AND r.venue=? AND r.race_no=?':''} AND r.runner_count>0 AND COALESCE(c.next_attempt_at,0)<=? AND ((a.race_key IS NOT NULL AND COALESCE(c.status,'')<>'saved') OR (a.race_key IS NULL AND r.race_date>=? AND datetime(p.race_date||'T'||p.start_time||':00+09:00')>datetime(?,'unixepoch','+5 minutes'))) ORDER BY COALESCE(c.next_attempt_at,0),r.race_date,p.start_time,r.venue,r.race_no LIMIT 1`).bind(since,until,...(focus?[focus.date,focus.venue,focus.raceNo]:[]),now,today,now/1000).all()).results||[];
  if(!rows.length)return{ok:true,status:'no-due-race',saved:0,externalRequests:0};
  const queued=rows[0],t={date:queued.date,venue:queued.venue,raceNo:queued.raceNo},key=`${t.date}:${t.venue}:${t.raceNo}`;let result;
  try{

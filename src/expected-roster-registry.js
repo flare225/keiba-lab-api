@@ -1,4 +1,5 @@
 import {sha256} from './card-evidence.js';
+import {targetInput} from './race-history-assessment-v3.31.0.js';
 import {jstDay} from './history-collection-v3.37.0.js';
 export function validateExpectedRoster(input,stamp=Date.now()){
  const date=String(input.date||''),venue=input.venue,raceNo=Number(input.raceNo),observed=Date.parse(input.observedAt);
@@ -26,6 +27,20 @@ export async function saveExpectedRoster(db,input,stamp=Date.now()){
  const read=await db.prepare('SELECT record_json FROM lab_expected_roster_registry WHERE snapshot_id=?').bind(hash).first();if(!read||read.record_json!==body||await sha256(read.record_json)!==hash)throw Error('登録・想定名簿のDB読み返しに失敗しました。');
  return{ok:true,snapshotId:hash,storedRunners:record.runners.length,idempotent:Number(result.meta?.changes)!==1,formalCardSaved:false,officialIdentityVerified:false,externalRequests:0};
  }catch(e){e.saveMayHaveSucceeded=true;throw e;}
+}
+// Audit only a previously witnessed immutable version; never scan for a latest
+// roster, create a store, acquire an upstream page, or upgrade partial coverage.
+export async function readExpectedRosterSnapshot(db,input){
+ const t=targetInput(input),hash=input.snapshotSha256;
+ if(typeof hash!=='string'||!/^[a-f0-9]{64}$/.test(hash))throw Error('保存名簿SHAを確認してください。');
+ const raceKey=`${t.date}:${t.venue}:${t.raceNo}`;let row;
+ try{row=await db.prepare('SELECT snapshot_id,race_key,record_json,source_sha256,stored_at FROM lab_expected_roster_registry WHERE snapshot_id=? AND race_key=?').bind(hash,raceKey).first();}
+ catch(e){if(/no such table.*lab_expected_roster_registry/i.test(String(e)))return{ok:true,available:false,externalRequests:0};throw e;}
+ if(!row)return{ok:true,available:false,externalRequests:0};
+ if(row.snapshot_id!==hash||row.race_key!==raceKey||typeof row.record_json!=='string'||await sha256(row.record_json)!==hash)throw Error('保存名簿のハッシュ・対象が一致しません。');
+ const snapshot=JSON.parse(row.record_json);
+ if(snapshot.date!==t.date||snapshot.venue!==t.venue||snapshot.raceNo!==t.raceNo||typeof snapshot.sourceText!=='string'||await sha256(snapshot.sourceText)!==row.source_sha256)throw Error('保存名簿の根拠・対象が一致しません。');
+ return{ok:true,available:true,integrityVerified:true,snapshotSha256:hash,sourceSha256:row.source_sha256,savedAt:row.stored_at,snapshotJson:row.record_json,snapshot,formalCardSaved:false,externalRequests:0,guardrails:{readOnly:true,eligibleForProspectiveSeal:false,horseNumbersNeverInferred:true}};
 }
 export async function storedExpectedSources(db,from,to){
  let rows;try{rows=(await db.prepare('SELECT snapshot_id,record_json FROM lab_expected_roster_registry WHERE substr(race_key,1,10) BETWEEN ? AND ? ORDER BY stored_at DESC,rowid DESC LIMIT 120').bind(from,to).all()).results||[]}catch(e){if(/no such table/.test(String(e)))return [];throw e;}

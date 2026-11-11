@@ -42,6 +42,11 @@ export async function recoverMissingPrograms(db,{now=Date.now,fetcher=fetch,pars
   const counts=new Map();for(const r of programs)counts.set(r.venue,(counts.get(r.venue)||0)+1);const complete=[...counts.values()].every(n=>n===12),status=complete?'verified-published-program':'partial-published-program';
   await db.prepare(`UPDATE ${TABLE} SET status=?,next_attempt_at=?,error=NULL WHERE date=?`).bind(status,stamp+(complete?86400000:3600000),row.date).run();
   return{ok:true,status,date:row.date,missingDetected:missing.length,programRowsSaved:Number(inserted.meta?.changes)||0,readbackVerified:read.length,externalRequests:requests,meetingAbsenceInferred:false};
- }catch(e){if(quota(e)){quotaStopped=true;if(uncertain)e.saveMayHaveSucceeded=true;throw e;}await db.prepare(`UPDATE ${TABLE} SET status=?,next_attempt_at=?,error=? WHERE date=?`).bind(uncertain?'pending-readback':'source-unconfirmed',stamp+3600000,String(e.message||e),row.date).run();return{ok:false,status:uncertain?'pending-readback':'source-unconfirmed',date:row.date,externalRequests:requests,saveMayHaveSucceeded:uncertain,error:String(e.message||e),meetingAbsenceInferred:false};}
+ }catch(e){
+  if(quota(e)){quotaStopped=true;if(uncertain)e.saveMayHaveSucceeded=true;throw e;}
+  try{await db.prepare(`UPDATE ${TABLE} SET status=?,next_attempt_at=?,error=? WHERE date=?`).bind(uncertain?'pending-readback':'source-unconfirmed',stamp+3600000,String(e.message||e),row.date).run();}
+  catch(writeError){if(quota(writeError)){quotaStopped=true;if(uncertain)writeError.saveMayHaveSucceeded=true;}throw writeError;}
+  return{ok:false,status:uncertain?'pending-readback':'source-unconfirmed',date:row.date,externalRequests:requests,saveMayHaveSucceeded:uncertain,error:String(e.message||e),meetingAbsenceInferred:false};
+ }
  finally{if(!quotaStopped)await db.prepare("UPDATE lab_history_collection_budget SET locked_until=0,lock_token=NULL,next_batch_at=? WHERE name='jra-history' AND lock_token=?").bind(now()+pause,token).run();}
 }

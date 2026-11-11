@@ -65,10 +65,17 @@ export async function runFocusedScheduled(event,env,target,deps={}){
  if(state!=='active')return{ok:true,status:state,focusRaceKey:key(target),externalRequests:0};
  const db=env.DB;
  if(event.cron==='0 * * * *')return(deps.provisional||scheduledProvisionalPrediction)(db,stamp,{prepareRoster:async()=>({status:'focus-no-broad-seeding'}),sources:()=>focusedStoredSources(db,target,stamp)});
- await(deps.predict||scheduledAutomaticPrediction)(db,stamp,target);
- await(deps.seal||scheduledSavedAutomaticSeal)(db,{enabled:env.LAB_SAVED_AUTOMATIC_LOCK==='true',now,target});
+ // Preserve the ordinary scheduler's failure isolation. A local forecast or
+ // seal validation error must not prevent the target's missing-data work;
+ // quota exhaustion still stops before any later stage or source request.
+ const stageErrors=[];
+ for(const [stage,work] of [
+  ['prediction',()=>(deps.predict||scheduledAutomaticPrediction)(db,stamp,target)],
+  ['lock',()=>(deps.seal||scheduledSavedAutomaticSeal)(db,{enabled:env.LAB_SAVED_AUTOMATIC_LOCK==='true',now,target})]
+ ])try{await work();}catch(e){if(e?.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;stageErrors.push({stage,error:String(e.message||e),saveMayHaveSucceeded:!!e.saveMayHaveSucceeded});}
  const deferred=async()=>({ok:true,status:'focus-background-deferred',focusRaceKey:key(target),externalRequests:0});
  // Retain the existing 3-lane rotation: do not turn deferred archive/result
  // slots into extra source requests while reserving DB work for this target.
- return(deps.coordinate||runSourceCoordinator)(event,env,{now,jobs:{archive:deferred,results:deferred,history:context=>(deps.collect||collectFocusedRace)(db,target,context,{now,shared:env.LAB_SHARED_PAGE_ACQUISITION==='true'})}});
+ const history=async context=>({...await(deps.collect||collectFocusedRace)(db,target,context,{now,shared:env.LAB_SHARED_PAGE_ACQUISITION==='true'}),...(stageErrors.length?{stageErrors}:{})});
+ return(deps.coordinate||runSourceCoordinator)(event,env,{now,jobs:{archive:deferred,results:deferred,history}});
 }

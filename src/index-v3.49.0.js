@@ -21,7 +21,7 @@ import {resolveExpectedCollectionSource} from './index-v3.46.0.js';
 import {readAutomaticPrediction,captureAutomaticPrediction,scheduledAutomaticPrediction,recoverOldAutomaticPrediction} from './automatic-pre-race-prediction.js';
 import {trainSavedReferences,readSavedReferenceTraining} from './saved-reference-learning.js';
 import {importExpectedRosterSeed} from './expected-roster-seeds.js';
-import {saveExpectedRoster} from './expected-roster-registry.js';
+import {saveExpectedRoster,readExpectedRosterSnapshot} from './expected-roster-registry.js';
 import {weekDataInventory} from './week-data-inventory.js';
 import {readSavedPreRaceAssessment,preserveSavedPreRaceAssessment,labelSavedPreRaceAssessment} from './saved-pre-race-assessment.js';
 import {capturePostRaceAssessment,readPostRaceAssessments,postRaceAssessmentPage} from './post-race-assessment.js';
@@ -94,6 +94,12 @@ export default {
    const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
    try{const pending=await readPrecardRaceState(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')||u.searchParams.get('raceNo')});if(pending)return Response.json({...pending.data,version:VERSION},{status:pending.status,headers});}
    catch(e){console.error('precard state read failed',String(e.message||e));return Response.json({ok:false,status:'state-unavailable',error:'対象レースの保存状態を確認できません。'},{status:503,headers});}
+  }
+  if(u.pathname==='/v1/lab/expected-roster-snapshot'){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
+   if(request.method!=='GET')return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
+   try{return Response.json({...await readExpectedRosterSnapshot(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no'),snapshotSha256:u.searchParams.get('snapshot_sha256')}),version:VERSION},{headers});}
+   catch(e){return Response.json({ok:false,error:String(e.message||e)},{status:409,headers});}
   }
   if(u.pathname==='/v1/lab/expected-runners'&&request.method==='GET'&&u.searchParams.has('date')){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*'};

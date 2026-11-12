@@ -167,3 +167,44 @@ test('verified cached priors fill only null last3f in existing rows without HTTP
  assert.equal((await collectUpcomingExpectedHistory(db,{sources:[source],now,knownProfilesOnly:true,fetcher:()=>assert.fail('no repeat')})).attempted,undefined);
  sql.close();
 });
+
+
+test('focused checked histories repair cached null 3F once without resetting receipts or fetching',async()=>{
+ const {sql,db,source,now}=await predrawFixture();
+ await collectUpcomingExpectedHistory(db,{sources:[source],now,knownProfilesOnly:true,fetcher:()=>assert.fail('cache only')});
+ sql.prepare("UPDATE jra_past_performances SET last3f=NULL WHERE race_date='2026-10-02'").run();
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=0').run();
+ const out=await collectUpcomingExpectedHistory(db,{sources:[source],now,verifyStoredCoverage:true,knownProfilesOnly:true,fetcher:()=>assert.fail('checked cache repair cannot fetch')});
+ assert.equal(sql.prepare("SELECT last3f FROM jra_past_performances WHERE race_date='2026-10-02'").get().last3f,37.5);
+ assert.equal(out.addedLast3fRows,1);assert.equal(out.addedRows,0);assert.equal(out.results[0].cachedRepairOnly,true);assert.equal(out.externalRequests,0);
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=0').run();
+ const again=await collectUpcomingExpectedHistory(db,{sources:[source],now,verifyStoredCoverage:true,knownProfilesOnly:true,fetcher:()=>assert.fail('no repeat')});
+ assert.equal(again.externalRequests,0);assert.equal(again.attempted,undefined);sql.close();
+});
+
+test('checked cached repair respects shared lease and unavailable source never falls back to HTTP or loops',async()=>{
+ const {sql,db,source,now}=await predrawFixture();
+ await collectUpcomingExpectedHistory(db,{sources:[source],now,knownProfilesOnly:true,fetcher:()=>assert.fail('cache only')});
+ sql.prepare('UPDATE jra_past_performances SET last3f=NULL').run();
+ sql.prepare('UPDATE lab_history_collection_budget SET locked_until=?').run(now()+3600000);
+ const deps={sources:[source],now,verifyStoredCoverage:true,knownProfilesOnly:true,fetcher:()=>assert.fail('no HTTP fallback')};
+ assert.equal((await collectUpcomingExpectedHistory(db,deps)).status,'cooldown');
+ sql.prepare('UPDATE lab_history_collection_budget SET locked_until=0,next_batch_at=0').run();
+ sql.prepare('DELETE FROM lab_shared_page_bodies_v1').run();
+ const out=await collectUpcomingExpectedHistory(db,deps);assert.equal(out.externalRequests,0);assert.equal(out.results[0].status,'cached-last3f-unavailable');assert.equal(out.results[0].savedRows,0);
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=0').run();
+ const again=await collectUpcomingExpectedHistory(db,deps);assert.equal(again.externalRequests,0);assert.equal(again.attempted,undefined);assert.equal(sql.prepare('SELECT SUM(last3f) n FROM jra_past_performances').get().n,null);sql.close();
+});
+
+
+test('corrupt cached repair preserves the successful receipt and cannot become an HTTP retry',async()=>{
+ const {sql,db,source,now}=await predrawFixture();
+ await collectUpcomingExpectedHistory(db,{sources:[source],now,knownProfilesOnly:true,fetcher:()=>assert.fail('cache only')});
+ sql.prepare('UPDATE jra_past_performances SET last3f=NULL').run();
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=0').run();
+ sql.prepare("UPDATE lab_shared_page_bodies_v1 SET body_html=body_html||'corrupt'").run();
+ const deps={sources:[source],now,verifyStoredCoverage:true,knownProfilesOnly:true,fetcher:()=>assert.fail('no HTTP fallback')};
+ const out=await collectUpcomingExpectedHistory(db,deps);assert.equal(out.ok,false);assert.equal(out.externalRequests,0);assert.match(out.results[0].error,/hash mismatch/);assert.equal(out.after.runners[0].verifiedForTarget,true);
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=0').run();
+ const again=await collectUpcomingExpectedHistory(db,{...deps,now:()=>now()+86400001});assert.equal(again.externalRequests,0);assert.equal(again.attempted,undefined);assert.equal(sql.prepare('SELECT SUM(last3f) n FROM jra_past_performances').get().n,null);sql.close();
+});

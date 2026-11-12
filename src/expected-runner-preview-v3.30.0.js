@@ -108,7 +108,18 @@ export async function historyForExpected(db,source,horseName,limit=8,preloaded=n
    if(same&&sourceFields.some(field=>same[field]!=null&&row[field]!=null&&comparableHistoryValue(field,same[field])!==comparableHistoryValue(field,row[field])))conflict=true;
    if(!same)distinct.set(row.dbSource,row);
   }
-  const primary=rows[0];
+  const primary={...rows[0]};
+  // Two JRA profile rows may describe the same prior under different race
+  // labels. Preserve every original observation, but do not let its older NULL
+  // hide a corroborated closing time from the same provider.
+  const identity=['surface','distance','finish','fieldSize','time'];
+  const officialProfile=row=>{try{const u=new URL(row.sourceUrl);return u.protocol==='https:'&&['www.jra.go.jp','jra.go.jp','www.jra.jp','jra.jp'].includes(u.hostname)&&['/JRADB/accessD.html','/JRADB/accessU.html'].includes(u.pathname)}catch{return false}};
+  const peers=rows.filter(row=>row.dbSource===primary.dbSource&&officialProfile(row)&&identity.every(f=>primary[f]!=null&&row[f]!=null&&comparableHistoryValue(f,primary[f])===comparableHistoryValue(f,row[f])));
+  const closing=peers.filter(row=>Number.isFinite(row.last3f)&&row.last3f>=20&&row.last3f<=90);
+  if(primary.dbSource==='stored-profile-history'&&primary.last3f==null&&officialProfile(primary)&&closing.length&&new Set(closing.map(r=>r.last3f)).size===1&&!rows.some(row=>row.dbSource===primary.dbSource&&sourceFields.some(f=>primary[f]!=null&&row[f]!=null&&comparableHistoryValue(f,primary[f])!==comparableHistoryValue(f,row[f])))){
+   primary.last3f=closing[0].last3f;
+   primary.last3fSourceUrl=closing[0].sourceUrl;
+  }
   const sourceEvidence=rows.map(row=>({provider:row.dbSource,sourceUrl:row.sourceUrl,detailSourceUrl:row.detailSourceUrl,values:Object.fromEntries(sourceFields.map(field=>[field,Object.hasOwn(row.originalSourceValues||{},field)?row.originalSourceValues[field]:row[field]]))}));
   const crossSourceConflict=rows.slice(1).some(row=>sourceFields.some(field=>primary[field]!=null&&row[field]!=null&&comparableHistoryValue(field,primary[field])!==comparableHistoryValue(field,row[field])));
   if(rows.slice(1).some(row=>['finish','surface','distance','fieldSize'].some(field=>primary[field]!=null&&row[field]!=null&&comparableHistoryValue(field,primary[field])!==comparableHistoryValue(field,row[field]))))conflict=true;

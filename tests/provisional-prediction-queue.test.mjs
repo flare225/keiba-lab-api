@@ -213,3 +213,15 @@ test('orphaned revision-readback receipt cannot steal an odd-hour turn from a fr
 });
 
 
+
+test('fixed history interpretation appends one revision at the next hour without resetting retries or the original',async()=>{
+ const {HISTORY_VALUE_POLICY}=await import('../src/history-value-normalization.js');
+ const {db,sql}=fixture(),source=sources[1];let policy='source-format-equivalence-v1',builds=0;
+ const one={...deps,sources:async()=>[source],build:async(d,s)=>{builds++;return {...await deps.build(d,s),histories:[{horseName:s.venue,interpretationVersion:policy,recent:[{date:'2026-01-04',last3f:policy===HISTORY_VALUE_POLICY?34:null}]}]};}};
+ await scheduledProvisionalPrediction(db,now,one);const original=await readProvisionalPrediction(db,source,{exact:true});policy=HISTORY_VALUE_POLICY;
+ const revised=await scheduledProvisionalPrediction(db,now+3600000,one);assert.equal(revised.saved,1);assert.equal(revised.evaluationChanged,true);assert.equal(builds,2);
+ const current=await readProvisionalPrediction(db,source);assert.equal(current.snapshot.histories[0].recent[0].last3f,34);assert.equal((await readProvisionalPrediction(db,source,{exact:true})).snapshotSha256,original.snapshotSha256);
+ assert.equal((await scheduledProvisionalPrediction(db,now+7200000,one)).status,'no-due-registered-roster');assert.equal(builds,2);
+ sql.prepare("UPDATE lab_provisional_queue_v1 SET status='history-updated',next_at=?").run(now+5*3600000);
+ assert.equal((await scheduledProvisionalPrediction(db,now+3*3600000,one)).status,'no-due-registered-roster');assert.equal(builds,2);sql.close();
+});

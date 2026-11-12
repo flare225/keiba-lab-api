@@ -1,5 +1,5 @@
 // Equivalence only. Unknown strings remain distinct; no numeric value is inferred.
-export const HISTORY_VALUE_POLICY='source-format-equivalence-v1';
+export const HISTORY_VALUE_POLICY='source-format-equivalence-v2';
 export function comparableHistoryValue(field,value){
  if(value==null)return value;
  if(field==='surface')return({'ダ':'ダート','ダート':'ダート','芝':'芝','障':'障害','障害':'障害'})[value]??value;

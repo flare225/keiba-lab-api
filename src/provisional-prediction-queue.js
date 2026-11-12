@@ -1,3 +1,4 @@
+import {HISTORY_VALUE_POLICY} from './history-value-normalization.js';
 import {storedProvisionalSources} from './confirmed-predraw-history-source.js';
 import {provisionalExpectedPrediction,repairStoredProgramConditions} from './provisional-expected-prediction.js';
 import {saveProvisionalPrediction,readProvisionalPrediction,provisionalStorageKey,provisionalEvaluationFingerprint} from './provisional-prediction-snapshots.js';
@@ -13,13 +14,13 @@ export async function scheduledProvisionalPrediction(db,now=Date.now(),deps={}){
  const rosterPreparation=await(deps.prepareRoster||prepareReviewedRoster)(db,from,to,now);
  const sources=await(deps.sources||storedProvisionalSources)(db,from,to,now),keys=sources.map(s=>provisionalStorageKey(s));
  const receipts=(await db.prepare('SELECT * FROM lab_provisional_queue_v1 WHERE race_key IN (SELECT value FROM json_each(?))').bind(JSON.stringify(keys)).all()).results||[],byKey=new Map(receipts.map(r=>[r.race_key,r]));
- let saved=[];try{saved=(await db.prepare(`SELECT b.race_key,(SELECT json_extract(p.snapshot_json,'$.roster.snapshotId') FROM lab_provisional_predictions_v1 p WHERE p.race_key=b.race_key OR (p.race_key>=b.race_key||':revision:' AND p.race_key<b.race_key||':revision;') ORDER BY p.saved_at DESC,p.rowid DESC LIMIT 1) roster_snapshot_id FROM lab_provisional_predictions_v1 b WHERE b.race_key IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(keys)).all()).results||[];}catch(e){if(!/no such table/i.test(String(e)))throw e;}
+ let saved=[];try{saved=(await db.prepare(`SELECT b.race_key,(SELECT json_extract(p.snapshot_json,'$.roster.snapshotId') FROM lab_provisional_predictions_v1 p WHERE p.race_key=b.race_key OR (p.race_key>=b.race_key||':revision:' AND p.race_key<b.race_key||':revision;') ORDER BY p.saved_at DESC,p.rowid DESC LIMIT 1) roster_snapshot_id,(SELECT json_extract(p.snapshot_json,'$.histories[0].interpretationVersion') FROM lab_provisional_predictions_v1 p WHERE p.race_key=b.race_key OR (p.race_key>=b.race_key||':revision:' AND p.race_key<b.race_key||':revision;') ORDER BY p.saved_at DESC,p.rowid DESC LIMIT 1) history_policy FROM lab_provisional_predictions_v1 b WHERE b.race_key IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(keys)).all()).results||[];}catch(e){if(!/no such table/i.test(String(e)))throw e;}
  const exists=new Set(saved.map(r=>r.race_key));
  // A newly saved roster is new input even before another profile fetch. Reuse
  // append-only revision and retry handling; never rewrite the original version.
  for(const source of sources){
   const k=provisionalStorageKey(source),previous=byKey.get(k),row=saved.find(r=>r.race_key===k);
-  if(previous?.status==='verified'&&row?.roster_snapshot_id&&source.snapshotId&&row.roster_snapshot_id!==source.snapshotId)
+  if(previous?.status==='verified'&&((row?.roster_snapshot_id&&source.snapshotId&&row.roster_snapshot_id!==source.snapshotId)||(row?.history_policy&&row.history_policy!==HISTORY_VALUE_POLICY)))
    byKey.set(k,{...previous,status:'history-updated',next_at:now});
  }
  // Catch up rows collected before this revision hook was deployed. Reuse the

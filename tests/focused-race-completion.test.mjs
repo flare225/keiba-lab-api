@@ -61,7 +61,7 @@ test('verified registration history can advance without a program clock, but idl
 });
 test('missing target program preserves exact date and a shared wait without inspecting other dates',async()=>{
  const db=gateDb({program:false});let called=0;
- const r=await collectFocusedRace(db,target,{}, {now:()=>stamp,programs:async(_,o)=>{called++;assert.deepEqual(o.target,target);return{status:'cooldown',externalRequests:0}}});assert.equal(called,1);assert.equal(r.status,'cooldown');
+ const r=await collectFocusedRace(db,target,{}, {now:()=>stamp,sources:async()=>[],programs:async(_,o)=>{called++;assert.deepEqual(o.target,target);return{status:'cooldown',externalRequests:0}}});assert.equal(called,1);assert.equal(r.status,'cooldown');
  const f=fixture();let requests=0;const result=await recoverMissingPrograms(f.db,{now:()=>stamp,target,fetcher:async()=>{requests++;return new Response('',{status:403})}});
  assert.equal(requests,1);assert.equal(result.date,target.date);assert.deepEqual(f.sql.prepare('SELECT date FROM lab_program_recovery_v1').all().map(r=>r.date),[target.date]);assert.equal(result.meetingAbsenceInferred,false);f.sql.close();
 });

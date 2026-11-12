@@ -149,3 +149,21 @@ test('short-career proof rejects invalid finish, future prior, duplicate prior a
   assert.equal(result.performances,null,change);sql.close();
  }
 });
+
+
+test('verified cached priors fill only null last3f in existing rows without HTTP or overwriting evidence',async()=>{
+ const {sql,db,source,now,hash}=await predrawFixture();
+ const first=await collectUpcomingExpectedHistory(db,{sources:[source],now,knownProfilesOnly:true,fetcher:()=>assert.fail('cache only')});
+ assert.equal(first.addedRows,3);
+ sql.prepare("UPDATE jra_past_performances SET last3f=NULL,finish_position=7,corner_positions='1-1',source_url='original' WHERE race_date='2026-10-02'").run();
+ sql.prepare("UPDATE jra_past_performances SET last3f=33.1 WHERE race_date='2026-09-02'").run();
+ sql.prepare('DELETE FROM lab_history_collection_receipts').run();
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=0').run();
+ const result=await collectUpcomingExpectedHistory(db,{sources:[source],now,verifyStoredCoverage:true,knownProfilesOnly:true,fetcher:()=>assert.fail('cache only')});
+ assert.equal(result.addedRows,0);assert.equal(result.externalRequests,0);assert.equal(result.results[0].sourceSha256,hash);
+ const fixed=sql.prepare("SELECT last3f,finish_position,corner_positions,source_url FROM jra_past_performances WHERE race_date='2026-10-02'").get();
+ assert.equal(fixed.last3f,37.5);assert.equal(result.addedLast3fRows,1);assert.equal(fixed.finish_position,7);assert.equal(fixed.corner_positions,'1-1');assert.equal(fixed.source_url,source.sourceUrl??(await expectedHistoryContext(db,source,now())).race.source_url);
+ assert.equal(sql.prepare("SELECT last3f FROM jra_past_performances WHERE race_date='2026-09-02'").get().last3f,33.1);
+ assert.equal((await collectUpcomingExpectedHistory(db,{sources:[source],now,knownProfilesOnly:true,fetcher:()=>assert.fail('no repeat')})).attempted,undefined);
+ sql.close();
+});

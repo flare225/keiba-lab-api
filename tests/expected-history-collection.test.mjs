@@ -352,3 +352,20 @@ test('unconfigured priority roster yields to known history and complete targets 
  const r=await collectUpcomingExpectedHistory(db,{sources:[complete,unconfigured,source],now:()=>stamp,wait:async()=>{},fetcher:async url=>{assert.equal(url,'https://www.jra.go.jp/JRADB/accessU.html');return new Response(html,{headers:{'content-type':'text/html;charset=utf-8'}})}});
  assert.equal(r.addedRows,1);assert.equal(r.snapshotId,source.snapshotId);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_history_collection_receipts WHERE horse_name=?').get('Unresolved').n,0);sql.close();
 });
+
+test('focused history verifies an unchecked old row set once instead of equating count with current coverage',async()=>{
+ const {db,sql}=await fixture(),s={...source,snapshotId:'registered:freshness',names:['HorseA']};
+ for(const d of ['2026-02-01','2026-03-01','2026-04-01'])sql.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,finish_position,field_size,source_url,fetched_at) VALUES(?,?,?,?,?,?,?,?)').run('HorseA',d,'東京','old-'+d,2,12,profile,'2026-04-02T00:00:00Z');
+ let calls=0;const body='<h1>HorseA</h1><table>'+row('2026年9月1日')+row('2026年8月1日')+row('2026年7月1日')+'</table>',deps={sources:[s],verifyStoredCoverage:true,now:()=>stamp,wait:async()=>{},fetcher:async()=>{calls++;return new Response(body,{headers:{'content-type':'text/html;charset=utf-8'}})}};
+ const r=await collectUpcomingExpectedHistory(db,deps);assert.equal(calls,1);assert.equal(r.results[0].status,'checked');assert.equal(r.before.runners[0].verificationPending,true);assert.equal(r.after.runners[0].verifiedForTarget,true);assert.equal(r.after.runners[0].newestDate,'2026-09-01');
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=0').run();const context=await expectedHistoryContext(db,s,stamp);
+ const again=await collectHistoryBatch(db,{historyLimit:3,verifyStoredCoverage:true},{context,now:()=>stamp+86400001,fetcher:()=>assert.fail('verified complete target must not be fetched again')});assert.equal(again.status,'complete');assert.equal(calls,1);sql.close();
+});
+test('focused verification preserves failed retries and shared waits for otherwise complete old rows',async()=>{
+ const {db,sql}=await fixture(),s={...source,snapshotId:'registered:verification-wait',names:['HorseA']},context=await expectedHistoryContext(db,s,stamp);
+ for(const d of ['2026-02-01','2026-03-01','2026-04-01'])sql.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,finish_position,field_size,source_url,fetched_at) VALUES(?,?,?,?,?,?,?,?)').run('HorseA',d,'東京',d,2,12,profile,'2026-04-02T00:00:00Z');
+ sql.prepare('INSERT INTO lab_history_collection_receipts VALUES(?,?,?,?,?,?,?,?,?)').run(context.race.race_key,'HorseA','bounded-jra-profile-v1',3,'failed',0,stamp,profile,'HTTP403');
+ const deps={context,now:()=>stamp+60000,fetcher:()=>assert.fail('retry is not due')};const held=await collectHistoryBatch(db,{historyLimit:3,verifyStoredCoverage:true},deps);assert.equal(held.externalRequests,0);
+ sql.prepare('DELETE FROM lab_history_collection_receipts').run();sql.prepare('UPDATE lab_history_collection_budget SET locked_until=?').run(stamp+3600000);
+ const shared=await collectHistoryBatch(db,{historyLimit:3,verifyStoredCoverage:true},deps);assert.equal(shared.status,'cooldown');assert.equal(shared.externalRequests,0);sql.close();
+});

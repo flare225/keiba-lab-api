@@ -30,7 +30,7 @@ test('real coordinator retains three source slots but defers archives/results an
 });
 test('shared safety wait exits before target plans; formal card goes only to its existing history collector',async()=>{
  const blocked=gateDb({blocked:stamp+3600000});const a=await collectFocusedRace(blocked,target,{}, {now:()=>stamp});assert.equal(a.status,'cooldown');assert.equal(blocked.queries.length,1);
- const db=gateDb({formal:true});let calls=0;const r=await collectFocusedRace(db,target,{}, {now:()=>stamp,collect:async(_,input)=>{calls++;assert.deepEqual(input,{...target,historyLimit:3,batchSize:1,storedBatchSize:2});return{status:'collected',savedRows:1,externalRequests:0}},cards:()=>assert.fail('saved card must not be refetched'),sources:()=>assert.fail('formal history needs no roster scan')});assert.equal(calls,1);assert.equal(r.historyWorkStage,'history');
+ const db=gateDb({formal:true});let calls=0;const r=await collectFocusedRace(db,target,{}, {now:()=>stamp,collect:async(_,input)=>{calls++;assert.deepEqual(input,{...target,historyLimit:3,batchSize:1,storedBatchSize:2,verifyStoredCoverage:true});return{status:'collected',savedRows:1,externalRequests:0}},cards:()=>assert.fail('saved card must not be refetched'),sources:()=>assert.fail('formal history needs no roster scan')});assert.equal(calls,1);assert.equal(r.historyWorkStage,'history');
 });
 test('ordinary prediction/LOCK failures cannot block target supplementation, but quota stops every later stage',async()=>{
  for(const phase of ['prediction','lock'])for(const quota of [false,true]){
@@ -53,7 +53,7 @@ test('target-only card/history handoff cannot fall through to another race or ne
 test('verified registration history can advance without a program clock, but idle history still recovers the program',async()=>{
  const db=gateDb({program:false}),calls=[];
  const source={date:target.date,venue:target.venue,raceNo:target.raceNo,provider:'JRA',names:['registered']};
- const deps={now:()=>stamp,sources:async()=>[source],expected:async(_,o)=>{calls.push('history');assert.deepEqual(o.sources,[source]);return{status:'collected',attempted:1,externalRequests:1}},programs:async()=>{calls.push('program');return{status:'program-not-due',externalRequests:0}}};
+ const deps={now:()=>stamp,sources:async()=>[source],expected:async(_,o)=>{calls.push('history');assert.deepEqual(o.sources,[source]);assert.equal(o.verifyStoredCoverage,true);return{status:'collected',attempted:1,externalRequests:1}},programs:async()=>{calls.push('program');return{status:'program-not-due',externalRequests:0}}};
  const collected=await collectFocusedRace(db,target,{},deps);assert.deepEqual(calls,['history']);assert.equal(collected.historyWorkStage,'history');assert.equal(collected.focusRaceKey,'2026-11-15:京都:11');
  calls.length=0;deps.expected=async()=>{calls.push('history');return{status:'idle',externalRequests:0}};
  const idle=await collectFocusedRace(db,target,{},deps);assert.deepEqual(calls,['history','program']);assert.equal(idle.status,'program-not-due');
@@ -91,7 +91,7 @@ test('stored source lookup is exact before hashing and excludes non-JRA roster f
 
 test('focused collection uses real discovery before the estimated publication hour and starts history from registration',async()=>{
  const calls=[],source={date:target.date,venue:target.venue,raceNo:11,provider:'JRA',kind:'special-registration',names:['登録馬']};
- const deps={now:()=>stamp,sources:async()=>[source],expected:async(_,o)=>{calls.push('registration-history');assert.deepEqual(o.sources,[source]);return{status:'collected',attempted:1,externalRequests:1};},cards:async(_,input)=>{calls.push('card');assert.notEqual(input.publicationWindowOnly,true);return{status:'not-published',externalRequests:1};}};
+ const deps={now:()=>stamp,sources:async()=>[source],expected:async(_,o)=>{calls.push('registration-history');assert.deepEqual(o.sources,[source]);assert.equal(o.verifyStoredCoverage,true);return{status:'collected',attempted:1,externalRequests:1};},cards:async(_,input)=>{calls.push('card');assert.notEqual(input.publicationWindowOnly,true);return{status:'not-published',externalRequests:1};}};
  const first=await collectFocusedRace(gateDb(),target,{},deps);assert.deepEqual(calls,['registration-history']);assert.equal(first.historyWorkStage,'history');
  calls.length=0;const next=await collectFocusedRace(gateDb(),target,{previousHistoryWorkStage:'history'},deps);assert.deepEqual(calls,['card']);assert.equal(next.historyWorkStage,'acquisition');
 });

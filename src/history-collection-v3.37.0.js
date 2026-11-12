@@ -58,9 +58,15 @@ export async function collectionStatus(db,input,now=Date.now(),context=null){
   const age=Number(r.age);if(!Number.isInteger(age)||age<2||age>20)throw Error('出走馬の年齢を確認できません。');
   const fromDate=[COLLECTION_POLICY.archiveFromDate,String(Number(race.race_date.slice(0,4))-age+2)+'-01-01'].sort().at(-1);
   const stats=byStats.get(r.horse_name),rec=byReceipt.get(r.horse_name);
-  out.push({horseNo:r.horse_no==null?null:Number(r.horse_no),horseName:r.horse_name,age,fromDate,storedRows:Number(stats?.stored_rows||0),last3fRows:Number(stats?.last3f_rows||0),cornerRows:Number(stats?.corner_rows||0),oldestDate:stats?.oldest_date||null,newestDate:stats?.newest_date||null,lastCheckedAt:rec?.checked_at?new Date(rec.checked_at).toISOString():null,collectionState:rec?.status||'not-checked',collectionError:rec?.error||null,nextRetryAt:rec?.status==='failed'&&rec?.checked_at?new Date(Number(rec.checked_at)+3600000).toISOString():null,due:Number(stats?.stored_rows||0)<limit&&collectionDue(rec,race.race_date,limit,now),profileUrl:rec?.profile_url||r.profile_url||null});
+  const verifiedForTarget=rec?.status==='checked'&&rec.policy_version===COLLECTION_POLICY.version&&Number(rec.requested_limit)>=limit&&Number(rec.checked_at)>0&&Number(rec.checked_at)<=now;
+  // Opt-in for the focused race: global row counts do not prove that this
+  // target's current profile has ever been checked. A real successful receipt
+  // is reused even after the ordinary refresh interval; no repeated success GET.
+  const verificationPending=input.verifyStoredCoverage===true&&Number(stats?.stored_rows||0)>=limit&&!verifiedForTarget;
+  const due=(Number(stats?.stored_rows||0)<limit||verificationPending)&&(verificationPending&&rec?.status==='stored-enough'||collectionDue(rec,race.race_date,limit,now));
+  out.push({horseNo:r.horse_no==null?null:Number(r.horse_no),horseName:r.horse_name,age,fromDate,storedRows:Number(stats?.stored_rows||0),last3fRows:Number(stats?.last3f_rows||0),cornerRows:Number(stats?.corner_rows||0),oldestDate:stats?.oldest_date||null,newestDate:stats?.newest_date||null,lastCheckedAt:rec?.checked_at?new Date(rec.checked_at).toISOString():null,collectionState:rec?.status||'not-checked',collectionError:rec?.error||null,nextRetryAt:rec?.status==='failed'&&rec?.checked_at?new Date(Number(rec.checked_at)+3600000).toISOString():null,verifiedForTarget,verificationPending,due,profileUrl:rec?.profile_url||r.profile_url||null});
  }
- return{ok:true,race:{raceKey:race.race_key,date:race.race_date,venue:race.venue,raceNo:Number(race.race_no),raceName:race.race_name},historyLimit:limit,runnerCount:out.length,pendingHorses:out.filter(x=>x.due).length,remainingHorses:out.filter(x=>x.due||x.collectionState==='failed').length,totalStoredRows:out.reduce((s,x)=>s+x.storedRows,0),last3fRows:out.reduce((s,x)=>s+x.last3fRows,0),runners:out,policy:COLLECTION_POLICY};
+ return{ok:true,race:{raceKey:race.race_key,date:race.race_date,venue:race.venue,raceNo:Number(race.race_no),raceName:race.race_name},historyLimit:limit,runnerCount:out.length,pendingHorses:out.filter(x=>x.due).length,remainingHorses:out.filter(x=>x.due||x.collectionState==='failed').length,unverifiedStoredHorses:out.filter(x=>x.storedRows>=limit&&!x.verifiedForTarget).length,totalStoredRows:out.reduce((s,x)=>s+x.storedRows,0),last3fRows:out.reduce((s,x)=>s+x.last3fRows,0),runners:out,policy:COLLECTION_POLICY};
 }
 async function saveReceipt(db,key,item,limit,status,rows,stamp,profileUrl=null,error=null){
  await db.prepare('INSERT INTO lab_history_collection_receipts(race_key,horse_name,policy_version,requested_limit,status,rows_found,checked_at,profile_url,error) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(race_key,horse_name) DO UPDATE SET policy_version=excluded.policy_version,requested_limit=excluded.requested_limit,status=excluded.status,rows_found=excluded.rows_found,checked_at=excluded.checked_at,profile_url=COALESCE(excluded.profile_url,profile_url),error=excluded.error').bind(key,item.horseName,COLLECTION_POLICY.version,limit,status,rows,stamp,profileUrl,error).run();
@@ -70,7 +76,7 @@ export async function collectHistoryBatch(db,input,deps={}){
  const limit=integer(input.historyLimit??10,10,1,20),batchSize=limit>10?1:integer(input.batchSize??1,1,1,2);
  await ensureCollectionTables(db);const context=deps.context||await raceContext(db,input),before=await collectionStatus(db,{...input,historyLimit:limit},now(),deps.context||null);
  const cachedBatchSize=limit>10?batchSize:Math.max(batchSize,integer(input.storedBatchSize??batchSize,batchSize,1,COLLECTION_POLICY.maxHorsesPerBatch));
- const selected=before.runners.filter(r=>r.due&&(!deps.context||r.profileUrl||r.storedRows>=limit)).sort((a,b)=>Number(a.collectionState==='failed')-Number(b.collectionState==='failed')||a.storedRows-b.storedRows||(a.collectionState==='failed'?String(a.lastCheckedAt).localeCompare(String(b.lastCheckedAt)):0)||a.horseNo-b.horseNo).slice(0,cachedBatchSize);
+ const selected=before.runners.filter(r=>r.due&&(!deps.context||r.profileUrl||r.storedRows>=limit&&!r.verificationPending)).sort((a,b)=>Number(a.collectionState==='failed')-Number(b.collectionState==='failed')||a.storedRows-b.storedRows||(a.collectionState==='failed'?String(a.lastCheckedAt).localeCompare(String(b.lastCheckedAt)):0)||a.horseNo-b.horseNo).slice(0,cachedBatchSize);
  if(!selected.length)return{ok:true,status:deps.context&&before.remainingHorses?'awaiting-profile-links':'complete',attempted:0,externalRequests:0,before,after:before,policy:COLLECTION_POLICY};
  const stamp=now(),token=crypto.randomUUID();
  const claim=await db.prepare("UPDATE lab_history_collection_budget SET locked_until=?,lock_token=? WHERE name='jra-history' AND locked_until<=? AND next_batch_at<=?").bind(stamp+120000,token,stamp,stamp).run();
@@ -93,7 +99,7 @@ export async function collectHistoryBatch(db,input,deps={}){
    if(storedOnly&&!results.at(-1)?.reusedStoredCard)break;
    let profileUrl=item.profileUrl;
    try{
-    if(item.storedRows>=limit){await saveReceipt(db,context.race.race_key,item,limit,'stored-enough',item.storedRows,now());results.push({horseName:item.horseName,status:'stored-enough',savedRows:0});continue}
+    if(item.storedRows>=limit&&!item.verificationPending){await saveReceipt(db,context.race.race_key,item,limit,'stored-enough',item.storedRows,now());results.push({horseName:item.horseName,status:'stored-enough',savedRows:0});continue}
     const source=await readStoredCardPriors(db,context,item,limit,{includeProfileLink:true});
     const stored=source?.performances?source:null;
     if(storedOnly&&!stored)break;

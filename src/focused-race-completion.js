@@ -46,7 +46,19 @@ export async function collectFocusedRace(db,target,context={},deps={}){
  const wait=Math.max(Number(gate.next_batch_at)||0,Number(gate.locked_until)||0);
  if(wait>stamp)return{ok:true,status:'cooldown',externalRequests:0,nextBatchAt:new Date(wait).toISOString()};
  const program=await optionalFirst(db,'SELECT start_time FROM jra_race_program WHERE race_date=? AND venue=? AND race_no=? LIMIT 1',[target.date,target.venue,target.raceNo]);
- if(!program)return await(deps.programs||recoverMissingPrograms)(db,{now,target})||{ok:true,status:'focused-program-not-due',externalRequests:0};
+ if(!program){
+  // A missing program clock must not strand already verified registration
+  // profiles. Use the existing bounded expected-history lane first, while
+  // retaining the program recovery lane when no history work was possible.
+  if(context.previousHistoryWorkStage!=='history'){
+   const sources=await(deps.sources||focusedStoredSources)(db,target,stamp);
+   if(sources.length){
+    const result=await(deps.expected||collectUpcomingExpectedHistory)(db,{now,sources,previousExpectedHistoryWorkKind:context.previousExpectedHistoryWorkKind});
+    if(worked(result))return{...result,historyWorkStage:'history',focusRaceKey:key(target)};
+   }
+  }
+  return await(deps.programs||recoverMissingPrograms)(db,{now,target})||{ok:true,status:'focused-program-not-due',externalRequests:0};
+ }
  const start=/^\d{2}:\d{2}$/.test(program.start_time||'')?Date.parse(`${target.date}T${program.start_time}:00+09:00`):NaN;
  if(!Number.isFinite(start)||stamp>=start-300000)return{ok:true,status:'focus-start-unverified-or-cutoff',externalRequests:0};
  const formal=await optionalFirst(db,`SELECT race_key FROM jra_races r WHERE race_date=? AND venue=? AND race_no=? AND runner_count>0 AND runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key) AND NOT EXISTS(SELECT 1 FROM jra_runners x WHERE x.race_key=r.race_key AND (x.horse_no NOT BETWEEN 1 AND 18 OR x.horse_name IS NULL OR TRIM(x.horse_name)='')) AND (SELECT COUNT(DISTINCT x.horse_no) FROM jra_runners x WHERE x.race_key=r.race_key)=r.runner_count AND (SELECT COUNT(DISTINCT x.horse_name) FROM jra_runners x WHERE x.race_key=r.race_key)=r.runner_count LIMIT 1`,[target.date,target.venue,target.raceNo]);

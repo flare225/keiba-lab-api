@@ -1,0 +1,13 @@
+# 公開済み出馬表一覧への1ページずつの引渡し（本番未反映）
+
+根本原因: missingOfficialCardsは保存済み番組のcalendar URLを入口にするが、calendarは予定番組表。公開ページ自身も最新出馬表は競馬メニューを参照するよう案内している。2026-10-23のDOMで出馬表アンカーはdoAction('/JRADB/accessD.html','pw01dli00/F3')だった。extractLinksはこれを抽出できるが、discoverExpectedCardがmetaFromRacecardUrlで個別レースURLだけに絞り一覧URLを捨てるため、各Rで同じcalendarを取得し続ける。旧想定名簿の存在はmissingOfficialCardsの除外条件ではない。PR245は発見後の順序だけを直し、この入口は未修正。
+
+修正: 公開HTMLに文字列として存在する公式出馬表一覧CNAMEだけを既存receiptのcard_urlへ保存し、status=official-card-index-foundとして翌自然枠に引き渡す。内部列は中間URLも保持するが、coverageはdiscoveryUrlとcardUrlを区別する。日付/場/Rが一致する個別リンク発見後は既存official-card-link-found→既存取得/検証/保存経路へ戻る。一覧はカード保存・公開確定に数えない。
+
+一覧URLの生成、チェックサム推測、HTML内JS評価、同一枠の連続fetchはしない。1自然枠1ページ/共有gate/lease/403等1時間待機/個別待機/urgent12h/公平dispatcherは維持。追加SQL0、既存receipt列を再利用、schema変更0。途中URLの優先はPR245の同じ有限機会を使用し、失敗後は通常公平順へ戻る。
+
+検証: 現行コードで新規3試験失敗を再現。修正後全647件成功。calendar→一覧→正しい対象カードを別配送で処理、対象違い、403中停止、待機期限、キュー引渡し、既存保存/LOCK等を検証。
+
+未検証: Workerが受信した過去calendar本文は現公開APIに無く、当時全36Rの同一HTMLまでは復元していない。実際の一覧本文から全72Rの個別URLが得られるかは、公開後の自然cronで実測が必要。fixtureは観測DOMの最小抜粋で、実レスポンス全体ではない。仮のレースURLを本番DBへ投入していない。
+
+公開後: discoveryUrl/index状態→対象日/場/RのcardUrl→HTTP/保存種別→独立GET→通常予想を分けて確認。想定・枠順未確定を正式カードに数えない。PR244/評価モデル/LOCK writerへの変更なし。

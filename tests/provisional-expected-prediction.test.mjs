@@ -13,3 +13,10 @@ test('missing evidence is unranked and never receives a fabricated mark',()=>{
 test('past/same-day targets and unknown race conditions fail closed',()=>{
  for(const date of ['2026-10-20','2026-10-21'])assert.throws(()=>buildProvisionalPrediction({...source,date},conditions,histories,now));assert.throws(()=>buildProvisionalPrediction(source,{},histories,now));
 });
+
+test('pre-registration provenance stays unconfirmed and unproven predraw cannot be promoted',()=>{
+ const r=buildProvisionalPrediction({...source,provider:'JRA',kind:'special-registration'},conditions,histories,now);
+ assert.equal(r.preparation.label,'暫定評価・出走未確定');assert.equal(r.preparation.entriesConfirmed,false);assert.equal(r.preparation.candidateSetComplete,null);assert.equal(r.preparation.formalLockEligible,false);
+ assert.throws(()=>buildProvisionalPrediction({...source,provider:'netkeiba',rosterBasis:'confirmed-predraw',confirmationVerified:true},conditions,histories,now),/確認根拠/);
+ assert.throws(()=>buildProvisionalPrediction({...source,provider:'JRA',rosterBasis:'confirmed-predraw'},conditions,histories,now),/確認根拠/);
+});

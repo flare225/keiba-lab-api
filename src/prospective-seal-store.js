@@ -32,3 +32,32 @@ export async function ensureCardSealGuard(db){
  AND json_extract(p.value,'$.horseName')=rr.horse_name AND json_extract(p.value,'$.frameNo')=rr.frame_no))
  ) BEGIN SELECT RAISE(ABORT,'source card changed or is unverified'); END`).run();
 }
+
+export async function ensureProspectiveSealTables(db){
+  await db.prepare(`CREATE TABLE IF NOT EXISTS lab_model_locks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    race_key TEXT NOT NULL,
+    model_version TEXT NOT NULL,
+    track_condition TEXT,
+    seal_kind TEXT NOT NULL,
+    weights_json TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    sealed_at TEXT NOT NULL,
+    UNIQUE(race_key,model_version,track_condition)
+  )`).run();
+  await db.prepare(`CREATE TABLE IF NOT EXISTS lab_prospective_seals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    race_key TEXT NOT NULL,
+    race_date TEXT NOT NULL,
+    model_version TEXT NOT NULL,
+    track_condition TEXT NOT NULL,
+    seal_kind TEXT NOT NULL,
+    snapshot_sha256 TEXT NOT NULL,
+    runner_count INTEGER NOT NULL,
+    outcome_count_at_seal INTEGER NOT NULL,
+    future_day_lock INTEGER NOT NULL,
+    quality_json TEXT NOT NULL,
+    sealed_at TEXT NOT NULL,
+    UNIQUE(race_key,model_version,track_condition)
+  )`).run();
+}

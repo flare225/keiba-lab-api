@@ -1,11 +1,18 @@
-import {discoverExpectedCard} from './expected-card-discovery.js';
-import {metaFromRacecardUrl} from './index-v1.1.4.js';
+import {discoverExpectedCard,isPublishedCardNavigation} from './expected-card-discovery.js';
+import {metaFromMeetingListUrl,metaFromRacecardUrl} from './index-v1.1.4.js';
 import {officialUrl,jstDay} from './history-collection-v3.37.0.js';
 import {targetInput} from './race-history-assessment-v3.31.0.js';
 
 // Published JRA link witnessed on 2026-10-22. This is a discovery input,
 // never a saved card: runners and numbering must still come from JRA fetch.
 const witnessedOfficialCards=[{date:'2026-10-25',venue:'京都',raceNo:11,url:'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202604091120261025/39'}];
+export function officialCardWindowOpen(date,stamp){
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(date||''))return false;
+ if(date===jstDay(stamp))return true;
+ const day=Date.parse(date+'T00:00:00Z');if(!Number.isFinite(day))return false;
+ const daysSinceThursday=(new Date(day).getUTCDay()+3)%7;
+ return stamp>=day-daysSinceThursday*86400000+5*3600000;
+}
 function witnessedUrl(target){
  const link=witnessedOfficialCards.find(x=>x.date===target.date&&x.venue===target.venue&&x.raceNo===target.raceNo);
  if(!link)return null;
@@ -40,29 +47,95 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  const blockedUntil=Math.max(Number(gate?.next_batch_at)||0,Number(gate?.locked_until)||0);
  if(blockedUntil>stamp)return{ok:true,status:'cooldown',externalRequests:0,nextBatchAt:new Date(blockedUntil).toISOString()};
  const until=input.includeFuture?new Date(Date.parse(date+'T00:00:00Z')+7*86400000).toISOString().slice(0,10):date;
- const plan=await missingOfficialCards(db,date,stamp,until,target);
+ const planKey=JSON.stringify([date,until,target]);
+ let plan=deps.programPlanCache?.get(planKey);
+ if(!plan){plan=await missingOfficialCards(db,date,stamp,until,target);deps.programPlanCache?.set(planKey,plan);}
  if(plan.nextBatchAt&&Date.parse(plan.nextBatchAt)>stamp)return{ok:true,status:'cooldown',externalRequests:0,nextBatchAt:plan.nextBatchAt};
- const candidates=plan.missing.filter(r=>(!input.upcomingOnly||(/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${r.date}T${r.startTime}:00+09:00`)>stamp))&&(!specified||(r.date===date&&r.venue===input.venue&&r.raceNo===Number(input.raceNo??input.race_no))));
+ let candidates=plan.missing.filter(r=>(!input.upcomingOnly||(/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${r.date}T${r.startTime}:00+09:00`)>stamp))&&(!specified||(r.date===date&&r.venue===input.venue&&r.raceNo===Number(input.raceNo??input.race_no))));
  // Upcoming cards first. Past cards may be stored, never used to recreate forecasts.
  candidates.sort((a,b)=>{
   const future=r=>/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${r.date}T${r.startTime}:00+09:00`)>stamp;
   return Number(future(b))-Number(future(a))||a.date.localeCompare(b.date)||Number(b.raceNo===11)-Number(a.raceNo===11)||b.raceNo-a.raceNo;
  });
- const identity=r=>`official-card:${r.date}:${r.venue}:${r.raceNo}:${r.sourceBasis}`;
- let waiting=[];try{waiting=(await db.prepare('SELECT snapshot_id,next_attempt_at,card_url,status FROM lab_expected_card_discovery WHERE snapshot_id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(candidates.map(identity))).all()).results||[]}catch(e){if(!/no such table/.test(String(e)))throw e;}
+ // Preserve the existing PR257 continuity logic across source-basis changes.
+ const receiptIds=r=>['official-program','stored-sibling-card'].map(basis=>`official-card:${r.date}:${r.venue}:${r.raceNo}:${basis}`);
+ let waiting=[];try{waiting=(await db.prepare('SELECT snapshot_id,next_attempt_at,card_url,status FROM lab_expected_card_discovery WHERE snapshot_id IN (SELECT value FROM json_each(?))').bind(JSON.stringify([...new Set([...new Map(candidates.map(r=>[`${r.date}:${r.venue}`,r])).values()].flatMap(r=>Array.from({length:12},(_,i)=>receiptIds({...r,raceNo:i+1})).flat()))])).all()).results||[]}catch(e){if(!/no such table/.test(String(e)))throw e;}
+ // A calendar opening time is only a discovery heuristic. An individual
+ // link already observed and persisted by discovery is stronger evidence.
+ // Keep the shared gate above and both legacy receipt deadlines below.
+ if(input.publicationWindowOnly&&candidates.length){
+  const published=r=>receiptIds(r).some(id=>{
+   const row=waiting.find(x=>x.snapshot_id===id);
+   if(row?.status!=='official-card-link-found'||!row.card_url)return false;
+   try{const url=officialUrl(row.card_url),u=new URL(url),m=metaFromRacecardUrl(url);return u.pathname==='/JRADB/accessD.html'&&m?.date===r.date&&m.venue===r.venue&&m.raceNo===r.raceNo;}catch{return false;}
+  });
+  candidates=candidates.filter(r=>officialCardWindowOpen(r.date,stamp)||published(r));
+  if(!candidates.length)return{ok:true,status:'awaiting-official-publication',externalRequests:0};
+ }
+ const receiptById=new Map(waiting.map(row=>[row.snapshot_id,row]));
+ const identity=r=>{
+  const existing=receiptIds(r).map(id=>receiptById.get(id)).filter(Boolean);
+  const active=existing.filter(x=>x.card_url&&['official-card-link-found','official-card-index-found'].includes(x.status));
+  const chosen=(active.length?active:existing).sort((a,b)=>Number(b.next_attempt_at)-Number(a.next_attempt_at))[0];
+  return chosen?.snapshot_id||`official-card:${r.date}:${r.venue}:${r.raceNo}:${r.sourceBasis}`;
+ };
  const receipts=new Map(waiting.map(r=>[r.snapshot_id,Number(r.next_attempt_at)||0]));
+ // Both legacy IDs denote one race: preserve the strictest existing retry
+ // deadline, even when the URL continuation lives on the older identity.
+ for(const r of candidates)if(receiptIds(r).some(id=>receiptById.has(id)))receipts.set(identity(r),Math.max(0,...receiptIds(r).map(id=>Number(receiptById.get(id)?.next_attempt_at)||0)));
+
  const receiptCards=new Map(waiting.map(r=>[r.snapshot_id,r.card_url]));
- const linked=new Set(waiting.filter(r=>r.status==='official-card-link-found'&&r.card_url).map(r=>r.snapshot_id));
- // A short retry time must not let the first few cards monopolize every
- // history-lane slot. Visit untried cards first, then the oldest due receipt.
- const pick=pool=>pool.find(r=>!receipts.has(identity(r)))||pool.filter(r=>receipts.get(identity(r))<=stamp).sort((a,b)=>receipts.get(identity(a))-receipts.get(identity(b)))[0];
- const urgent=candidates.filter(r=>{const start=Date.parse(`${r.date}T${r.startTime}:00+09:00`);return start>stamp&&start-stamp<=12*3600000});
- // A due calendar-only receipt has not attempted the witnessed card URL yet.
- // The collector persists card_url even on failure, then fair retries resume.
- const r=pick(urgent)||pick(candidates.filter(r=>witnessedUrl(r)&&!receiptCards.get(identity(r))&&(!receipts.has(identity(r))||receipts.get(identity(r))<=stamp)))||pick(candidates.filter(r=>linked.has(identity(r))&&receipts.get(identity(r))<=stamp))||pick(candidates);if(!r)return{ok:true,status:candidates.length?'card-discovery-not-due':'complete',externalRequests:0};
+ // Ready card and discovery cohorts share the existing source slot. The
+ // prior lane comes from the existing coordinator result, never a new clock.
+ const linked=new Set(waiting.filter(r=>['official-card-link-found','official-card-index-found'].includes(r.status)&&r.card_url).map(r=>r.snapshot_id));
+ const due=r=>!receipts.has(identity(r))||receipts.get(identity(r))<=stamp;
+ const lane=r=>{const u=receiptCards.get(identity(r))||witnessedUrl(r)||r.sourceUrl,m=metaFromRacecardUrl(u);return m?.date===r.date&&m.venue===r.venue&&m.raceNo===r.raceNo?'card':'discovery'};
+ const pick=pool=>pool.find(r=>!receipts.has(identity(r)))||pool.slice().sort((a,b)=>receipts.get(identity(a))-receipts.get(identity(b)))[0];
+ let eligible=candidates.filter(due);
+ if(input.completeDateFirst&&!specified){const firstDueDay=eligible.map(r=>r.date).sort()[0];eligible=eligible.filter(r=>r.date===firstDueDay);}
+ const urgent=eligible.filter(r=>{const start=Date.parse(`${r.date}T${r.startTime}:00+09:00`);return start>stamp&&start-stamp<=12*3600000});
+ const previous=deps.previousCardSelection?.lane;
+ const original=pool=>pick(pool.filter(r=>linked.has(identity(r))))||pick(pool);
+ // Share discovery turns between untried races and due receipts. Do not let
+ // new receipt identities suppress older due races, or retries suppress new ones.
+ const previousClass=deps.previousCardSelection?.lastDiscoveryClass;
+ const previousRetryStage=deps.previousCardSelection?.lastRetryDiscoveryStage;
+ const continuation=r=>isPublishedCardNavigation(receiptCards.get(identity(r)),r);
+ const retryPick=pool=>{
+  const follow=pool.filter(continuation),search=pool.filter(r=>!continuation(r));
+  return previousRetryStage==='continuation'?(pick(search)||pick(follow)):(pick(follow)||pick(search));
+ };
+ const discoveryPick=pool=>{
+  if(!previous&&!previousClass)return original(pool);
+  const fresh=pool.filter(r=>!receipts.has(identity(r))),retry=pool.filter(r=>receipts.has(identity(r)));
+  return previousClass==='retry'?(pick(fresh)||retryPick(retry)):(retryPick(retry)||pick(fresh));
+ };
+ const ordinary=pool=>{const r=original(pool);return r&&lane(r)==='discovery'?discoveryPick(pool.filter(x=>lane(x)==='discovery')):r};
+ const fair=(pool,urgentOnly=false)=>{const select=urgentOnly?original:ordinary;return ['card','discovery'].includes(previous)?(select(pool.filter(r=>lane(r)!==previous))||select(pool)):select(pool)};
+ const witnessed=eligible.filter(r=>witnessedUrl(r)&&!receiptCards.get(identity(r)));
+ const r=fair(urgent,true)||pick(witnessed)||fair(eligible);if(!r)return{ok:true,status:candidates.length?'card-discovery-not-due':'complete',externalRequests:0};
+ const discoveryClass=lane(r)==='discovery'?(receipts.has(identity(r))?'retry':'untried'):null;
+ const retryDiscoveryStage=discoveryClass==='retry'?(continuation(r)?'continuation':'reexploration'):null;
+ const selection={lane:lane(r),retryDiscoveryStage,lastRetryDiscoveryStage:retryDiscoveryStage||previousRetryStage||null,previousRetryDiscoveryStage:previousRetryStage||null,lastDiscoveryClass:discoveryClass||previousClass||null,previousDiscoveryClass:previousClass||null,discoveryClass,reason:urgent.includes(r)?'urgent':witnessed.includes(r)?'witnessed-url':'alternate-eligible-cohorts',previousLane:previous||null,target:`${r.date}:${r.venue}:${r.raceNo}`,eligibleCards:eligible.filter(x=>lane(x)==='card').length,eligibleDiscovery:eligible.filter(x=>lane(x)==='discovery').length,eligibleUntriedDiscovery:eligible.filter(x=>lane(x)==='discovery'&&!receipts.has(identity(x))).length,eligibleRetryDiscovery:eligible.filter(x=>lane(x)==='discovery'&&receipts.has(identity(x))).length,eligibleContinuationDiscovery:eligible.filter(x=>lane(x)==='discovery'&&receipts.has(identity(x))&&continuation(x)).length,eligibleReexplorationDiscovery:eligible.filter(x=>lane(x)==='discovery'&&receipts.has(identity(x))&&!continuation(x)).length};
  let url;try{url=witnessedCard||witnessedUrl(r)||officialUrl(r.sourceUrl);}catch{return{ok:false,status:'missing-program-source',externalRequests:0};}
  const meta=metaFromRacecardUrl(url),targetDate=r.date;
- const source={date:targetDate,venue:r.venue,raceNo:r.raceNo,snapshotId:`official-card:${targetDate}:${r.venue}:${r.raceNo}:${r.sourceBasis}`,officialRosterDiscoveryUrl:url};
+ const source={date:targetDate,venue:r.venue,raceNo:r.raceNo,snapshotId:identity(r),officialRosterDiscoveryUrl:url,startAt:`${targetDate}T${r.startTime}:00+09:00`};
+ const discoveryReceipt=receiptById.get(source.snapshotId);if(discoveryReceipt)source.discoveryReceipt={...discoveryReceipt};
+ // Reuse a due same-day/same-venue meeting URL from the already-read receipts.
+ // No extra SELECT, URL construction, or write.
+ const meetingReceipt=waiting.find(row=>{const m=metaFromMeetingListUrl(row.card_url);return m?.date===targetDate&&m.venue===r.venue;});
+ if(meetingReceipt)source.officialMeetingListUrl=meetingReceipt.card_url;
  if(meta?.date===targetDate&&meta.venue===r.venue&&meta.raceNo===r.raceNo)source.officialCardUrl=url;
- return{...await (deps.discover||discoverExpectedCard)(db,source,deps),target:{date:targetDate,venue:r.venue,raceNo:r.raceNo},predictionRebuilt:false};
+ if(deps.discover?.acceptsDueInventory){
+  source.sharedInventory=eligible.map(q=>{
+   const saved=(q===r?source.officialCardUrl:null)||receiptCards.get(identity(q))||witnessedUrl(q),m=metaFromRacecardUrl(saved);
+   const exact=m?.date===q.date&&m.venue===q.venue&&m.raceNo===q.raceNo;
+   const meeting=waiting.find(row=>{const x=metaFromMeetingListUrl(row.card_url);return x?.date===q.date&&x.venue===q.venue;});
+   return{date:q.date,venue:q.venue,raceNo:q.raceNo,startAt:`${q.date}T${q.startTime}:00+09:00`,rootUrl:!exact&&isPublishedCardNavigation(saved,q)?saved:meeting?.card_url||q.sourceUrl,...(exact?{cardUrl:saved}:{})};
+  });
+ }
+ const result=await (deps.discover||discoverExpectedCard)(db,source,deps);
+ const actualTarget=result.target||{date:targetDate,venue:r.venue,raceNo:r.raceNo};
+ if(!eligible.some(q=>q.date===actualTarget.date&&q.venue===actualTarget.venue&&q.raceNo===actualTarget.raceNo))throw Error('Shared acquisition returned a target outside the due inventory');
+ return{...result,...(result.cardSelection?{cardSelection:result.cardSelection}:result.externalRequests?{cardSelection:selection}:{}),target:actualTarget,predictionRebuilt:false};
 }

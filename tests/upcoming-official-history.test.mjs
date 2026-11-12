@@ -53,3 +53,33 @@ test('SQL coverage retains horses with one or two valid prior starts and ignores
  for(const n of [0,1,2,3]){const name='horse'+n;sql.prepare('INSERT INTO jra_runners VALUES(?,?,?)').run('race',name,3);for(let i=0;i<n;i++)sql.prepare('INSERT INTO jra_past_performances VALUES(?,?,?,?)').run(name,'2026-10-0'+(i+1),1,10);sql.prepare('INSERT INTO jra_past_performances VALUES(?,?,?,?)').run(name,'2026-10-17',1,10);}
  assert.equal(sql.prepare('SELECT '+missingRecentHistorySql("'race'","'2026-10-17'")+' AS missing').get().missing,3);sql.close();
 });
+
+test('formal-only handoff selects its saved target within the existing eligible plan without overriding today urgency',async()=>{
+ const later={raceKey:'2026-10-18:京都:2',date:'2026-10-18',venue:'京都',raceNo:2},first={...later,raceKey:'2026-10-18:京都:11',raceNo:11},today={...first,date:'2026-10-17',raceKey:'2026-10-17:京都:11'};
+ for(const [plan,target,expected] of [[[first,later],later.raceKey,later.raceKey],[[first,later], '2026-10-18:京都:99',first.raceKey],[[later,today],later.raceKey,today.raceKey]]){
+  let reads=0,calls=0;const r=await collectUpcomingOfficialHistory({}, {now:()=>stamp,previousCardSelection:{target,priorityFormalHistoryPending:true},plan:async()=>plan,status:async()=>{reads++;return{runners:[{storedRows:0,due:true}]};},collect:async()=>{calls++;return{status:'collected',externalRequests:1};}});
+  assert.equal(r.priorityRaceKey,expected);assert.equal(reads,1);assert.equal(calls,1);
+ }
+});
+
+test('new-week stored 11R precedes 12R without a fixed roster, preserving date and explicit target priority',async()=>{
+ const sql=new DatabaseSync(':memory:');
+ sql.exec(`CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,race_name TEXT,runner_count INTEGER);
+ CREATE TABLE jra_runners(race_key TEXT,horse_name TEXT,age INTEGER);
+ CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,start_time TEXT,source_url TEXT);
+ CREATE TABLE jra_past_performances(horse_name TEXT,race_date TEXT,finish_position INTEGER,field_size INTEGER)`);
+ const keys=[];
+ for(const date of ['2026-11-07','2026-11-08'])for(const no of [12,11,10]){
+  const key=`${date}:京都:${no}`;keys.push(key);
+  sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?,?)').run(key,date,'京都',no,'合成カード',1);
+  sql.prepare('INSERT INTO jra_runners VALUES(?,?,?)').run(key,key,4);
+ }
+ const db={prepare(q){return{bind(...args){return{async all(){return{results:sql.prepare(q).all(...args)}}}}}}};
+ const now=Date.parse('2026-11-06T16:00:00+09:00');
+ const plan=await upcomingOfficialHistoryPlan(db,now);
+ assert.deepEqual(plan.map(r=>r.raceNo),[11,12,10,11,12,10]);
+ assert.equal(plan[0].targetMain,true);
+ const explicit=await upcomingOfficialHistoryPlan(db,now,[{raceKey:keys[2],priority:0},{raceKey:keys[3],priority:0}]);
+ assert.deepEqual(explicit.map(r=>r.raceKey),[keys[2],keys[1],keys[0],keys[3],keys[4],keys[5]]);
+ sql.close();
+});

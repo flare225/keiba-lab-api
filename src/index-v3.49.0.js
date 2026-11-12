@@ -1,4 +1,10 @@
 import {readRosterVersion} from './roster-version-read.js';
+import {focusedRaceTarget,focusScheduleState,runFocusedScheduled} from './focused-race-completion.js';
+import {readWithdrawalEvidence} from './reviewed-withdrawal-card.js';
+import {readMissingRosterEvidence} from './missing-roster-evidence.js';
+import {readSharedPageEvidence} from './shared-page-evidence.js';
+import {readSavedAutomaticSeal} from './saved-automatic-seal.js';
+import {scheduledSavedAutomaticSeal} from './saved-automatic-seal-queue.js';
 import {measureD1Operation} from './d1-operation-metrics.js';
 import {readEvidenceEvaluation,saveEvidenceEvaluation} from './evidence-evaluation-snapshots.js';
 import {rosterHistoryInventory} from './roster-history-inventory.js';
@@ -17,7 +23,7 @@ import {resolveExpectedCollectionSource} from './index-v3.46.0.js';
 import {readAutomaticPrediction,captureAutomaticPrediction,scheduledAutomaticPrediction,recoverOldAutomaticPrediction} from './automatic-pre-race-prediction.js';
 import {trainSavedReferences,readSavedReferenceTraining} from './saved-reference-learning.js';
 import {importExpectedRosterSeed} from './expected-roster-seeds.js';
-import {saveExpectedRoster} from './expected-roster-registry.js';
+import {saveExpectedRoster,readExpectedRosterSnapshot} from './expected-roster-registry.js';
 import {weekDataInventory} from './week-data-inventory.js';
 import {readSavedPreRaceAssessment,preserveSavedPreRaceAssessment,labelSavedPreRaceAssessment} from './saved-pre-race-assessment.js';
 import {capturePostRaceAssessment,readPostRaceAssessments,postRaceAssessmentPage} from './post-race-assessment.js';
@@ -26,7 +32,7 @@ import {verifyEditorialClaims} from './editorial-claim-verification.js';
 import {seedEditorialReferences,readEditorialReferences,editorialReferencePage} from './editorial-reference-notes.js';
 import {scheduledReadStatus,runWithScheduledReadBudget,scheduledBudgetLane} from './scheduled-read-budget.js';
 import {COLLECTION_READ_POLICY,shouldRunScheduled} from './collection-read-policy.js';
-import {runPipelineJob} from './pipeline-runs-v3.40.0.js';
+import {runPipelineJob,readPipelineFailure} from './pipeline-runs-v3.40.0.js';
 import {priorDetailStatus,collectPriorDetails} from './prior-result-details.js';
 import {collectLockedMarkResults,readLockedMarkResults} from './locked-mark-result-evidence.js';
 import {userMarkLockEndpoint,readUserMarkLock} from './user-mark-lock.js';
@@ -43,6 +49,33 @@ const historyInventories=new WeakMap();
 export default {
  async fetch(request,env,ctx){
   const u=new URL(request.url);
+  if(u.pathname==='/v1/lab/shared-page-evidence'){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
+   if(request.method!=='GET')return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
+   if(u.searchParams.get('confirm')!=='READ_STORED_SOURCE')return Response.json({ok:false,error:'explicit source read confirmation required'},{status:400,headers});
+   try{return Response.json({...await measureD1Operation(env.DB,db=>readSharedPageEvidence(db,{scope:u.searchParams.get('scope'),pageUrl:u.searchParams.get('page_url'),includeBody:u.searchParams.get('include_body')==='1'})),version:VERSION},{headers});}
+   catch(e){return Response.json({ok:false,error:String(e.message||e)},{status:409,headers});}
+  }
+  if(u.pathname==='/v1/lab/missing-roster-evidence'){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
+   if(request.method!=='GET')return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
+   if(u.searchParams.get('confirm')!=='READ_STORED_SOURCE')return Response.json({ok:false,error:'explicit source read confirmation required'},{status:400,headers});
+   try{return Response.json({...await measureD1Operation(env.DB,db=>readMissingRosterEvidence(db,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no'),includeBody:u.searchParams.get('include_body')==='1'})),version:VERSION},{headers});}
+   catch(e){return Response.json({ok:false,error:String(e.message||e)},{status:409,headers});}
+  }
+  if(u.pathname==='/v1/lab/history/race'&&request.method==='GET'){
+   const response=await app.fetch(request,env,ctx);if(!response.ok)return response;
+   const data=await response.json();if(!data.ok||!data.race?.raceKey)return Response.json(data,{status:response.status,headers:response.headers});
+   const withdrawals=await readWithdrawalEvidence(env.DB,data.race.raceKey);
+   data.withdrawals=withdrawals;data.withdrawnRunnerCount=withdrawals.length;data.activeRunnerCount=(data.runners?.length||0)-withdrawals.length;data.runners=data.runners?.map(r=>({...r,entryStatus:withdrawals.some(w=>w.horseNo===r.horseNo)?'cancelled':'declared'}));
+   return Response.json({...data,version:VERSION},{status:response.status,headers:response.headers});
+  }
+
+  if(u.pathname==='/v1/lab/pipeline-status'&&request.method==='GET'&&u.searchParams.has('failure_job')){
+   const job=u.searchParams.get('failure_job'),trigger=u.searchParams.get('trigger_kind')||'scheduled',headers={'cache-control':'no-store','access-control-allow-origin':'*'};
+   if(!['archive','history','results','learning','prior-details'].includes(job)||!['scheduled','manual'].includes(trigger))return Response.json({ok:false,error:'Unsupported pipeline failure scope'},{status:400,headers});
+   try{return Response.json({...await readPipelineFailure(env.DB,job,trigger),version:VERSION},{headers});}catch(e){return Response.json({ok:false,error:String(e.message||e),version:VERSION},{status:503,headers});}
+  }
   if(u.pathname==='/v1/lab/evidence-evaluation'){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*','access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'content-type'};
    if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
@@ -63,6 +96,12 @@ export default {
    const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
    try{const pending=await readPrecardRaceState(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')||u.searchParams.get('raceNo')});if(pending)return Response.json({...pending.data,version:VERSION},{status:pending.status,headers});}
    catch(e){console.error('precard state read failed',String(e.message||e));return Response.json({ok:false,status:'state-unavailable',error:'対象レースの保存状態を確認できません。'},{status:503,headers});}
+  }
+  if(u.pathname==='/v1/lab/expected-roster-snapshot'){
+   const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
+   if(request.method!=='GET')return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
+   try{return Response.json({...await readExpectedRosterSnapshot(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no'),snapshotSha256:u.searchParams.get('snapshot_sha256')}),version:VERSION},{headers});}
+   catch(e){return Response.json({ok:false,error:String(e.message||e)},{status:409,headers});}
   }
   if(u.pathname==='/v1/lab/expected-runners'&&request.method==='GET'&&u.searchParams.has('date')){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*'};
@@ -110,7 +149,7 @@ export default {
   if(u.pathname==='/v1/lab/provisional-prediction-snapshot'){
    const headers={'cache-control':'no-store','access-control-allow-origin':'*','access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'content-type'};
    if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
-   try{const b=request.method==='GET'?{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')}:request.method==='POST'?await request.json():null;
+   try{const b=request.method==='GET'?{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no'),...(u.searchParams.has('basis')?{basis:u.searchParams.get('basis'),sourceSha256:u.searchParams.get('source_sha256')}:{})}:request.method==='POST'?await request.json():null;
     if(!b)return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
     if(request.method==='POST'&&b.confirm!=='SAVE_PROVISIONAL')throw Error('confirm SAVE_PROVISIONAL is required');
     const result=request.method==='GET'?await readProvisionalPrediction(env.DB,b):await saveProvisionalPrediction(env.DB,b,async()=>{const source=await resolveExpectedCollectionSource(env.DB,b);if(!source)throw Error('想定名簿が未保存です。');const repair=await repairStoredProgramConditions(env.DB,source);return {...await provisionalExpectedPrediction(env.DB,source),programRepair:repair};});
@@ -129,7 +168,14 @@ export default {
    if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
    try{
     let result;
-    if(request.method==='GET')result=await readAutomaticPrediction(env.DB,{date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')});
+    if(request.method==='GET'){
+     const target={date:u.searchParams.get('date'),venue:u.searchParams.get('venue'),raceNo:u.searchParams.get('race_no')};
+     result=await readAutomaticPrediction(env.DB,target,{includePending:u.searchParams.get('include_pending')==='1',historyHorseNo:u.searchParams.get('history_horse_no')});
+     if(result.available&&u.searchParams.get('include_lock')==='1'){
+      try{const {snapshot,...lock}=await readSavedAutomaticSeal(env.DB,target,{includePending:true});result.lock=lock;}
+      catch(e){if(e.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;result.lock={ok:false,available:false,locked:false,status:'verification-failed'};}
+     }
+    }
     else if(request.method==='POST'){const b=await request.json();if(b.confirm!=='CAPTURE')throw Error('confirm CAPTURE is required');result=await captureAutomaticPrediction(env.DB,b);}
     else return Response.json({ok:false,error:'method not allowed'},{status:405,headers});
     return Response.json({...result,version:VERSION},{headers});
@@ -281,10 +327,15 @@ export default {
  },
  async scheduled(event,env,ctx){
   if(!shouldRunScheduled(event))return;
+  const focus=focusedRaceTarget(env.LAB_COMPLETION_FOCUS);
+  if(focus&&focusScheduleState(focus,event,Date.now())!=='active')return;
   return runWithScheduledReadBudget(env.DB,async db=>{
   const budgetEnv={...env,DB:db};
+  if(focus)return runFocusedScheduled(event,budgetEnv,focus);
   if(event.cron==='*/3 * * * *'){
-   try{await scheduledAutomaticPrediction(db);}catch(e){console.error('automatic-prediction',String(e));}
+   try{await scheduledAutomaticPrediction(db);}catch(e){if(e.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;console.error('automatic-prediction',String(e));}
+   // Explicit activation approval is separate from deploying the read adapter.
+   if(env.LAB_SAVED_AUTOMATIC_LOCK==='true')try{console.info('saved-automatic-lock',JSON.stringify(await scheduledSavedAutomaticSeal(db,{enabled:true})));}catch(e){if(e.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;console.error('saved-automatic-lock',String(e));}
    await dispatchLiveSources(event,budgetEnv);
    await collectLockedMarkResults(db);
    try{await scheduledAutomaticCandidates(db);}catch(e){console.error('automatic-learning-candidate',String(e));}

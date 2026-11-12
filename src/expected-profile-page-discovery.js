@@ -1,5 +1,6 @@
 import {ensureCollectionTables,officialUrl} from './history-collection-v3.37.0.js';
 import {extractLinks} from './index-v1.1.4.js';
+const quota=e=>e?.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e));
 export async function readExpectedProfilePage(db,source){
  if(source.officialHorsePage)return source.officialHorsePage;
  if(!source.officialRacePage)return null;
@@ -14,7 +15,7 @@ export async function discoverExpectedProfilePage(db,source,deps={}){
  if(old?.source_url===url&&Number(old.next_attempt_at)>stamp)return{ok:true,status:'profile-page-discovery-not-due',externalRequests:0};
  const token=crypto.randomUUID(),claim=await db.prepare("UPDATE lab_history_collection_budget SET locked_until=?,lock_token=? WHERE name='jra-history' AND locked_until<=? AND next_batch_at<=?").bind(stamp+120000,token,stamp,stamp).run();
  if(Number(claim.meta?.changes)!==1)return{ok:true,status:'cooldown',externalRequests:0};
- let pause=60000;
+ let pause=60000,quotaStopped=false;
  try{
  const response=await(deps.fetcher||fetch)(url,{headers:{accept:'text/html'},redirect:'follow',signal:AbortSignal.timeout(10000)});
  if(!response.ok){if([403,429,503].includes(response.status))pause=3600000;throw Error('JRA取得 HTTP '+response.status)}
@@ -27,6 +28,11 @@ export async function discoverExpectedProfilePage(db,source,deps={}){
  await db.prepare('INSERT OR REPLACE INTO lab_expected_profile_pages VALUES(?,?,?,?)').bind(source.snapshotId,url,page,stamp+(page?86400000:3600000)).run();
  if(page){const saved=await readExpectedProfilePage(db,source);if(saved!==page)throw Error('公開リンクをDBで読み返せません。');}
  return{ok:!!page,status:page?'profile-page-discovered':'profile-page-not-published-in-fetched-source',externalRequests:1,pageUrl:page,profileLinksFound:0,historyRowsSaved:0};
- }catch(e){await db.prepare('INSERT OR REPLACE INTO lab_expected_profile_pages VALUES(?,?,NULL,?)').bind(source.snapshotId,url,stamp+3600000).run();return{ok:false,status:'failed',externalRequests:1,error:String(e.message||e)};}
- finally{await db.prepare("UPDATE lab_history_collection_budget SET locked_until=0,next_batch_at=?,lock_token=NULL WHERE name='jra-history' AND lock_token=?").bind((deps.now||Date.now)()+pause,token).run();}
+ }catch(e){
+  if(quota(e)){quotaStopped=true;throw e;}
+  try{await db.prepare('INSERT OR REPLACE INTO lab_expected_profile_pages VALUES(?,?,NULL,?)').bind(source.snapshotId,url,stamp+3600000).run();}
+  catch(writeError){if(quota(writeError))quotaStopped=true;throw writeError;}
+  return{ok:false,status:'failed',externalRequests:1,error:String(e.message||e)};
+ }
+ finally{if(!quotaStopped)await db.prepare("UPDATE lab_history_collection_budget SET locked_until=0,next_batch_at=?,lock_token=NULL WHERE name='jra-history' AND lock_token=?").bind((deps.now||Date.now)()+pause,token).run();}
 }

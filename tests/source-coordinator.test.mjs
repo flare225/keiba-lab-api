@@ -2,6 +2,17 @@ import test from 'node:test';import assert from 'node:assert/strict';import {Dat
 import {runSourceCoordinator,pickSourceJob,SOURCE_CRON,LEGACY_SOURCE_CRONS} from '../src/source-coordinator-v3.40.0.js';import {pipelineStatus,pipelineHeartbeat} from '../src/pipeline-runs-v3.40.0.js';import {archivePage} from '../src/archive-page-v3.40.0.js';
 function fixture(){const sql=new DatabaseSync(':memory:');const db={prepare(q){const wrap=(args=[])=>({bind(...a){return wrap(a)},async first(){return sql.prepare(q).get(...args)||null},async all(){return{results:sql.prepare(q).all(...args)}},async run(){const result=sql.prepare(q).run(...args);return{meta:{changes:Number(result.changes)}}}});return wrap()}};return{db,sql}}
 const start=Date.parse('2026-10-06T08:00:00Z');
+test('persisted predraw handoff survives cooldown and clears after its history turn without another state query',async()=>{
+ const {db,sql}=fixture();let stamp=start;const seen=[];
+ const jobs={archive:async()=>({status:'idle'}),results:async()=>({status:'idle'}),history:async context=>{
+  seen.push(context.previousCardSelection?.savedPredrawHistoryPending??null);
+  if(seen.length===1)return{status:'predraw-page-preserved',card:{kind:'predraw'},historyWorkStage:'acquisition',cardSelection:{lane:'card'},externalRequests:1};
+  if(seen.length===2)return{status:'cooldown',externalRequests:0};
+  return{status:'collected',historyWorkStage:'history',externalRequests:1,cardSelection:{...context.previousCardSelection,savedPredrawHistoryPending:false}};
+ }};
+ for(let i=0;i<12;i++){await runSourceCoordinator({cron:SOURCE_CRON,scheduledTime:stamp},{DB:db},{now:()=>stamp,jobs});stamp+=180000;}
+ assert.deepEqual(seen,[null,true,true,false]);assert.equal(sql.prepare("SELECT COUNT(*) n FROM lab_bounded_pipeline_runs WHERE job='results'").get().n,4);sql.close();
+});
 test('known legacy timer rotates every official collection stage, one source job per event',async()=>{const {db,sql}=fixture();let stamp=start;const calls=[],jobs=Object.fromEntries(['archive','results','history'].map(j=>[j,async()=>{calls.push(j);return{ok:true,status:'collected',externalRequests:1}}]));for(let i=0;i<6;i++){const r=await runSourceCoordinator({cron:'5,15,25,35,45,55 * * * *',scheduledTime:stamp},{DB:db},{now:()=>stamp,jobs});assert.equal(r.externalRequests,1);stamp+=600000}assert.deepEqual(calls,['archive','results','history','archive','results','history']);const status=await pipelineStatus(db,stamp);assert.ok(status.jobs.filter(x=>!['learning'].includes(x.job)).every(x=>x.heartbeat==='observed'));assert.equal(status.jobs.find(x=>x.job==='learning').heartbeat,'not-observed');assert.equal(status.jobs.some(x=>x.job==='learning-source-track'),false);sql.close()});
 test('duplicate delivery cannot choose a different job and repeat a source fetch',async()=>{const {db,sql}=fixture();const calls=[],jobs=Object.fromEntries(['archive','results','history'].map(j=>[j,async()=>{calls.push(j);return{ok:true,status:'collected',externalRequests:1}}]));const event={cron:SOURCE_CRON,scheduledTime:start};await runSourceCoordinator(event,{DB:db},{now:()=>start,jobs});assert.equal((await runSourceCoordinator(event,{DB:db},{now:()=>start,jobs})).status,'already-recorded');assert.deepEqual(calls,['archive']);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_bounded_pipeline_runs').get().n,1);sql.close()});
 test('manual progress is used for fair work rotation without claiming cron execution',async()=>{const {db,sql}=fixture();let stamp=start;const jobs=Object.fromEntries(['archive','results','history'].map(j=>[j,async()=>({ok:true,status:'collected',externalRequests:1})]));await runSourceCoordinator({cron:'manual',scheduledTime:stamp},{DB:db},{trigger:'manual',now:()=>stamp,jobs});assert.equal(await pickSourceJob(db),'results');const status=await pipelineStatus(db,stamp);assert.equal(status.jobs[0].heartbeat,'not-observed');stamp+=180000;assert.equal((await runSourceCoordinator({cron:SOURCE_CRON,scheduledTime:stamp},{DB:db},{now:()=>stamp,jobs})).dispatch.job,'results');sql.close()});
@@ -10,4 +21,92 @@ test('source timer changes preserve recognized legacy routes and readable truthf
 
 test('stale starts are not presented as healthy running jobs',()=>{
  const run={started_at:start,status:'running'};assert.equal(pipelineHeartbeat(run,start+60000),'running');assert.equal(pipelineHeartbeat(run,start+6*60000),'completion-unconfirmed');assert.equal(pipelineHeartbeat(run,start+31*60000),'overdue');assert.equal(pipelineHeartbeat({...run,status:'cooldown',finished_at:start+2000},start+60000),'observed');
+});
+test('fairness context reuses indexed prior history result, survives cooldown and leaves job rotation unchanged',async()=>{
+ const {db,sql}=fixture();let stamp=start,seen=[];const jobs={archive:async()=>({ok:true,status:'idle',externalRequests:0}),results:async()=>({ok:true,status:'idle',externalRequests:0}),history:async context=>{seen.push(context.previousCardSelection?.lane||null);return seen.length===1?{ok:true,status:'confirmed-predraw-saved',externalRequests:1}:seen.length===2?{ok:true,status:'cooldown',externalRequests:0}:{ok:true,status:'official-card-index-found',cardSelection:{lane:'discovery'},externalRequests:1}}};
+ for(let i=0;i<12;i++){await runSourceCoordinator({cron:SOURCE_CRON,scheduledTime:stamp},{DB:db},{now:()=>stamp,jobs});stamp+=600000;}
+ assert.deepEqual(seen,[null,'card','card','discovery']);const plan=sql.prepare("EXPLAIN QUERY PLAN SELECT result_json FROM lab_bounded_pipeline_runs WHERE job='history' AND trigger_kind='scheduled' ORDER BY started_at DESC LIMIT 1").all();assert.ok(plan.some(x=>/lab_pipeline_job_started/.test(x.detail)));assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_bounded_pipeline_runs').get().n,12);sql.close();
+});
+
+test('pipeline status selects latest once per group rather than once per historical run',async()=>{
+ const {db,sql}=fixture();
+ await runSourceCoordinator({cron:SOURCE_CRON,scheduledTime:start},{DB:db},{now:()=>start,jobs:{archive:async()=>({status:'idle'})}});
+ const insert=sql.prepare('INSERT INTO lab_bounded_pipeline_runs(run_id,job,trigger_kind,started_at,status,result_json) VALUES(?,?,?,?,?,?)');
+ for(let i=0;i<2000;i++)insert.run('history'+i,'history','scheduled',start+i,'complete',JSON.stringify({n:i}));
+ insert.run('tie-z','history','scheduled',start+1999,'complete',JSON.stringify({n:'tie'}));
+ insert.run('manual','history','manual',start+2000,'complete',JSON.stringify({n:'manual'}));
+ let query;const observed={prepare(q){query=q;return db.prepare(q)}};
+ const result=await pipelineStatus(observed,start+3000);assert.equal(result.jobs.find(x=>x.job==='history').scheduled.result.n,'tie');assert.equal(result.jobs.find(x=>x.job==='history').manual.result.n,'manual');
+ assert.match(query,/FROM \(SELECT DISTINCT job,trigger_kind/);
+ const before=sql.prepare('SELECT p.* FROM lab_bounded_pipeline_runs p WHERE p.run_id=(SELECT q.run_id FROM lab_bounded_pipeline_runs q WHERE q.job=p.job AND q.trigger_kind=p.trigger_kind ORDER BY q.started_at DESC,q.run_id DESC LIMIT 1) ORDER BY p.job,p.trigger_kind').all();
+ assert.deepEqual(sql.prepare(query).all(),before);sql.close();
+});
+
+test('source latest lookup preserves every trigger kind and missing-job fairness with accumulated history',async()=>{
+ const {db,sql}=fixture();await runSourceCoordinator({cron:SOURCE_CRON,scheduledTime:start},{DB:db},{now:()=>start,jobs:{archive:async()=>({status:'idle'})}});
+ const insert=sql.prepare('INSERT INTO lab_bounded_pipeline_runs(run_id,job,trigger_kind,started_at,status) VALUES(?,?,?,?,?)');
+ for(let i=0;i<20000;i++)insert.run('bulk'+i,['archive','results','history','learning'][i%4],['scheduled','manual','custom'][i%3],start+i,'complete');
+ let query;const observed={prepare(q){query=q;return db.prepare(q)}};
+ const expected=sql.prepare("SELECT job,MAX(started_at) latest FROM lab_bounded_pipeline_runs WHERE job IN ('archive','results','history') GROUP BY job").all();
+ assert.equal(await pickSourceJob(observed),'archive');assert.deepEqual(sql.prepare(query).all(),expected);
+ sql.exec("DELETE FROM lab_bounded_pipeline_runs WHERE job='results'");assert.equal(await pickSourceJob(db),'results');
+ sql.exec('DELETE FROM lab_bounded_pipeline_runs');assert.equal(await pickSourceJob(db),'archive');sql.close();
+});
+
+test('explicit failure read retrieves saved evidence hidden by cooldown with one indexed bounded SELECT',async()=>{
+ const {db,sql}=fixture();await runSourceCoordinator({cron:SOURCE_CRON,scheduledTime:start},{DB:db},{now:()=>start,jobs:{archive:async()=>({status:'idle'})}});
+ const evidence={target:{date:'2026-10-25',venue:'京都',raceNo:3},cardInspection:{problemRows:[{connectionCell:'missing age'}]}};
+ const put=sql.prepare('INSERT INTO lab_bounded_pipeline_runs(run_id,job,trigger_kind,started_at,status,result_json) VALUES(?,?,?,?,?,?)');put.run('failure','history','scheduled',start+1,'deferred',JSON.stringify({error:'Not a pre-draw roster',failureEvidence:evidence}));put.run('later','history','scheduled',start+2,'cooldown','{}');
+ const app=(await import('../src/index-v3.49.0.js')).default;let query,count=0;const observed={prepare(q){count++;query=q;assert.match(q,/^SELECT/);return db.prepare(q)}};
+ const response=await app.fetch(new Request('https://test/v1/lab/pipeline-status?failure_job=history'),{DB:observed},{}),data=await response.json();assert.equal(response.status,200);assert.equal(data.runId,'failure');assert.deepEqual(data.failureEvidence,evidence);assert.equal(count,1);assert.equal(data.scannedRuns,2);assert.match(query,/LIMIT 32$/);
+ const plan=sql.prepare('EXPLAIN QUERY PLAN '+query).all('history','scheduled').map(r=>r.detail).join(' ');assert.match(plan,/lab_pipeline_job_started/);
+ count=0;assert.equal((await app.fetch(new Request('https://test/v1/lab/pipeline-status?failure_job=invalid'),{DB:observed},{})).status,400);assert.equal(count,0);
+ for(let i=0;i<32;i++)put.run('new'+i,'history','scheduled',start+3+i,'cooldown','{}');const {readPipelineFailure}=await import('../src/pipeline-runs-v3.40.0.js');assert.equal((await readPipelineFailure(db,'history')).available,false);assert.equal((await readPipelineFailure(db,'history')).scannedRuns,32);sql.close();
+});
+
+
+test('failure read exposes the newest error separately from an older evidence-bearing run without another SELECT',async()=>{
+ const {db,sql}=fixture();await runSourceCoordinator({cron:SOURCE_CRON,scheduledTime:start},{DB:db},{now:()=>start,jobs:{archive:async()=>({status:'idle'})}});
+ const put=sql.prepare('INSERT INTO lab_bounded_pipeline_runs(run_id,job,trigger_kind,started_at,finished_at,status,result_json,error) VALUES(?,?,?,?,?,?,?,?)');
+ const evidence={httpStatus:200,target:{date:'2026-11-08',venue:'東京',raceNo:4}};
+ put.run('old-evidence','history','scheduled',start+1,start+2,'failed',JSON.stringify({error:'card link not confirmed',failureEvidence:evidence}),null);
+ put.run('new-error','history','scheduled',start+3,start+4,'failed','{}','JRA取得 HTTP 403');
+ put.run('other-job','results','scheduled',start+5,start+6,'failed','{}','different job');
+ put.run('manual','history','manual',start+7,start+8,'failed','{}','manual error');
+ put.run('cooldown','history','scheduled',start+9,start+10,'cooldown','{}',null);
+ let count=0;const observed={prepare(q){count++;assert.match(q,/^SELECT/);assert.match(q,/LIMIT 32$/);return db.prepare(q)}};
+ const {readPipelineFailure}=await import('../src/pipeline-runs-v3.40.0.js');
+ const result=await readPipelineFailure(observed,'history');assert.equal(count,1);assert.equal(result.runId,'old-evidence');assert.deepEqual(result.failureEvidence,evidence);
+ assert.deepEqual(result.latestFailure,{runId:'new-error',startedAt:new Date(start+3).toISOString(),finishedAt:new Date(start+4).toISOString(),status:'failed',error:'JRA取得 HTTP 403'});
+ put.run('result-error','history','scheduled',start+11,start+12,'failed',JSON.stringify({raceKey:'2026-11-08:東京:4',error:'保存した全馬と出馬表が一致しません。'}),null);
+ count=0;const scoped=await readPipelineFailure(observed,'history');assert.equal(count,1);assert.equal(scoped.latestFailure.raceKey,'2026-11-08:東京:4');assert.equal(scoped.latestFailure.runId,'result-error');assert.equal(scoped.runId,'old-evidence');
+ sql.exec("DELETE FROM lab_bounded_pipeline_runs WHERE run_id='result-error'");
+ sql.exec("DELETE FROM lab_bounded_pipeline_runs WHERE run_id='new-error'");assert.equal((await readPipelineFailure(db,'history')).latestFailure.runId,'old-evidence');
+ sql.exec("DELETE FROM lab_bounded_pipeline_runs WHERE job='history' AND trigger_kind='scheduled'");assert.equal((await readPipelineFailure(db,'history')).latestFailure,null);sql.close();
+});
+
+test('expected discovery fairness survives acquisition and safety stops in the existing history receipt',async()=>{
+ const {db,sql}=fixture();let stamp=start;const seen=[];
+ const jobs={archive:async()=>({status:'idle'}),results:async()=>({status:'idle'}),history:async context=>{
+  seen.push(context.previousExpectedHistoryWorkKind);
+  if(seen.length===1)return{status:'failed',externalRequests:1,expectedHistoryWorkKind:'discovery'};
+  if(seen.length===2)return{status:'cooldown',externalRequests:0};
+  if(seen.length===3)return{status:'page-parsed',historyWorkStage:'acquisition',externalRequests:0};
+  return{status:'collected',externalRequests:1,expectedHistoryWorkKind:'known'};
+ }};
+ for(let i=0;i<15;i++){await runSourceCoordinator({cron:SOURCE_CRON,scheduledTime:stamp},{DB:db},{now:()=>stamp,jobs});stamp+=180000;}
+ assert.deepEqual(seen,[null,'discovery','discovery','discovery','known']);
+ assert.equal(sql.prepare("SELECT COUNT(*) n FROM lab_bounded_pipeline_runs WHERE job='results'").get().n,5);sql.close();
+});
+
+test('nested failure read checks the second bounded horse slot, trims errors and keeps existing evidence first',async()=>{
+ const {db,sql}=fixture();const {runPipelineJob,readPipelineFailure}=await import('../src/pipeline-runs-v3.40.0.js');
+ await runPipelineJob(db,'history','scheduled',async()=>({status:'failed',failureEvidence:{httpStatus:200},error:'older source evidence'}),{now:()=>start,scheduledTime:start});
+ const record=results=>({status:'partial',before:{race:{raceKey:'expected:confirmed-predraw:2026-11-07:東京:11'}},nextBatchAt:'2026-11-06T01:00:00Z',results});
+ await runPipelineJob(db,'history','scheduled',async()=>record([{status:'checked',error:'ignore nonfailed item'},{status:'failed',horseName:'TargetHorse',error:'x'.repeat(5000)}]),{now:()=>start+1,scheduledTime:start+1});
+ const read=await readPipelineFailure(db,'history');assert.equal(read.error,'older source evidence');assert.equal(read.failureEvidence.httpStatus,200);
+ assert.equal(read.latestFailure.error.length,4000);assert.equal(read.latestFailure.horseName,'TargetHorse');assert.equal(read.latestFailure.raceKey,'expected:confirmed-predraw:2026-11-07:東京:11');
+ sql.exec('DELETE FROM lab_bounded_pipeline_runs');
+ await runPipelineJob(db,'history','scheduled',async()=>record([{status:'checked',error:'ignore'},{status:'failed',error:403},{status:'failed',error:'outside two-horse bound'}]),{now:()=>start+2,scheduledTime:start+2});
+ assert.equal((await readPipelineFailure(db,'history')).latestFailure,null);sql.close();
 });

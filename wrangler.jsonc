@@ -2,6 +2,12 @@
   "name": "keiba-lab-api",
   "main": "src/index-v3.49.0.js",
   "compatibility_date": "2026-10-03",
+  "vars": {
+    "LAB_SHARED_PAGE_ACQUISITION": "true",
+    "LAB_COMPLETION_FOCUS": "{\"date\":\"2026-11-15\",\"venue\":\"京都\",\"raceNo\":11,\"expiresAt\":\"2026-11-15T15:35:00+09:00\"}",
+    "LAB_SAVED_AUTOMATIC_LOCK": "true",
+    "LAB_CARD_COMPLETION_PRIORITIES": "[\"2026-10-25:京都:3\",\"2026-10-25:京都:8\",\"2026-10-25:京都:9\",\"2026-10-25:京都:10\"]"
+  },
   "d1_databases": [
     {
       "binding": "DB",

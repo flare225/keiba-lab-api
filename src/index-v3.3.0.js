@@ -1,6 +1,6 @@
 import app from "./index-v3.2.0.js";
 import {requireLockEvidence} from "./card-evidence.js";
-import {verifyStoredSeal,writeAtomicSeal,ensureSealGuards,ensureCardSealGuard} from "./prospective-seal-store.js";
+import {verifyStoredSeal,writeAtomicSeal,ensureSealGuards,ensureCardSealGuard,ensureProspectiveSealTables} from "./prospective-seal-store.js";
 
 function json(data,status=200){return new Response(JSON.stringify(data,null,2),{status,headers:{"content-type":"application/json; charset=UTF-8","access-control-allow-origin":"*"}})}
 function validDate(v){return /^\d{4}-\d{2}-\d{2}$/.test(v||"")}
@@ -18,34 +18,7 @@ async function invoke(origin,path,params,env,ctx){
   const u=new URL(path,origin);for(const[k,v]of Object.entries(params||{}))if(v!=null)u.searchParams.set(k,String(v));
   const r=await app.fetch(new Request(u.href,{method:"GET"}),env,ctx);let d;try{d=await r.json()}catch{d={ok:false,error:`non-json response (${r.status})`}}return{status:r.status,data:d};
 }
-async function ensureTables(db){
-  await db.prepare(`CREATE TABLE IF NOT EXISTS lab_model_locks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    race_key TEXT NOT NULL,
-    model_version TEXT NOT NULL,
-    track_condition TEXT,
-    seal_kind TEXT NOT NULL,
-    weights_json TEXT NOT NULL,
-    snapshot_json TEXT NOT NULL,
-    sealed_at TEXT NOT NULL,
-    UNIQUE(race_key,model_version,track_condition)
-  )`).run();
-  await db.prepare(`CREATE TABLE IF NOT EXISTS lab_prospective_seals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    race_key TEXT NOT NULL,
-    race_date TEXT NOT NULL,
-    model_version TEXT NOT NULL,
-    track_condition TEXT NOT NULL,
-    seal_kind TEXT NOT NULL,
-    snapshot_sha256 TEXT NOT NULL,
-    runner_count INTEGER NOT NULL,
-    outcome_count_at_seal INTEGER NOT NULL,
-    future_day_lock INTEGER NOT NULL,
-    quality_json TEXT NOT NULL,
-    sealed_at TEXT NOT NULL,
-    UNIQUE(race_key,model_version,track_condition)
-  )`).run();
-}
+
 async function loadRace(env,date,venue,raceNo){
   const race=await env.DB.prepare(`SELECT race_key,race_date,venue,race_no,race_name,surface,distance,runner_count FROM jra_races WHERE race_date=? AND venue=? AND race_no=?`).bind(date,venue,raceNo).first();
   if(!race)throw new Error("race not found in D1; ingest the race card first");
@@ -72,7 +45,7 @@ async function evidenceDepth(env,race,date,track){
 async function step7ProspectiveSeal(request,env,ctx){
   const u=new URL(request.url),date=u.searchParams.get("date"),venue=u.searchParams.get("venue"),raceNo=Number(u.searchParams.get("race_no")),track=u.searchParams.get("track")||"良";
   if(!validDate(date)||!venue||!Number.isInteger(raceNo)||raceNo<1||raceNo>12)throw new Error("date=YYYY-MM-DD, venue and race_no=1-12 are required");
-  await ensureTables(env.DB);
+  await ensureProspectiveSealTables(env.DB);
   await ensureSealGuards(env.DB);
   const {race,runners}=await loadRace(env,date,venue,raceNo);
   if(!runners.length||runners.length!==Number(race.runner_count))throw new Error(`runner card coverage incomplete: ${runners.length}/${race.runner_count}`);

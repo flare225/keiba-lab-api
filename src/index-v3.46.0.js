@@ -1,4 +1,6 @@
 import {storedExpectedSources} from './expected-roster-registry.js';
+import {readConfirmedPredraw} from './confirmed-predraw-roster.js';
+import {confirmedPredrawSource} from './confirmed-predraw-history-source.js';
 import {targetInput} from './race-history-assessment-v3.31.0.js';
 import app from './index-v3.45.0.js';
 import {expectedHistoryStatus,scheduledWeekendHistory,collectUpcomingExpectedHistory} from './expected-history-collection-v3.46.0.js';
@@ -10,7 +12,10 @@ import {runPipelineJob} from './pipeline-runs-v3.40.0.js';
 export const VERSION='3.46.0';
 export async function resolveExpectedCollectionSource(db,input){
  const t=targetInput(input),registered=await storedExpectedSources(db,t.date,t.date);
- return [...registered,...EXPECTED_SOURCES].find(s=>s.date===t.date&&s.venue===t.venue&&s.raceNo===t.raceNo)||null;
+ const existing=[...registered,...EXPECTED_SOURCES].find(s=>s.date===t.date&&s.venue===t.venue&&s.raceNo===t.raceNo);
+ if(existing)return existing;
+ const predraw=await readConfirmedPredraw(db,t);
+ return predraw?confirmedPredrawSource(predraw,Date.now()):null;
 }
 
 const json=(d,status=200)=>new Response(JSON.stringify(d,null,2),{status,headers:{'content-type':'application/json; charset=UTF-8','cache-control':'no-store','access-control-allow-origin':'*'}});

@@ -23,7 +23,18 @@ test('missed forecasts, missing start times, missing frames, target results and 
 });
 test('scheduled queue includes same-day unstarted Niigata races and records cooldown for missing evidence',async()=>{
  const {sql,db}=await fixture();sql.exec("UPDATE jra_races SET venue='新潟';UPDATE jra_race_program SET venue='新潟';DELETE FROM jra_past_performances");
- const a=await scheduledAutomaticPrediction(db,now);assert.equal(a.target.venue,'新潟');assert.equal(a.status,'awaiting-prior-history');assert.equal(a.saved,0);const b=await scheduledAutomaticPrediction(db,now+60000);assert.equal(b.status,'no-due-race');sql.close();
+ const a=await scheduledAutomaticPrediction(db,now);assert.equal(a.target.venue,'新潟');assert.equal(a.status,'awaiting-prior-history');assert.equal(a.saved,0);assert.equal(a.missingHistoryDetails.length,2);assert.ok(a.missingHistoryDetails.every(r=>r.reason==='no-stored-prior-history'&&r.validFinishRows===0));assert.deepEqual(JSON.parse(sql.prepare('SELECT detail_json FROM lab_automatic_prediction_receipts_v1').get().detail_json).missingHistoryDetails,a.missingHistoryDetails);const b=await scheduledAutomaticPrediction(db,now+60000);assert.equal(b.status,'no-due-race');sql.close();
+});
+
+test('formal prediction hold distinguishes invalid stored finishes from absent histories without saving a partial forecast',async()=>{
+ const {sql,db}=await fixture();sql.exec("UPDATE jra_past_performances SET finish_position=NULL WHERE horse_name='HorseB'");
+ const a=await captureAutomaticPrediction(db,target,now);assert.deepEqual(a.evaluatedHistoryHorses,['HorseA']);assert.deepEqual(a.missingHistoryHorses,['HorseB']);assert.equal(a.missingHistoryDetails[0].reason,'no-valid-prior-finishes');assert.equal(a.missingHistoryDetails[0].storedPriorRows,2);assert.equal(a.missingHistoryDetails[0].validFinishRows,0);assert.ok(a.missingHistoryDetails[0].warnings.includes('sparse-prior-history'));assert.equal(a.saved,0);assert.equal((await readAutomaticPrediction(db,target)).available,false);sql.close();
+});
+
+test('opt-in GET reads stored hold details with one indexed read and never recalculates or writes a forecast',async()=>{
+ const {sql,db,queries}=await fixture();sql.exec('DELETE FROM jra_past_performances');await scheduledAutomaticPrediction(db,now);queries.length=0;
+ const defaultRead=await readAutomaticPrediction(db,target);assert.deepEqual(defaultRead,{ok:true,available:false});assert.equal(queries.length,1);queries.length=0;
+ const {default:app}=await import('../src/index-v3.49.0.js');const res=await app.fetch(new Request('https://test/v1/lab/automatic-prediction?date=2026-10-18&venue='+encodeURIComponent('京都')+'&race_no=11&include_pending=1'),{DB:db},{}),j=await res.json();assert.equal(res.status,200);assert.equal(j.available,false);assert.equal(j.pending.status,'awaiting-prior-history');assert.equal(j.pending.detail.missingHistoryDetails.length,2);assert.equal(queries.filter(q=>q.startsWith('SELECT status,next_attempt_at,detail_json')).length,1);assert.ok(queries.every(q=>q.startsWith('SELECT')));assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_automatic_predictions_v1').get().n,0);sql.close();
 });
 test('uncertain readback never reports successful save',async()=>{
  const {sql,db}=await fixture();let reads=0;const wrapped={prepare(q){if(q.startsWith('SELECT * FROM lab_automatic_predictions_v1')&&++reads>1)return{bind(){return{async first(){return null}}}};return db.prepare(q)}};
@@ -60,4 +71,80 @@ test('old recovery D1 quota stops before receipt writes and resumes read-only on
 test('old recovery inspects only a bounded keyset page then reaches later unverified snapshots',async()=>{
  const {recoverOldAutomaticPrediction}=await import('../src/automatic-pre-race-prediction.js');const {sql,db,queries}=await fixture();await captureAutomaticPrediction(db,target,now);const row=sql.prepare('SELECT * FROM lab_automatic_predictions_v1').get();for(let i=0;i<25;i++){const key='!verified'+String(i).padStart(2,'0');sql.prepare('INSERT INTO lab_automatic_predictions_v1 VALUES(?,?,?,?,?)').run(key,row.race_date,row.snapshot_json,row.snapshot_sha256,row.saved_at);sql.prepare('INSERT INTO lab_automatic_prediction_receipts_v1 VALUES(?,?,?,?)').run(key,'saved',0,'{}');}
  const later=now+10*86400000,first=await recoverOldAutomaticPrediction(db,later);assert.equal(first.status,'old-page-verified-or-waiting');assert.equal(first.inspectedSnapshots,25);assert.ok(queries.some(q=>/WITH page AS MATERIALIZED/.test(q)&&/LIMIT 25/.test(q)));const next=await recoverOldAutomaticPrediction(db,later+86400001);assert.equal(next.status,'reconciled');assert.equal(next.raceKey,target.date+':京都:11');sql.close();
+});
+
+test('natural forecast and saved-readback queues propagate D1 exhaustion without any subsequent SQL or retry receipt',async()=>{
+ for(const reconcile of [false,true])for(const marked of [false,true])for(const failurePoint of ['snapshot','official-start']){
+  const {sql,db}=await fixture();
+  if(reconcile)await captureAutomaticPrediction(db,target,now);
+  const before=sql.prepare("SELECT name FROM sqlite_master WHERE name='lab_automatic_predictions_v1'").get()?sql.prepare('SELECT * FROM lab_automatic_predictions_v1').all():[];
+  const error=marked?Object.assign(Error('budget exhausted'),{d1DailyReadLimit:true}):Error("D1_ERROR: Your account has exceeded D1's free tier daily row read limit.");
+  let stopped=false,after=0;
+  const wrapped={prepare(q){
+   if(stopped){after++;throw Error('SQL issued after daily quota');}
+   if(q.startsWith(failurePoint==='snapshot'?'SELECT * FROM lab_automatic_predictions_v1':'SELECT start_time,source_url FROM jra_race_program'))return{bind(){return{first:async()=>{stopped=true;throw error}}}};
+   return db.prepare(q);
+  }};
+  await assert.rejects(scheduledAutomaticPrediction(wrapped,now),e=>e===error);
+  assert.equal(after,0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_automatic_prediction_receipts_v1').get().n,0);
+  assert.deepEqual(sql.prepare('SELECT * FROM lab_automatic_predictions_v1').all(),before);
+  // Once an existing scheduler budget permits another invocation, ordinary
+  // prediction or READ-only reconciliation resumes without a synthetic delay.
+  const resumed=await scheduledAutomaticPrediction(db,now+1000);
+  assert.equal(resumed.integrityVerified,true);assert.equal(resumed.saved,reconcile?0:1);
+  if(reconcile)assert.equal(resumed.verificationOnly,true);
+  sql.close();
+ }
+});
+
+test('real scheduled entry returns quota pause before LOCK or source handoff',async t=>{
+ t.mock.timers.enable({apis:['Date'],now});
+ const {sql,db}=await fixture();let flagReads=0,quotaObserved=false,afterQuota=0;
+ const limited={prepare(q){
+  if(quotaObserved){afterQuota++;throw Error('underlying D1 touched after quota');}
+  if(q.startsWith('SELECT * FROM lab_automatic_predictions_v1'))return{bind(){return{all:async()=>{quotaObserved=true;throw Error("D1_ERROR: Your account has exceeded D1's free tier daily row read limit.")}}}};
+  return db.prepare(q);
+ }};
+ const {default:app}=await import('../src/index-v3.49.0.js');
+ const env={DB:limited,get LAB_SAVED_AUTOMATIC_LOCK(){flagReads++;if(quotaObserved)throw Error('LOCK handoff reached after quota');return 'true'}};
+ const result=await app.scheduled({cron:'*/3 * * * *',scheduledTime:now},env,{});
+ assert.equal(result.status,'paused');assert.equal(result.reason,'d1-daily-read-limit');assert.equal(result.telemetrySaved,false);
+ assert.equal(flagReads,1);assert.equal(afterQuota,0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_automatic_prediction_receipts_v1').get().n,0);
+ sql.close();
+});
+
+
+test('one held horse exposes bounded stored prior values through opt-in GET without writes or recalculation',async()=>{
+ const {sql,db,queries}=await fixture();sql.exec("UPDATE jra_past_performances SET field_size=1 WHERE horse_name='HorseB'");
+ await scheduledAutomaticPrediction(db,now);
+ // Add a third real prior, an age-window-excluded row and a different horse.
+ for(const [name,date] of [['HorseB','2026-08-01'],['HorseB','2024-08-01'],['Other','2026-10-17']])sql.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,finish_position,field_size,source_url,fetched_at) VALUES(?,?,?,?,?,?,?,?)').run(name,date,'京都','試験',6,1,'https://www.jra.go.jp/profile','saved');
+ queries.length=0;const {default:app}=await import('../src/index-v3.49.0.js');
+ const r=await app.fetch(new Request('https://test/v1/lab/automatic-prediction?date=2026-10-18&venue='+encodeURIComponent('京都')+'&race_no=11&include_pending=1&history_horse_no=2'),{DB:db},{}),j=await r.json();
+ assert.equal(r.status,200);assert.equal(j.ok,true);assert.equal(j.available,false);assert.equal(j.storedHistory.horseName,'HorseB');assert.equal(j.storedHistory.readOnly,true);assert.equal(j.storedHistory.rows.length,3);
+ assert.deepEqual(j.storedHistory.rows.map(r=>r.race_date),['2026-09-15','2026-09-01','2026-08-01']);assert.equal(j.storedHistory.rows[0].field_size,1);assert.equal(j.storedHistory.rows[0].finish_position,2);
+ assert.equal(queries.filter(q=>q.startsWith('SELECT p.race_date')).length,1);assert.equal(queries.length,3);assert.ok(queries.every(q=>q.startsWith('SELECT')));assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_automatic_predictions_v1').get().n,0);sql.close();
+});
+
+test('held-history diagnostic rejects invalid selectors and never reads another horse outside the stored hold',async()=>{
+ const {sql,db,queries}=await fixture();sql.exec("UPDATE jra_past_performances SET finish_position=NULL WHERE horse_name='HorseB'");await scheduledAutomaticPrediction(db,now);
+ for(const n of ['0','19','1 OR 1=1','2.0','']){queries.length=0;await assert.rejects(readAutomaticPrediction(db,target,{includePending:true,historyHorseNo:n}),/馬番/);assert.equal(queries.length,0);}
+ queries.length=0;await assert.rejects(readAutomaticPrediction(db,target,{includePending:false,historyHorseNo:2}),/include_pending/);assert.equal(queries.length,0);
+ queries.length=0;await assert.rejects(readAutomaticPrediction(db,target,{includePending:true,historyHorseNo:1}),/保留根拠/);assert.equal(queries.some(q=>q.startsWith('SELECT p.race_date')),false);sql.close();
+});
+
+
+test('card-only past entry cannot hide valid profile finish in either history reader or automatic forecast',async()=>{
+ const {sql,db}=await fixture();
+ sql.exec("DELETE FROM jra_past_performances WHERE horse_name='HorseA' AND race_date<>'2026-09-15';INSERT INTO jra_races VALUES('prior-card','2026-09-15','京都',1,'試験','芝',2000,12);INSERT INTO jra_runners VALUES('prior-card',1,'HorseA',3,1)");
+ const {historyForExpected}=await import('../src/expected-runner-preview-v3.30.0.js');
+ const history=await historyForExpected(db,{...target,surface:'芝',distance:2000,age:3,snapshotId:'no-expected-supplement'},'HorseA');
+ assert.equal(history.recent.find(r=>r.date==='2026-09-15').finish,2);assert.equal(history.recent.find(r=>r.date==='2026-09-15').dbSource,'stored-profile-history');
+ // Empty placeholder result records are not actual result observations either.
+ sql.exec("INSERT INTO lab_race_outcomes VALUES('prior-card',1,NULL);INSERT INTO lab_race_result_details(race_key,horse_no,finish_status) VALUES('prior-card',1,' ')");
+ const out=await captureAutomaticPrediction(db,target,now);assert.equal(out.saved,1);assert.equal(out.snapshot.runners[0].assessment.validFinishRows,1);
+ // An actual stored official non-finish remains authoritative over a profile.
+ sql.exec("INSERT INTO lab_race_result_details(race_key,horse_no,finish_status) VALUES('prior-card',1,'取消')");
+ const cancelled=await historyForExpected(db,{...target,surface:'芝',distance:2000,age:3,snapshotId:'no-expected-supplement'},'HorseA');
+ assert.equal(cancelled.recent.find(r=>r.date==='2026-09-15').dbSource,'official-result');assert.equal(cancelled.recent.find(r=>r.date==='2026-09-15').finish,null);assert.equal(cancelled.recent.find(r=>r.date==='2026-09-15').finishStatus,'取消');sql.close();
 });

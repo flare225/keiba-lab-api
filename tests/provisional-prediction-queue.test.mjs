@@ -1,10 +1,215 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {scheduledProvisionalPrediction} from '../src/provisional-prediction-queue.js';
+import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {scheduledProvisionalPrediction} from '../src/provisional-prediction-queue.js';import {markProvisionalHistoryUpdated,readProvisionalPrediction} from '../src/provisional-prediction-snapshots.js';
+test('actual newly collected history wakes an awaiting first evaluation at the next ordinary hour without waiting two hours',async()=>{
+ const {fixtureDatabase}=await import('./helpers/shared-page-fixture.mjs'),{db,sql}=await fixtureDatabase();
+ const {collectUpcomingExpectedHistory}=await import('../src/expected-history-collection-v3.46.0.js');
+ const {sha256}=await import('../src/card-evidence.js');
+ const stamp=Date.parse('2026-11-06T10:00:00+09:00'),date='2026-11-07',name='WakeHorse';
+ const source={date,venue:'福島',raceNo:11,snapshotId:'confirmed-predraw:2026-11-07:福島:11',names:[name],ages:{[name]:4},priority:50,rosterBasis:'confirmed-predraw',basis:'confirmed-predraw',provider:'JRA',confirmationVerified:true,sourceSha256:'a'.repeat(64)};
+ const url='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0103202603011120261107/AA',profile='https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002022100547/30';
+ source.sourceUrl=url;source.observedAt=new Date(stamp-1000).toISOString();
+ sql.exec('CREATE TABLE lab_confirmed_predraw_rosters(race_key TEXT PRIMARY KEY,source_url TEXT,source_sha256 TEXT,runners_json TEXT,checked_at TEXT);CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,surface TEXT,distance INTEGER,source_url TEXT,race_label TEXT)');
+ sql.prepare('INSERT INTO lab_confirmed_predraw_rosters VALUES(?,?,?,?,?)').run(`${date}:福島:11`,url,source.sourceSha256,JSON.stringify([{horse_name:name,age:4,horse_no:null,frame_no:null,profile_url:profile}]),new Date(stamp-1000).toISOString());
+ sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?,?,?)').run(date,'福島',11,'芝',1200,'https://www.jra.go.jp/keiba/calendar2026/2026/11/1107.html','3歳以上3勝クラス 芝1200m');
+ const options={prepareRoster:async()=>({}),sources:async()=>[source]};
+ const held=await scheduledProvisionalPrediction(db,stamp,options);assert.equal(held.status,'awaiting-data');assert.match(held.error,/過去走不足/);assert.equal(held.nextAttemptAt,new Date(stamp+7200000).toISOString());
+ let requests=0;const collected=await collectUpcomingExpectedHistory(db,{sources:[source],now:()=>stamp+18*60000,fetcher:async()=>{
+  requests++;const rows=['2026年9月20日','2026年6月28日','2026年4月11日'].map(d=>'<tr>'+[d,'福島','合成過去走','芝1200','良','16','2','1','騎手','57','480(+2)','1:08.2','111','勝馬'].map(v=>`<td>${v}</td>`).join('')+'</tr>').join('');
+  return new Response(`<h1>${name}</h1><table>${rows}</table>`,{headers:{'content-type':'text/html;charset=utf-8'}});
+ }});
+ assert.equal(collected.addedRows,3);assert.equal(requests,1);assert.equal(collected.provisionalEvaluationQueued,1);
+ assert.equal((await scheduledProvisionalPrediction(db,stamp+30*60000,options)).status,'not-due');
+ const saved=await scheduledProvisionalPrediction(db,stamp+3600000,options);assert.equal(saved.saved,1);
+ const read=await readProvisionalPrediction(db,source,{exact:true});assert.equal(read.snapshot.scoredRunners,1);assert.equal(read.snapshotSha256,await sha256(JSON.stringify(read.snapshot)));assert.equal(read.snapshot.guardrails.locked,false);
+ assert.equal(sql.prepare('SELECT count(*) n FROM lab_provisional_predictions_v1').get().n,1);sql.close();
+});
+test('fresh weekly main roster reaches the real builder before same-deadline flat races, then gives them the next slots',async()=>{
+ // Synthetic stored JRA rosters and prior performances, no upstream access.
+ const {fixtureDatabase}=await import('./helpers/shared-page-fixture.mjs'),{db,sql}=await fixtureDatabase();
+ const {sha256}=await import('../src/card-evidence.js');
+ const stamp=Date.parse('2026-11-06T08:00:00+09:00'),date='2026-11-07';
+ sql.exec('CREATE TABLE lab_confirmed_predraw_rosters(race_key TEXT PRIMARY KEY,source_url TEXT,source_sha256 TEXT,runners_json TEXT,checked_at TEXT);CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,surface TEXT,distance INTEGER,source_url TEXT,race_label TEXT)');
+ const hash='a'.repeat(64);
+ for(const raceNo of [1,11,12]){
+  const runners=[1,2].map(n=>({horse_name:`合成馬${raceNo}_${n}`,age:4,horse_no:null,frame_no:null,profile_url:`https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud00202210${String(raceNo*10+n).padStart(4,'0')}/AA`}));
+  const url=`https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde010520260501${String(raceNo).padStart(2,'0')}20261107/AA`;
+  sql.prepare('INSERT INTO lab_confirmed_predraw_rosters VALUES(?,?,?,?,?)').run(`${date}:東京:${raceNo}`,url,hash,JSON.stringify(runners),new Date(stamp-1000).toISOString());
+  sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?,?,?)').run(date,'東京',raceNo,'芝',1600,'https://www.jra.go.jp/keiba/calendar2026/2026/11/1107.html','3歳以上1勝クラス 芝1600m');
+  for(const r of runners)for(const past of ['2026-08-01','2026-09-01','2026-10-01'])sql.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,surface,distance,finish_position,field_size,track_condition,source_url,fetched_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(r.horse_name,past,'東京','合成過去走','芝',1600,2,12,'良',r.profile_url,new Date(stamp-1000).toISOString());
+ }
+ const options={prepareRoster:async()=>({status:'no-reviewed-preparation'})};
+ const result=await scheduledProvisionalPrediction(db,stamp,options);
+ assert.equal(result.target,`${date}:東京:11:predraw:${hash}`);assert.equal(result.saved,1);assert.equal(result.externalRequests,0);
+ const read=await readProvisionalPrediction(db,{date,venue:'東京',raceNo:11,basis:'confirmed-predraw',sourceSha256:hash},{exact:true});
+ assert.equal(read.integrityVerified,true);assert.equal(read.snapshotSha256,result.snapshotSha256);assert.equal(read.snapshotSha256,await sha256(JSON.stringify(read.snapshot)));
+ assert.equal(read.snapshot.runnerCount,2);assert.equal(read.snapshot.scoredRunners,2);assert.equal(read.snapshot.guardrails.humanMarksUsed,false);assert.equal(read.snapshot.guardrails.locked,false);
+ assert.equal((await scheduledProvisionalPrediction(db,stamp+1000,options)).status,'not-due');
+ assert.equal((await scheduledProvisionalPrediction(db,stamp+3600000,options)).target,`${date}:東京:1:predraw:${hash}`);
+ assert.equal((await scheduledProvisionalPrediction(db,stamp+7200000,options)).target,`${date}:東京:12:predraw:${hash}`);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,3);
+ assert.throws(()=>sql.exec('DELETE FROM lab_provisional_predictions_v1'),/immutable/);sql.close();
+});
+test('the observed predraw identities feed the real hourly builder, immutable writer and independent SHA readback',async()=>{
+ const {readFile}=await import('node:fs/promises'),e=JSON.parse(await readFile(new URL('./fixtures/kyoto1-predraw-handoff-20261029.json',import.meta.url),'utf8'));
+ const {fixtureDatabase}=await import('./helpers/shared-page-fixture.mjs'),{db,sql}=await fixtureDatabase();
+ const {sha256}=await import('../src/card-evidence.js');
+ sql.exec('CREATE TABLE lab_confirmed_predraw_rosters(race_key TEXT PRIMARY KEY,source_url TEXT,source_sha256 TEXT,runners_json TEXT,checked_at TEXT);CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,surface TEXT,distance INTEGER,source_url TEXT,race_label TEXT)');
+ sql.prepare('INSERT INTO lab_confirmed_predraw_rosters VALUES(?,?,?,?,?)').run(e.raceKey,e.sourceUrl,e.sourceSha256,JSON.stringify(e.runners),e.observedAt);
+ sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?,?,?)').run('2026-10-31','京都',1,'ダート',1400,'https://www.jra.go.jp/keiba/calendar2026/2026/10/1031.html','2歳未勝利 ダ1400m');
+ // Synthetic historical performances; identities/profile links above are the
+ // independently verified production source set, not fabricated race entries.
+ for(const date of ['2026-07-25','2026-08-22','2026-09-20'])sql.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,surface,distance,finish_position,field_size,track_condition,source_url,fetched_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(e.runners[14].horse_name,date,'京都','隔離検証','ダート',1400,2,12,'良',e.runners[14].profile_url,e.observedAt);
+ const stamp=Date.parse('2026-10-29T14:00:00Z'),result=await scheduledProvisionalPrediction(db,stamp,{prepareRoster:async()=>({status:'no-reviewed-preparation'})});
+ assert.equal(result.status,'verified');assert.equal(result.saved,1);assert.equal(result.basis,'confirmed-predraw');
+ const source={date:'2026-10-31',venue:'京都',raceNo:1,basis:'confirmed-predraw',sourceSha256:e.sourceSha256};
+ const read=await readProvisionalPrediction(db,source,{exact:true});assert.equal(read.snapshotSha256,result.snapshotSha256);assert.equal(read.snapshotSha256,await sha256(JSON.stringify(read.snapshot)));
+ assert.equal(read.snapshot.runnerCount,16);assert.ok(read.snapshot.scoredRunners>0);assert.ok(read.snapshot.scoredRunners<16);assert.equal(read.snapshot.guardrails.locked,false);assert.equal(read.snapshot.guardrails.eligibleForLearning,false);
+ assert.deepEqual(read.snapshot.runners.map(r=>r.horseName).sort(),e.runners.map(r=>r.horse_name).sort());
+ const repeat=await scheduledProvisionalPrediction(db,stamp+3600000,{prepareRoster:async()=>({})});assert.equal(repeat.status,'no-due-registered-roster');assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,1);sql.close();
+});
+test('pre-deploy collected history catches up once at the existing daily deadline and preserves original snapshot',async()=>{
+ const {db,sql}=fixture();const source={...sources[1],snapshotId:'registered:test'};let score=80,builds=0;
+ const one={sources:async()=>[source],repair:async()=>({repaired:0}),build:async()=>{builds++;return{ok:true,status:'provisional-expected-roster',race:source,runnerCount:1,scoredRunners:1,histories:[],runners:[{horseName:'test',horseNo:null,frameNo:null,rank:1,score,mark:'◎'}],guardrails:{humanMarksUsed:false,officialCard:false,locked:false,eligibleForLearning:false}};}};
+ await scheduledProvisionalPrediction(db,now,one);const original=await readProvisionalPrediction(db,source,{exact:true});score=90;
+ sql.exec('CREATE TABLE lab_history_collection_receipts(race_key TEXT,horse_name TEXT,status TEXT,rows_found INTEGER,checked_at INTEGER,PRIMARY KEY(race_key,horse_name))');
+ sql.prepare('INSERT INTO lab_history_collection_receipts VALUES(?,?,?,?,?)').run('expected:'+source.snapshotId,'test','checked',3,now+3600000);
+ assert.equal((await scheduledProvisionalPrediction(db,now+3600000,one)).status,'no-due-registered-roster');assert.equal(builds,1);
+ const revised=await scheduledProvisionalPrediction(db,now+86400000,one);assert.equal(revised.saved,1);assert.equal(revised.evaluationChanged,true);assert.equal(builds,2);
+ assert.equal((await readProvisionalPrediction(db,source,{exact:true})).snapshotSha256,original.snapshotSha256);
+ assert.equal((await scheduledProvisionalPrediction(db,now+2*86400000,one)).status,'no-due-registered-roster');assert.equal(builds,2);assert.equal(sql.prepare('SELECT count(*) n FROM lab_provisional_predictions_v1').get().n,2);
+ // A later receipt whose inputs are unchanged is acknowledged without a new
+ // revision or another daily rebuild of those same already-considered rows.
+ sql.prepare('UPDATE lab_history_collection_receipts SET checked_at=?').run(now+2*86400000+3600000);
+ const same=await scheduledProvisionalPrediction(db,now+2*86400000+7200000,one);assert.equal(same.saved,0);assert.equal(same.evaluationChanged,false);
+ assert.equal((await scheduledProvisionalPrediction(db,now+3*86400000+7200000,one)).status,'no-due-registered-roster');assert.equal(builds,3);
+ sql.close();
+});
+test('a revision build failure keeps the history update eligible for the existing two-hour retry',async()=>{const {db,sql}=fixture();const one={...deps,sources:async()=>[sources[1]]};await scheduledProvisionalPrediction(db,now,one);await markProvisionalHistoryUpdated(db,sources[1],now+3600000);const failed=await scheduledProvisionalPrediction(db,now+3600000,{...one,build:async()=>{throw Error('temporarily missing conditions')}});assert.equal(failed.status,'history-updated');assert.equal((await scheduledProvisionalPrediction(db,now+7200000,one)).status,'no-due-registered-roster');assert.equal((await scheduledProvisionalPrediction(db,now+3*3600000,one)).status,'verified');assert.equal(sql.prepare('SELECT count(*) n FROM lab_provisional_predictions_v1').get().n,1);sql.close();});
 function fixture(){const sql=new DatabaseSync(':memory:');return{sql,db:{prepare(q){const w=(a=[])=>({bind(...x){return w(x)},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}},async run(){return{meta:{changes:sql.prepare(q).run(...a).changes}}}});return w()}}};}
 const now=Date.parse('2026-10-21T01:00:00Z');const sources=['新潟','東京','京都'].map((venue,i)=>({date:'2026-10-25',venue,raceNo:i+1,raceKey:`2026-10-25:${venue}:${i+1}`}));
 const deps={sources:async()=>sources,repair:async()=>({repaired:0}),build:async(db,s)=>{if(s.venue==='新潟')throw Error('conditions missing');return{ok:true,status:'provisional-expected-roster',race:s,runnerCount:1,runners:[{horseName:s.venue,horseNo:null,frameNo:null,rank:1,score:90,mark:'◎'}],guardrails:{humanMarksUsed:false,officialCard:false,locked:false,eligibleForLearning:false}};}};
+test('history wake preserves uncertain readbacks, revision-failure backoff and unrelated races',async()=>{
+ const {db,sql}=fixture();sql.exec('CREATE TABLE lab_provisional_queue_v1(race_key TEXT PRIMARY KEY,status TEXT,next_at INTEGER,error TEXT)');
+ const target={date:'2026-11-07',venue:'福島',raceNo:11},key='2026-11-07:福島:11',at=now+7200000;
+ for(const [i,status] of ['pending-readback','revision-readback:'+'a'.repeat(64),'history-updated'].entries())sql.prepare('INSERT INTO lab_provisional_queue_v1 VALUES(?,?,?,?)').run(key+':predraw:'+i,status,at,'keep existing failure');
+ sql.prepare('INSERT INTO lab_provisional_queue_v1 VALUES(?,?,?,?)').run('2026-11-07:福島:12','awaiting-data',at,'other race');
+ assert.equal(await markProvisionalHistoryUpdated(db,target,now),0);
+ assert.ok(sql.prepare('SELECT next_at,error FROM lab_provisional_queue_v1').all().every(r=>r.next_at===at&&r.error));sql.close();
+});
+test('fresh main preference never overrides earlier race dates, retry deadlines or oldest-due receipts',async()=>{
+ const stamp=Date.parse('2026-11-06T08:00:00+09:00'),flat={date:'2026-11-07',venue:'東京',raceNo:1},main={...flat,raceNo:11};
+ for(const [candidate,flatAt,mainAt] of [[{...main,date:'2026-11-08'},0,0],[main,0,stamp+7200000],[main,stamp-2000,stamp-1000]]){
+  const {db,sql}=fixture();sql.exec('CREATE TABLE lab_provisional_queue_v1(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_at INTEGER NOT NULL,error TEXT)');
+  for(const [s,at] of [[flat,flatAt],[candidate,mainAt]])sql.prepare('INSERT INTO lab_provisional_queue_v1 VALUES(?,?,?,NULL)').run(`${s.date}:${s.venue}:${s.raceNo}`,'awaiting-data',at);
+  const result=await scheduledProvisionalPrediction(db,stamp,{...deps,sources:async()=>[candidate,flat]});
+  assert.equal(result.target,'2026-11-07:東京:1');assert.equal(result.saved,1);sql.close();
+ }
+});
+test('a fresh main build failure keeps two-hour retry while another roster uses the next hourly slot',async()=>{
+ const {db,sql}=fixture(),stamp=Date.parse('2026-11-06T08:00:00+09:00');
+ const main={date:'2026-11-07',venue:'東京',raceNo:11},flat={...main,raceNo:1},mixed={...deps,sources:async()=>[flat,main]};
+ const failure=await scheduledProvisionalPrediction(db,stamp,{...mixed,build:async()=>{throw Error('missing prior history')}});
+ assert.equal(failure.target,'2026-11-07:東京:11');assert.equal(failure.status,'awaiting-data');assert.equal(failure.nextAttemptAt,new Date(stamp+7200000).toISOString());
+ assert.equal((await scheduledProvisionalPrediction(db,stamp+3600000,mixed)).target,'2026-11-07:東京:1');
+ assert.equal((await scheduledProvisionalPrediction(db,stamp+7200000,mixed)).target,'2026-11-07:東京:11');
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,2);sql.close();
+});
 test('missing first venue does not starve other venues; hourly claim and saved snapshots prevent duplicates',async()=>{const {db,sql}=fixture();assert.equal((await scheduledProvisionalPrediction(db,now,deps)).status,'awaiting-data');assert.equal((await scheduledProvisionalPrediction(db,now+1000,deps)).status,'not-due');const a=await scheduledProvisionalPrediction(db,now+3600000,deps);assert.equal(a.target,sources[1].raceKey);assert.equal(a.saved,1);const b=await scheduledProvisionalPrediction(db,now+7200000,deps);assert.equal(b.target,sources[2].raceKey);assert.equal(b.saved,1);assert.equal(sql.prepare('SELECT count(*) n FROM lab_provisional_predictions_v1').get().n,2);sql.close();});
 test('uncertain inserted snapshot resumes read-only reconciliation and keeps original hash',async()=>{const {db,sql}=fixture();let reads=0;const broken={prepare(q){if(q.startsWith('SELECT * FROM lab_provisional_predictions_v1')&&++reads>1)return{bind(){return{async first(){throw Error('temporary read failure')}}}};return db.prepare(q)}};const one={...deps,sources:async()=>[sources[1]]};const a=await scheduledProvisionalPrediction(broken,now,one);assert.equal(a.status,'pending-readback');const before=sql.prepare('SELECT snapshot_sha256 FROM lab_provisional_predictions_v1').get().snapshot_sha256;const b=await scheduledProvisionalPrediction(db,now+7200000,{...one,build:async()=>{throw Error('must not regenerate')}});assert.equal(b.status,'verified');assert.equal(b.saved,0);assert.equal(sql.prepare('SELECT snapshot_sha256 FROM lab_provisional_predictions_v1').get().snapshot_sha256,before);sql.close();});
 test('D1 daily limit propagates immediately instead of writing retry receipts',async()=>{const {db,sql}=fixture();await assert.rejects(scheduledProvisionalPrediction(db,now,{...deps,sources:async()=>[sources[1]],build:async()=>{throw Object.assign(Error('quota'),{d1DailyReadLimit:true})}}),e=>e.d1DailyReadLimit===true);assert.equal(sql.prepare('SELECT count(*) n FROM lab_provisional_queue_v1').get().n,0);sql.close();});
 test('untried races prioritize earlier race days rather than registry import order',async()=>{const {db,sql}=fixture();const earlier={...sources[1],date:'2026-10-24',raceKey:'2026-10-24:東京:2'};const r=await scheduledProvisionalPrediction(db,now,{...deps,sources:async()=>[sources[2],earlier]});assert.equal(r.target,earlier.raceKey);assert.equal(r.saved,1);sql.close();});
 test('new rosters without any usable history are deferred rather than saved as successful predictions',async()=>{const {db,sql}=fixture();const r=await scheduledProvisionalPrediction(db,now,{...deps,sources:async()=>[sources[1]],build:async()=>({scoredRunners:0})});assert.equal(r.status,'awaiting-data');assert.equal(sql.prepare("SELECT count(*) n FROM sqlite_master WHERE name='lab_provisional_predictions_v1'").get().n,0);sql.close();});
 test('hour-boundary cron jitter cannot skip an eligible slot or claim twice in the same hour',async()=>{const {db,sql}=fixture();await scheduledProvisionalPrediction(db,now,deps);sql.prepare("UPDATE lab_provisional_clock_v1 SET next_at=? WHERE name='queue'").run(now+3600000+6000);const first=await scheduledProvisionalPrediction(db,now+3600000+1000,deps);assert.equal(first.status,'verified');const second=await scheduledProvisionalPrediction(db,now+3600000+2000,deps);assert.equal(second.status,'not-due');assert.equal(sql.prepare("SELECT next_at FROM lab_provisional_clock_v1 WHERE name='queue'").get().next_at,now+7200000);sql.close();});
+test('new stored history appends a revised provisional snapshot without mutating the original and unchanged input is idempotent',async()=>{const {db,sql}=fixture();let version=0;const one={...deps,sources:async()=>[sources[1]],build:async(db,s)=>({ok:true,status:'provisional-expected-roster',race:s,runnerCount:1,scoredRunners:1,histories:[{horseName:s.venue,date:version?'2026-10-20':'2026-10-10',finish:version?2:4}],runners:[{horseName:s.venue,horseNo:null,frameNo:null,rank:1,score:version?95:90,mark:'◎',assessment:{historyRows:version?3:2}}],guardrails:{humanMarksUsed:false,officialCard:false,locked:false,eligibleForLearning:false}})};const first=await scheduledProvisionalPrediction(db,now,one);assert.equal(first.saved,1);const original=await readProvisionalPrediction(db,sources[1],{exact:true});const originalBody=sql.prepare('SELECT snapshot_json FROM lab_provisional_predictions_v1 WHERE race_key=?').get(sources[1].raceKey).snapshot_json;version=1;assert.equal(await markProvisionalHistoryUpdated(db,sources[1],now+3600000),1);const revised=await scheduledProvisionalPrediction(db,now+3600000,one);assert.equal(revised.status,'verified');assert.equal(revised.saved,1);assert.equal(revised.evaluationChanged,true);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,2);assert.equal(sql.prepare('SELECT snapshot_json FROM lab_provisional_predictions_v1 WHERE race_key=?').get(sources[1].raceKey).snapshot_json,originalBody);assert.equal((await readProvisionalPrediction(db,sources[1],{exact:true})).snapshotSha256,original.snapshotSha256);assert.equal((await readProvisionalPrediction(db,sources[1])).snapshotSha256,revised.snapshotSha256);assert.equal(await markProvisionalHistoryUpdated(db,sources[1],now+7200000),1);const unchanged=await scheduledProvisionalPrediction(db,now+7200000,one);assert.equal(unchanged.status,'verified');assert.equal(unchanged.saved,0);assert.equal(unchanged.evaluationChanged,false);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,2);sql.close();});
+test('the alternate FIFO turn keeps unprocessed roster opportunity ahead of an updated prior evaluation',async()=>{const {db,sql}=fixture();const one={...deps,sources:async()=>[sources[1]]};await scheduledProvisionalPrediction(db,now,one);await markProvisionalHistoryUpdated(db,sources[1],now+3600000);const r=await scheduledProvisionalPrediction(db,now+7200000,{...deps,sources:async()=>[sources[1],sources[2]]});assert.equal(r.target,sources[2].raceKey);assert.equal(r.saved,1);sql.close();});
+test('one history update wakes both expected and confirmed-predraw queue entries for the same race',async()=>{const {db,sql}=fixture();await scheduledProvisionalPrediction(db,now,{...deps,sources:async()=>[sources[1]]});const base=sources[1].raceKey;sql.prepare("INSERT INTO lab_provisional_queue_v1 VALUES(?,'verified',?,NULL)").run(base+':predraw:'+'a'.repeat(64),now+86400000);const changed=await markProvisionalHistoryUpdated(db,sources[1],now+3600000);assert.equal(changed,2);assert.equal(sql.prepare("SELECT count(*) n FROM lab_provisional_queue_v1 WHERE status='history-updated'").get().n,2);sql.close();});
+test('uncertain append-only revision resumes exact readback without rebuilding or rewriting either revision',async()=>{const {db,sql}=fixture();let version=0;const one={...deps,sources:async()=>[sources[1]],build:async(db,s)=>({ok:true,status:'provisional-expected-roster',race:s,runnerCount:1,scoredRunners:1,histories:[{horseName:s.venue,date:version?'2026-10-20':'2026-10-10'}],runners:[{horseName:s.venue,horseNo:null,frameNo:null,rank:1,score:version?95:90,mark:'◎',assessment:{historyRows:version?3:2}}],guardrails:{humanMarksUsed:false,officialCard:false,locked:false,eligibleForLearning:false}})};await scheduledProvisionalPrediction(db,now,one);const old=await readProvisionalPrediction(db,sources[1],{exact:true});version=1;await markProvisionalHistoryUpdated(db,sources[1],now+3600000);let inserted=false,failed=false;const wrapped={prepare(q){const base=db.prepare(q),wrap=args=>{const b=base.bind(...args);return{async first(){if(inserted&&!failed&&q.startsWith('SELECT * FROM lab_provisional_predictions_v1')&&String(args[0]).includes(':revision:')){failed=true;throw Error('temporary revision readback failure');}return b.first()},async all(){return b.all()},async run(){const r=await b.run();if(q.startsWith('INSERT OR IGNORE INTO lab_provisional_predictions_v1'))inserted=true;return r;}}};return{...wrap([]),bind(...args){return wrap(args);}}}};const uncertain=await scheduledProvisionalPrediction(wrapped,now+3600000,one);assert.equal(uncertain.status,'pending-readback');assert.match(uncertain.pendingRevisionSha256,/^[a-f0-9]{64}$/);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,2);assert.equal(sql.prepare('SELECT status FROM lab_provisional_queue_v1 WHERE race_key=?').get(sources[1].raceKey).status,'revision-readback:'+uncertain.pendingRevisionSha256);const resumed=await scheduledProvisionalPrediction(db,now+3*3600000,{...one,build:async()=>{throw Error('must not rebuild')}});assert.equal(resumed.status,'verified');assert.equal(resumed.saved,0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,2);assert.equal((await readProvisionalPrediction(db,sources[1],{exact:true})).snapshotSha256,old.snapshotSha256);assert.equal((await readProvisionalPrediction(db,sources[1])).snapshotSha256,resumed.snapshotSha256);sql.close();});
+
+test('expanded roster triggers append-only evaluation without a history fetch and survives repeat preparation',async()=>{
+ const {db,sql}=fixture();let source={...sources[1],snapshotId:'registered:ten'},count=10;
+ const one={...deps,sources:async()=>[source],build:async()=>({ok:true,status:'provisional-expected-roster',race:source,roster:{snapshotId:source.snapshotId},runnerCount:count,scoredRunners:count,histories:[],runners:Array.from({length:count},(_,i)=>({horseName:'horse'+i,horseNo:null,frameNo:null,rank:i+1,score:90-i,mark:'注'})),guardrails:{humanMarksUsed:false,officialCard:false,locked:false,eligibleForLearning:false}})};
+ await scheduledProvisionalPrediction(db,now,one);const old=await readProvisionalPrediction(db,source,{exact:true});
+ source={...source,snapshotId:'registered:seventeen'};count=17;
+ const expanded=await scheduledProvisionalPrediction(db,now+3600000,one);assert.equal(expanded.saved,1);assert.equal(expanded.evaluationChanged,true);
+ assert.equal((await readProvisionalPrediction(db,source)).snapshot.runnerCount,17);assert.equal((await readProvisionalPrediction(db,source,{exact:true})).snapshotSha256,old.snapshotSha256);
+ assert.equal((await scheduledProvisionalPrediction(db,now+7200000,one)).status,'no-due-registered-roster');assert.equal(sql.prepare('SELECT count(*) n FROM lab_provisional_predictions_v1').get().n,2);sql.close();
+});
+
+
+test('Saturday main history updates receive an hourly turn despite Sunday zero-deadline arrivals, with the alternate turn preserved',async()=>{
+ const {db,sql}=fixture(),stamp=Date.parse('2026-10-30T12:00:00Z'); // 21 JST: completion turn
+ const saturday={date:'2026-10-31',venue:'東京',raceNo:11},sunday={date:'2026-11-01',venue:'京都',raceNo:2};
+ const one={...deps,sources:async()=>[saturday]};
+ await scheduledProvisionalPrediction(db,stamp-3600000,one);
+ await markProvisionalHistoryUpdated(db,saturday,stamp-1000);
+ const original=await readProvisionalPrediction(db,saturday,{exact:true});
+ const mixed={...deps,sources:async()=>[sunday,saturday]};
+ const completion=await scheduledProvisionalPrediction(db,stamp,mixed);
+ assert.equal(completion.target,'2026-10-31:東京:11');assert.equal(completion.externalRequests,0);
+ assert.equal((await scheduledProvisionalPrediction(db,stamp+1000,mixed)).status,'not-due');
+ await markProvisionalHistoryUpdated(db,saturday,stamp+3600000-1000);
+ const fair=await scheduledProvisionalPrediction(db,stamp+3600000,mixed);
+ assert.equal(fair.target,'2026-11-01:京都:2');assert.equal(fair.saved,1);
+ assert.equal((await readProvisionalPrediction(db,saturday,{exact:true})).snapshotSha256,original.snapshotSha256);
+ sql.close();
+});
+
+test('completion turns keep retry deadlines and prefer the earlier main race without excluding flat races',async()=>{
+ const {db,sql}=fixture(),stamp=Date.parse('2026-10-30T12:00:00Z'); // 21 JST
+ const flat={date:'2026-10-31',venue:'京都',raceNo:1},main={date:'2026-10-31',venue:'東京',raceNo:11},later={date:'2026-11-01',venue:'東京',raceNo:11};
+ // Real immutable snapshots/receipts, then due updates, not fabricated saved flags.
+ for(const [i,source] of [flat,main,later].entries())await scheduledProvisionalPrediction(db,stamp-(3-i)*3600000,{...deps,sources:async()=>[source]});
+ for(const source of [flat,main,later])await markProvisionalHistoryUpdated(db,source,stamp-1000);
+ sql.prepare('UPDATE lab_provisional_queue_v1 SET next_at=? WHERE race_key=?').run(stamp+7200000,'2026-10-31:東京:11');
+ const mix={...deps,sources:async()=>[later,main,flat]};
+ const first=await scheduledProvisionalPrediction(db,stamp,mix);assert.equal(first.target,'2026-10-31:京都:1');
+ await markProvisionalHistoryUpdated(db,flat,stamp+7200000-1000);
+ const second=await scheduledProvisionalPrediction(db,stamp+7200000,mix);assert.equal(second.target,'2026-10-31:東京:11');
+ assert.equal(second.externalRequests,0);sql.close();
+});
+
+test('a failing priority revision keeps its two-hour backoff while Sunday uses the alternate slot',async()=>{
+ const {db,sql}=fixture(),stamp=Date.parse('2026-10-30T12:00:00Z');
+ const saturday={date:'2026-10-31',venue:'東京',raceNo:11},sunday={date:'2026-11-01',venue:'京都',raceNo:2};
+ await scheduledProvisionalPrediction(db,stamp-3600000,{...deps,sources:async()=>[saturday]});
+ await markProvisionalHistoryUpdated(db,saturday,stamp-1000);
+ const mixed={...deps,sources:async()=>[saturday,sunday]};
+ const failed=await scheduledProvisionalPrediction(db,stamp,{...mixed,build:async()=>{throw Error('missing conditions')}});
+ assert.equal(failed.status,'history-updated');assert.equal(failed.nextAttemptAt,new Date(stamp+7200000).toISOString());
+ const next=await scheduledProvisionalPrediction(db,stamp+3600000,mixed);assert.equal(next.target,'2026-11-01:京都:2');
+ const retried=await scheduledProvisionalPrediction(db,stamp+7200000,mixed);assert.equal(retried.target,'2026-10-31:東京:11');assert.equal(retried.status,'verified');
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,2);sql.close();
+});
+
+
+test('same-horse roster reclassification appends partial-coverage evidence instead of retaining the old complete-looking evaluation',async()=>{
+ const {buildProvisionalPrediction}=await import('../src/provisional-expected-prediction.js');
+ const {db,sql}=fixture();let stage=0;
+ const source={...sources[1],names:['同じ馬'],ages:{'同じ馬':2},snapshotId:'registered:legacy-three'};
+ const one={...deps,sources:async()=>[{...source,snapshotId:stage?'registered:coverage-'+stage:source.snapshotId,...(stage?{rosterCoverage:{observedRunnerCount:1,declaredRunnerCount:stage===1?15:1,complete:stage===2}}:{})}],build:async(_db,s,stamp)=>buildProvisionalPrediction(s,{surface:'芝',distance:2000,source_url:'https://www.jra.go.jp/program',race_label:'2歳新馬'},new Map(),stamp)};
+ const first=await scheduledProvisionalPrediction(db,now,one);assert.equal(first.status,'verified');const old=await readProvisionalPrediction(db,source,{exact:true});
+ stage=1;const next=await scheduledProvisionalPrediction(db,now+3600000,one);assert.equal(next.status,'verified');assert.equal(next.saved,1);assert.equal(next.evaluationChanged,true);
+ const fresh=await readProvisionalPrediction(db,source);assert.equal(fresh.snapshot.preparation.candidateSetComplete,false);assert.equal(fresh.snapshot.preparation.rosterCoverage.declaredRunnerCount,15);assert.equal(fresh.snapshot.preparation.label,'暫定参考・部分名簿');assert.equal((await readProvisionalPrediction(db,source,{exact:true})).snapshotSha256,old.snapshotSha256);
+ const repeat=await scheduledProvisionalPrediction(db,now+7200000,one);assert.equal(repeat.status,'no-due-registered-roster');assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,2);
+ stage=2;const complete=await scheduledProvisionalPrediction(db,now+10800000,one);assert.equal(complete.saved,1);const final=await readProvisionalPrediction(db,source);assert.equal(final.snapshot.preparation.rosterCoverage.complete,true);assert.equal(final.snapshot.preparation.label,'暫定評価・出走未確定');assert.equal(final.snapshot.runners[0].score,fresh.snapshot.runners[0].score);assert.equal(final.snapshot.guardrails.locked,false);assert.equal((await readProvisionalPrediction(db,source,{exact:true})).snapshotSha256,old.snapshotSha256);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,3);sql.close();
+});
+test('orphaned revision-readback receipt cannot steal an odd-hour turn from a fresh roster',async()=>{
+ const {db,sql}=fixture(),stamp=Date.parse('2026-10-30T12:00:00Z'); // 21 JST: completion turn
+ const ghost={date:'2026-10-31',venue:'東京',raceNo:11};
+ const fresh={date:'2026-11-01',venue:'京都',raceNo:2};
+ const ghostKey='2026-10-31:東京:11',freshKey='2026-11-01:京都:2';
+ const orphanStatus='revision-readback:'+'a'.repeat(64);
+ sql.exec('CREATE TABLE lab_provisional_queue_v1(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_at INTEGER NOT NULL,error TEXT)');
+ sql.prepare('INSERT INTO lab_provisional_queue_v1 VALUES(?,?,?,NULL)').run(ghostKey,orphanStatus,stamp-1000);
+ // There is no persisted snapshot for ghost. The fresh candidate is due at zero.
+ // Before the guard, readbacks[0] incorrectly chooses ghost over fresh.
+ const result=await scheduledProvisionalPrediction(db,stamp,{...deps,sources:async()=>[ghost,fresh]});
+ assert.equal(result.status,'verified');assert.equal(result.target,freshKey);assert.equal(result.saved,1);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_provisional_predictions_v1').get().n,1);
+ assert.equal(sql.prepare('SELECT status FROM lab_provisional_queue_v1 WHERE race_key=?').get(ghostKey).status,orphanStatus);
+ const read=await readProvisionalPrediction(db,fresh,{exact:true});
+ assert.equal(read.integrityVerified,true);assert.equal(read.snapshotSha256,result.snapshotSha256);
+ assert.equal((await scheduledProvisionalPrediction(db,stamp+1000,{...deps,sources:async()=>[ghost,fresh]})).status,'not-due');
+ sql.close();
+});
+
+

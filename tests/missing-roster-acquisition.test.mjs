@@ -1,17 +1,110 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {collectMissingRoster,parseSupplementaryRoster,supplementaryRosterUrl} from '../src/missing-roster-acquisition.js';
-const now=Date.parse('2026-10-21T02:00:00Z'),p={race_date:'2026-10-24',venue:'東京',race_no:1,meeting_no:4,day_no:8},url='https://race.netkeiba.com/race/shutuba.html?race_id=202605040801';
+import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {collectMissingRoster,parseSupplementaryRoster,parseOwnExpectedRoster,supplementaryRosterUrl,expectedRosterSourceUrl} from '../src/missing-roster-acquisition.js';
+import {sha256} from '../src/card-evidence.js';
+import {storedExpectedSources,saveExpectedRoster} from '../src/expected-roster-registry.js';
+import {buildProvisionalPrediction} from '../src/provisional-expected-prediction.js';
+import {scheduledProvisionalPrediction} from '../src/provisional-prediction-queue.js';
+import {readProvisionalPrediction} from '../src/provisional-prediction-snapshots.js';
+import {collectLiveHistory} from '../src/live-source-dispatch.js';
+const now=Date.parse('2026-10-21T02:00:00Z'),p={race_date:'2026-10-24',venue:'東京',race_no:1,meeting_no:4,day_no:8},url='https://race.netkeiba.com/race/shutuba.html?race_id=202605040801',ownUrl='https://own.netkeiba.com/race/shutuba.html?race_id=202605040801';
 const html='<a href="?kaisai_date=20261024">date</a><a href="?race_id=202605040801">1R</a><div>4回 東京 8日目</div><table><tr class="HorseList"><td><a href="https://db.netkeiba.com/horse/2024000001/">試験馬</a></td><td>牡2</td></tr></table>';
-function fixture(gate=0){const sql=new DatabaseSync(':memory:');sql.exec(`CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,meeting_no INTEGER,day_no INTEGER,race_label TEXT);INSERT INTO jra_race_program VALUES('2026-10-24','東京',1,4,8,'2歳未勝利');CREATE TABLE jra_races(race_date TEXT,venue TEXT,race_no INTEGER,runner_count INTEGER);CREATE TABLE lab_expected_roster_registry(snapshot_id TEXT PRIMARY KEY,race_key TEXT,record_json TEXT,source_sha256 TEXT,stored_at TEXT);CREATE TABLE lab_history_collection_budget(name TEXT PRIMARY KEY,next_batch_at INTEGER,locked_until INTEGER,lock_token TEXT);INSERT INTO lab_history_collection_budget VALUES('jra-history',${gate},0,NULL)`);const db={prepare(q){const w=(a=[])=>({bind(...v){return w(v)},async run(){return{meta:{changes:sql.prepare(q).run(...a).changes}}},async first(){return sql.prepare(q).get(...a)||null}});return w()}};return{sql,db};}
-test('supplementary identity requires matching date and meeting, never invented names',()=>{assert.equal(supplementaryRosterUrl(p),url);assert.equal(parseSupplementaryRoster(html,p,url)[0].horseName,'試験馬');assert.throws(()=>parseSupplementaryRoster(html.replace('20261024','20261025'),p,url));assert.throws(()=>parseSupplementaryRoster(html.replace('4回 東京','3回 東京'),p,url));assert.throws(()=>parseSupplementaryRoster(html.replace('HorseList','Unknown'),p,url));});
-test('one bounded source request saves an immutable expected roster and respects hourly cadence',async()=>{const {db,sql}=fixture();let calls=0;const deps={now:()=>now,fetcher:async()=>{calls++;return new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}})}};const r=await collectMissingRoster(db,null,deps);assert.equal(r.status,'roster-saved',JSON.stringify(r));assert.equal(r.storedRunners,1);assert.equal(r.independentRosterReadback,true);assert.equal(r.formalCardSaved,false);await collectMissingRoster(db,null,deps);assert.equal(calls,1);assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,1);sql.close();});
+const ownHtml='<div>10/24(土) 東京 1R</div><a>競馬新聞</a><table><thead><tr><th>馬名</th><th>年齢</th><th>騎手</th></tr></thead><tbody><tr class="HorseList"><td><a href="https://own.netkeiba.com/db/horse.html?id=2024000001">試験馬</a></td><td>牡2</td><td>未定</td></tr></tbody></table><p>※結果・成績・オッズなどは主催者発表を確認</p>';
+test('publication-window dispatch hands an idle official-card turn to a due OWN roster without weakening source limits',async()=>{
+ const stamp=Date.parse('2026-11-05T06:00:00Z');
+ for(const cardStatus of ['card-discovery-not-due','complete']){
+  const {db,sql}=fixture();sql.exec("UPDATE jra_race_program SET race_date='2026-11-07',meeting_no=5,day_no=1;INSERT INTO jra_race_program(race_date,venue,race_no,meeting_no,day_no,race_label) VALUES('2026-11-07','東京',2,5,1,'2歳未勝利')");
+  const body=ownHtml.replace('10/24(土)','11/7(土)'),calls=[];
+  const deps={now:()=>stamp,cardCompletionFirst:true,cards:async()=>{calls.push('official');return{ok:true,status:cardStatus,externalRequests:0}},missing:async(d,e,opts)=>collectMissingRoster(d,null,{...opts,fetcher:async u=>{calls.push(u);return new Response(body,{headers:{'content-type':'text/html; charset=utf-8'}})}}),registered:async()=>[],programs:async()=>null,main:async()=>null,upcoming:async()=>null,expected:async()=>({status:'idle',externalRequests:0})};
+  const result=await collectLiveHistory(db,{scheduledTime:stamp},deps);
+  assert.equal(result.status,'roster-saved',JSON.stringify(result));assert.equal(result.target,'2026-11-07:東京:1');assert.equal(result.externalRequests,1);
+  assert.deepEqual(calls,['official','https://own.netkeiba.com/race/shutuba.html?race_id=202605050101']);
+  const stored=sql.prepare('SELECT record_json,snapshot_id FROM lab_expected_roster_registry').get();assert.equal(await sha256(stored.record_json),stored.snapshot_id);assert.equal(JSON.parse(stored.record_json).runners[0].horseName,'試験馬');
+  calls.length=0;await collectLiveHistory(db,{scheduledTime:stamp},deps);assert.deepEqual(calls,['official']);sql.close();
+ }
+ const isolated=fixture();isolated.sql.exec("UPDATE jra_race_program SET race_date='2026-11-07'");
+ assert.equal((await collectMissingRoster(isolated.db,null,{now:()=>stamp,fetcher:()=>assert.fail('direct collector still defers to official priority')})).status,'official-card-priority');isolated.sql.close();
+});
+test('official no-work fallback still honors the source clock, shared cooldown, lease and blocked response',async()=>{
+ const stamp=Date.parse('2026-11-05T06:00:00Z');
+ for(const stop of ['clock','gate','lease','http403']){
+  const {db,sql}=fixture(stop==='gate'?stamp+3600000:0);sql.exec("UPDATE jra_race_program SET race_date='2026-11-07',meeting_no=5,day_no=1");
+  if(stop==='lease')sql.prepare('UPDATE lab_history_collection_budget SET locked_until=?').run(stamp+120000);
+  if(stop==='clock')sql.exec(`CREATE TABLE lab_missing_roster_clock_v1(name TEXT PRIMARY KEY,next_at INTEGER);INSERT INTO lab_missing_roster_clock_v1 VALUES('source',${stamp+3600000})`);
+  const before=sql.prepare('SELECT * FROM lab_history_collection_budget').get();let http=0;
+  const r=await collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,cards:async()=>({ok:true,status:'card-discovery-not-due',externalRequests:0}),missing:(d,e,opts)=>collectMissingRoster(d,null,{...opts,fetcher:async()=>{http++;assert.equal(stop,'http403');return new Response('',{status:403})}}),registered:async()=>[],programs:async()=>null,main:async()=>null,upcoming:async()=>null,expected:async()=>({status:'idle',externalRequests:0})});
+  assert.equal(http,stop==='http403'?1:0);assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);
+  const after=sql.prepare('SELECT * FROM lab_history_collection_budget').get();if(stop==='http403'){assert.equal(r.status,'source-blocked');assert.equal(after.next_batch_at,stamp+3600000);}else assert.deepEqual(after,before);
+  sql.close();
+ }
+});
+test('scheduled missing-roster wrapper carries the official no-work handoff into the real writer',async t=>{
+ const stamp=Date.parse('2026-11-05T06:00:00Z'),{db,sql}=fixture();sql.exec("UPDATE jra_race_program SET race_date='2026-11-07',meeting_no=5,day_no=1");let requests=0;
+ t.mock.method(globalThis,'fetch',async u=>{requests++;assert.equal(u,'https://own.netkeiba.com/race/shutuba.html?race_id=202605050101');return new Response(ownHtml.replace('10/24(土)','11/7(土)'),{headers:{'content-type':'text/html; charset=utf-8'}})});
+ const r=await collectLiveHistory(db,{scheduledTime:stamp},{now:()=>stamp,cardCompletionFirst:true,cards:async()=>({ok:true,status:'card-discovery-not-due',externalRequests:0}),registered:()=>assert.fail('saved roster must return before another stage')});
+ assert.equal(r.status,'roster-saved',JSON.stringify(r));assert.equal(requests,1);assert.equal(r.historyWorkStage,'acquisition');assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,1);
+ const receipt=sql.prepare("SELECT result_json FROM lab_bounded_pipeline_runs WHERE job='missing-roster'").get();assert.equal(JSON.parse(receipt.result_json).status,'roster-saved');sql.close();
+});
+test('partial OWN publication remains due and later appends a complete roster without rewriting the first snapshot',async()=>{
+ const {db,sql}=fixture(),partial=ownHtml.replace('<a>競馬新聞</a>','<div>3頭</div><a>競馬新聞</a>').replace('<p>※結果','<p>続きは一口馬主コースPro 登録でご覧になれます</p><p>※結果');let calls=0;
+ const a=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>{calls++;return new Response(partial,{headers:{'content-type':'text/html; charset=utf-8'}})}});
+ assert.equal(a.status,'partial-roster-saved');assert.equal(a.storedRunners,1);assert.equal(a.declaredRunners,3);assert.equal(a.rosterComplete,false);
+ const original=sql.prepare('SELECT * FROM lab_expected_roster_registry').get(),source=(await storedExpectedSources(db,p.race_date,p.race_date))[0];
+ assert.deepEqual(source.rosterCoverage,{observedRunnerCount:1,declaredRunnerCount:3,complete:false});
+ const prediction=buildProvisionalPrediction(source,{surface:'芝',distance:2000,source_url:'https://www.jra.go.jp/program',race_label:'2歳新馬'},new Map(),now);assert.equal(prediction.preparation.candidateSetComplete,false);assert.match(prediction.preparation.label,/部分/);
+ const evaluate=stamp=>scheduledProvisionalPrediction(db,stamp,{prepareRoster:async()=>({saved:0,externalRequests:0}),sources:()=>storedExpectedSources(db,p.race_date,p.race_date),repair:async()=>({repaired:0}),build:async(_db,s)=>buildProvisionalPrediction(s,{surface:'芝',distance:2000,source_url:'https://www.jra.go.jp/program',race_label:'2歳新馬'},new Map(),stamp)});
+ const firstEvaluation=await evaluate(now);assert.equal(firstEvaluation.status,'verified',JSON.stringify(firstEvaluation));const firstRead=await readProvisionalPrediction(db,source);assert.equal(firstRead.snapshot.runnerCount,1);assert.equal(firstRead.snapshot.preparation.candidateSetComplete,false);
+ await collectMissingRoster(db,null,{now:()=>now+60000,fetcher:()=>assert.fail('same-hour retry')});assert.equal(calls,1);
+ const same=await collectMissingRoster(db,null,{now:()=>now+3600000,fetcher:async()=>new Response(partial,{headers:{'content-type':'text/html; charset=utf-8'}})});assert.equal(same.status,'partial-roster-saved');assert.equal(same.snapshotId,original.snapshot_id);assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,1);
+ const failed=await collectMissingRoster(db,null,{now:()=>now+7200000,fetcher:async()=>new Response('<p>not the requested card</p>',{headers:{'content-type':'text/html; charset=utf-8'}})});assert.equal(failed.status,'publication-unconfirmed');
+ const row=ownHtml.match(/<tr class="HorseList">[\s\S]*?<\/tr>/)[0];const full=ownHtml.replace('<a>競馬新聞</a>','<div>3頭</div><a>競馬新聞</a>').replace(row,[row,row.replaceAll('試験馬','試験馬2').replaceAll('2024000001','2024000002'),row.replaceAll('試験馬','試験馬3').replaceAll('2024000001','2024000003')].join(''));
+ const b=await collectMissingRoster(db,null,{now:()=>now+10800000,fetcher:async()=>new Response(full,{headers:{'content-type':'text/html; charset=utf-8'}})});
+ assert.equal(b.status,'roster-saved');assert.equal(b.storedRunners,3);assert.equal(b.rosterComplete,true);assert.equal(b.newRosterRaces,0);assert.equal(b.newRosterRevisions,1);
+ assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,2);assert.deepEqual(sql.prepare('SELECT * FROM lab_expected_roster_registry WHERE snapshot_id=?').get(original.snapshot_id),original);assert.equal((await storedExpectedSources(db,p.race_date,p.race_date))[0].names.length,3);
+ const secondEvaluation=await evaluate(now+10800000);assert.equal(secondEvaluation.status,'verified',JSON.stringify(secondEvaluation));assert.equal(secondEvaluation.saved,1);assert.equal(secondEvaluation.evaluationChanged,true);const fullSource=(await storedExpectedSources(db,p.race_date,p.race_date))[0],freshRead=await readProvisionalPrediction(db,fullSource);assert.equal(freshRead.snapshot.runnerCount,3);assert.equal(freshRead.snapshot.preparation.sourceSnapshotId,fullSource.snapshotId);assert.notEqual(freshRead.snapshotSha256,firstRead.snapshotSha256);assert.equal((await readProvisionalPrediction(db,source,{exact:true})).snapshotSha256,firstRead.snapshotSha256);sql.close();
+});
+
+test('legacy roster-saved truncated receipt is reclassified from its exact stored body without HTTP or gate mutation',async()=>{
+ const {db,sql}=fixture(),body=ownHtml.replace('<a>競馬新聞</a>','<div>15頭</div><a>競馬新聞</a>').replace('<p>※結果','<p>続きは一口馬主コースPro 登録でご覧になれます</p><p>※結果'),digest=await sha256(body);
+ await saveExpectedRoster(db,{date:p.race_date,venue:p.venue,raceNo:p.race_no,raceName:'2歳未勝利',provider:'netkeiba',kind:'expected-runners',sourceUrl:ownUrl,observedAt:new Date(now).toISOString(),sourceText:'対象レースの旧保存原典SHA '+digest+' 試験馬 2歳',runners:[{horseName:'試験馬',age:2}]},now);
+ sql.exec('CREATE TABLE lab_missing_roster_sources_v1(race_key TEXT PRIMARY KEY,status TEXT,next_at INTEGER,source_url TEXT,http_status INTEGER,body_sha256 TEXT,body_html TEXT,observed_at TEXT,error TEXT)');
+ sql.prepare('INSERT INTO lab_missing_roster_sources_v1 VALUES(?,?,?,?,?,?,?,?,?)').run('2026-10-24:東京:1','roster-saved',now+86400000,ownUrl,200,digest,body,new Date(now).toISOString(),null);
+ const gate=sql.prepare('SELECT * FROM lab_history_collection_budget').get();const r=await collectLiveHistory(db,{scheduledTime:now},{now:()=>now,cardCompletionFirst:true,cards:async()=>({status:'awaiting-official-publication',externalRequests:0}),missing:(d,e,o)=>collectMissingRoster(d,null,{...o,fetcher:()=>assert.fail('use stored body only')}),registered:()=>assert.fail('must return after the local roster save'),programs:()=>assert.fail('no second source stage')});assert.equal(r.historyWorkStage,'acquisition');
+ assert.equal(r.status,'partial-roster-saved');assert.equal(r.externalRequests,0);assert.equal(r.newRosterRaces,0);assert.equal(r.declaredRunners,15);assert.deepEqual(sql.prepare('SELECT * FROM lab_history_collection_budget').get(),gate);assert.equal(sql.prepare('SELECT status FROM lab_missing_roster_sources_v1').get().status,'partial-roster-saved');sql.close();
+});
+
+test('uncertain partial-roster save reconciles without promoting it to complete or requesting the source again',async()=>{
+ const {db,sql}=fixture(),body=ownHtml.replace('<a>競馬新聞</a>','<div>15頭</div><a>競馬新聞</a>');let fail=true,requests=0;
+ const wrapped={prepare(q){if(fail&&q==='SELECT record_json FROM lab_expected_roster_registry WHERE snapshot_id=?')return{bind(){return{async first(){return null}}}};return db.prepare(q)}};
+ const first=await collectMissingRoster(wrapped,null,{now:()=>now,fetcher:async()=>{requests++;return new Response(body,{headers:{'content-type':'text/html; charset=utf-8'}})}});assert.equal(first.status,'pending-roster-readback');fail=false;
+ const next=await collectMissingRoster(wrapped,null,{now:()=>now+3600000,fetcher:()=>assert.fail('read the saved snapshot')});assert.equal(next.status,'roster-reconciled');assert.equal(next.rosterComplete,false);assert.equal(next.declaredRunners,15);assert.equal(requests,1);assert.equal(sql.prepare('SELECT status FROM lab_missing_roster_sources_v1').get().status,'partial-roster-saved');sql.close();
+});
+
+test('OWN charset-only fix reuses declared encoding without relaxing identity or hourly source limits',async()=>{
+ for(const [meta,contentType] of [['<meta charset="utf-8">','text/html'],['<meta http-equiv="Content-Type" content="text/html; charset=utf-8">','text/html'],['<meta charset="euc-jp">','text/html; charset="utf-8"']]){
+  const {db,sql}=fixture();let calls=0;
+  const body='<!doctype html><head>'+meta+'</head>'+ownHtml;
+  const fetcher=async()=>{calls++;return new Response(new TextEncoder().encode(body),{headers:{'content-type':contentType}});};
+  const result=await collectMissingRoster(db,null,{now:()=>now,fetcher});
+  assert.equal(result.status,'roster-saved',JSON.stringify(result));assert.equal(calls,1);
+  const stored=sql.prepare('SELECT body_html,body_sha256 FROM lab_missing_roster_sources_v1').get();
+  assert.equal(stored.body_html,body);assert.equal(stored.body_sha256,await sha256(body));
+  assert.equal(JSON.parse(sql.prepare('SELECT record_json FROM lab_expected_roster_registry').get().record_json).runners[0].horseName,'試験馬');
+  await collectMissingRoster(db,null,{now:()=>now+60000,fetcher});assert.equal(calls,1);sql.close();
+ }
+ const {db,sql}=fixture();const out=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>new Response(new TextEncoder().encode('<meta charset="utf-8">'+ownHtml.replace('10/24(土)','10/25(日)')),{headers:{'content-type':'text/html'}})});
+ assert.equal(out.status,'publication-unconfirmed');assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);sql.close();
+});
+function fixture(gate=0){const sql=new DatabaseSync(':memory:');sql.exec(`CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,meeting_no INTEGER,day_no INTEGER,race_label TEXT,fetched_at TEXT DEFAULT '2026-10-20T00:00:00.000Z');INSERT INTO jra_race_program(race_date,venue,race_no,meeting_no,day_no,race_label) VALUES('2026-10-24','東京',1,4,8,'2歳未勝利');CREATE TABLE jra_races(race_date TEXT,venue TEXT,race_no INTEGER,race_key TEXT,runner_count INTEGER);CREATE TABLE jra_runners(race_key TEXT,horse_no INTEGER);CREATE TABLE lab_expected_roster_registry(snapshot_id TEXT PRIMARY KEY,race_key TEXT,record_json TEXT,source_sha256 TEXT,stored_at TEXT);CREATE TABLE lab_history_collection_budget(name TEXT PRIMARY KEY,next_batch_at INTEGER,locked_until INTEGER,lock_token TEXT);INSERT INTO lab_history_collection_budget VALUES('jra-history',${gate},0,NULL)`);const db={prepare(q){const w=(a=[])=>({bind(...v){return w(v)},async run(){return{meta:{changes:sql.prepare(q).run(...a).changes}}},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}}});return w()}};return{sql,db};}
+test('legacy supplementary identity remains strict and the expected source uses the same race identity',()=>{assert.equal(supplementaryRosterUrl(p),url);assert.equal(expectedRosterSourceUrl(p),ownUrl);assert.equal(parseSupplementaryRoster(html,p,url)[0].horseName,'試験馬');assert.throws(()=>parseSupplementaryRoster(html.replace('20261024','20261025'),p,url));assert.throws(()=>parseSupplementaryRoster(html.replace('4回 東京','3回 東京'),p,url));assert.throws(()=>parseSupplementaryRoster(html.replace('HorseList','Unknown'),p,url));});
+test('OWN expected roster parser requires matching date, venue, race and horse evidence',()=>{assert.equal(parseOwnExpectedRoster(ownHtml,p,ownUrl)[0].horseName,'試験馬');assert.throws(()=>parseOwnExpectedRoster(ownHtml.replace('10/24(土)','10/25(日)'),p,ownUrl),/開催日/);assert.throws(()=>parseOwnExpectedRoster(ownHtml.replace('東京 1R','京都 1R'),p,ownUrl),/開催場/);assert.throws(()=>parseOwnExpectedRoster(ownHtml.replace('東京 1R','東京 2R'),p,ownUrl),/レース番号/);assert.throws(()=>parseOwnExpectedRoster(ownHtml.replace('牡2',''),p,ownUrl),/馬名・年齢/);assert.throws(()=>parseOwnExpectedRoster(ownHtml.replace('2024000001','bad'),p,ownUrl),/名簿公開/);assert.throws(()=>parseOwnExpectedRoster(ownHtml,p,url),/取得先/);});
+test('one bounded OWN source request saves an immutable expected roster and respects hourly cadence',async()=>{const {db,sql}=fixture();let calls=0,requested='';const deps={now:()=>now,fetcher:async(u)=>{calls++;requested=u;return new Response(ownHtml,{headers:{'content-type':'text/html; charset=utf-8'}})}};const r=await collectMissingRoster(db,null,deps);assert.equal(r.status,'roster-saved',JSON.stringify(r));assert.equal(requested,ownUrl);assert.equal(r.storedRunners,1);assert.equal(r.independentRosterReadback,true);assert.equal(r.formalCardSaved,false);const saved=sql.prepare('SELECT record_json FROM lab_expected_roster_registry').get();assert.equal(JSON.parse(saved.record_json).kind,'expected-runners');assert.equal(JSON.parse(saved.record_json).runners[0].horseNo,undefined);await collectMissingRoster(db,null,deps);assert.equal(calls,1);assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,1);sql.close();});
 test('shared cooldown makes no request; 403 pauses the shared gate and records a bounded retry',async()=>{let calls=0;const a=fixture(now+1000);assert.equal((await collectMissingRoster(a.db,null,{now:()=>now,fetcher:async()=>{calls++;throw Error('unexpected')}})).status,'cooldown');assert.equal(calls,0);a.sql.close();const b=fixture();const r=await collectMissingRoster(b.db,null,{now:()=>now,fetcher:async()=>new Response('',{status:403})});assert.equal(r.status,'source-blocked');assert.equal(r.httpStatus,403);assert.equal(b.sql.prepare('SELECT next_batch_at FROM lab_history_collection_budget').get().next_batch_at,now+3600000);assert.equal(b.sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);b.sql.close();});
-test('unconfirmed first race stays queued while another race can acquire its roster next hour',async()=>{const {db,sql}=fixture();sql.exec("INSERT INTO jra_race_program VALUES('2026-10-24','東京',2,4,8,'2歳未勝利')");const a=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>new Response('<p>calendar only</p>',{headers:{'content-type':'text/html; charset=utf-8'}})});assert.equal(a.status,'publication-unconfirmed');assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);const secondHtml=html.replaceAll('202605040801','202605040802').replace('試験馬','試験馬2');const b=await collectMissingRoster(db,null,{now:()=>now+3600000,fetcher:async()=>new Response(secondHtml,{headers:{'content-type':'text/html; charset=utf-8'}})});assert.equal(b.status,'roster-saved');assert.equal(b.target,'2026-10-24:東京:2');assert.equal(sql.prepare("SELECT status FROM lab_missing_roster_sources_v1 WHERE race_key='2026-10-24:東京:1'").get().status,'publication-unconfirmed');sql.close();});
+test('unconfirmed first race stays queued while another race can acquire its roster next hour',async()=>{const {db,sql}=fixture();sql.exec("INSERT INTO jra_race_program(race_date,venue,race_no,meeting_no,day_no,race_label) VALUES('2026-10-24','東京',2,4,8,'2歳未勝利')");const a=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>new Response('<p>calendar only</p>',{headers:{'content-type':'text/html; charset=utf-8'}})});assert.equal(a.status,'publication-unconfirmed');assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);const secondHtml=ownHtml.replace('1R','2R').replace('試験馬','試験馬2').replace('2024000001','2024000002');const b=await collectMissingRoster(db,null,{now:()=>now+3600000,fetcher:async()=>new Response(secondHtml,{headers:{'content-type':'text/html; charset=utf-8'}})});assert.equal(b.status,'roster-saved');assert.equal(b.target,'2026-10-24:東京:2');assert.equal(sql.prepare("SELECT status FROM lab_missing_roster_sources_v1 WHERE race_key='2026-10-24:東京:1'").get().status,'publication-unconfirmed');sql.close();});
 test('Worker-compatible manual redirects never follow another race or persist a redirect response',async()=>{const {db,sql}=fixture();let calls=0;const r=await collectMissingRoster(db,null,{now:()=>now,fetcher:async(u,options)=>{calls++;assert.equal(options.redirect,'manual');return new Response('',{status:302,headers:{location:'https://example.com/other-race'}})}});assert.equal(calls,1);assert.equal(r.status,'fetch-failed');assert.equal(r.httpStatus,302);assert.equal(r.saveMayHaveSucceeded,false);assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);sql.close();});
 
 test('uncertain roster INSERT reconciles without fetch or rewrite and returns identifiers for independent GET',async()=>{
  const {db,sql}=fixture();let fail=true;const recoveryQueries=[];
  const wrapped={prepare(q){if(!fail)recoveryQueries.push(q);if(fail&&q==='SELECT record_json FROM lab_expected_roster_registry WHERE snapshot_id=?')return{bind(){return{async first(){return null}}}};return db.prepare(q)}};
- const first=await collectMissingRoster(wrapped,null,{now:()=>now,fetcher:async()=>new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}})});
+ const first=await collectMissingRoster(wrapped,null,{now:()=>now,fetcher:async()=>new Response(ownHtml,{headers:{'content-type':'text/html; charset=utf-8'}})});
  assert.equal(first.status,'pending-roster-readback');assert.equal(first.saveMayHaveSucceeded,true);
  const before=sql.prepare('SELECT * FROM lab_expected_roster_registry').get();fail=false;
  const next=await collectMissingRoster(wrapped,null,{now:()=>now+3600000,fetcher:()=>assert.fail('must reuse persisted roster')});
@@ -29,4 +122,125 @@ test('reconciliation rejects a hash-valid roster for a different target without 
  const before=sql.prepare('SELECT * FROM lab_expected_roster_registry').get();
  await assert.rejects(collectMissingRoster(db,null,{now:()=>now,fetcher:()=>assert.fail('no fetch on conflicting saved target')}),/対象・頭数不一致/);
  assert.equal(sql.prepare('SELECT status FROM lab_missing_roster_sources_v1').get().status,'pending-roster-readback');assert.deepEqual(sql.prepare('SELECT * FROM lab_expected_roster_registry').get(),before);sql.close();
+});
+
+
+test('partial official runner rows do not exclude an unsaved candidate roster',async()=>{
+ const {db,sql}=fixture();const key='2026-10-24:東京:1';
+ sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?)').run('2026-10-24','東京',1,key,3);
+ sql.prepare('INSERT INTO jra_runners VALUES(?,?)').run(key,1);
+ let calls=0;const r=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>{calls++;return new Response(ownHtml,{headers:{'content-type':'text/html; charset=utf-8'}})}});
+ assert.equal(r.status,'roster-saved',JSON.stringify(r));assert.equal(r.target,key);assert.equal(r.newRosterRaces,1);assert.equal(calls,1);
+ assert.equal(sql.prepare('SELECT runner_count FROM jra_races WHERE race_key=?').get(key).runner_count,3);
+ assert.equal(sql.prepare('SELECT count(*) n FROM jra_runners WHERE race_key=?').get(key).n,1);
+ assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,1);
+ sql.close();
+});
+
+test('complete official card still excludes candidate roster acquisition',async()=>{
+ const {db,sql}=fixture();const key='2026-10-24:東京:1';
+ sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?)').run('2026-10-24','東京',1,key,1);
+ sql.prepare('INSERT INTO jra_runners VALUES(?,?)').run(key,1);
+ let calls=0;const r=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>{calls++;return new Response(ownHtml,{headers:{'content-type':'text/html; charset=utf-8'}})}});
+ assert.equal(r.status,'no-due-missing-roster');assert.equal(r.externalRequests,0);assert.equal(calls,0);
+ assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);
+ sql.close();
+});
+
+test('an existing expected roster is not fetched or saved a second time',async()=>{
+ const {db,sql}=fixture();let calls=0;
+ const first=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>{calls++;return new Response(ownHtml,{headers:{'content-type':'text/html; charset=utf-8'}})}});
+ assert.equal(first.status,'roster-saved');const before=sql.prepare('SELECT snapshot_id,record_json,stored_at FROM lab_expected_roster_registry').get();
+ const second=await collectMissingRoster(db,null,{now:()=>now+3600000,fetcher:()=>{calls++;throw Error('unexpected refetch')}});
+ assert.equal(second.status,'no-due-missing-roster');assert.equal(second.externalRequests,0);assert.equal(calls,1);
+ assert.deepEqual(sql.prepare('SELECT snapshot_id,record_json,stored_at FROM lab_expected_roster_registry').get(),before);
+ sql.close();
+});
+
+test('an active shared lease still blocks roster acquisition without an external request',async()=>{
+ const {db,sql}=fixture();sql.prepare("UPDATE lab_history_collection_budget SET locked_until=? WHERE name='jra-history'").run(now+1000);
+ let calls=0;const r=await collectMissingRoster(db,null,{now:()=>now,fetcher:()=>{calls++;throw Error('unexpected request')}});
+ assert.equal(r.status,'cooldown');assert.equal(r.externalRequests,0);assert.equal(calls,0);
+ sql.close();
+});
+
+test('cached OWN receipt resumes roster persistence during external cooldown without spending an HTTP slot',async()=>{
+ const {db,sql}=fixture(now+1800000),key='2026-10-24:東京:1',bodySha=await sha256(ownHtml);let calls=0;
+ sql.exec("CREATE TABLE lab_missing_roster_sources_v1(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_at INTEGER NOT NULL,source_url TEXT,http_status INTEGER,body_sha256 TEXT,body_html TEXT,observed_at TEXT,error TEXT);CREATE TABLE lab_missing_roster_clock_v1(name TEXT PRIMARY KEY,next_at INTEGER NOT NULL)");
+ sql.prepare('INSERT INTO lab_missing_roster_sources_v1 VALUES(?,?,?,?,?,?,?,?,?)').run(key,'source-received',now+3600000,ownUrl,200,bodySha,ownHtml,new Date(now).toISOString(),null);
+ sql.prepare("INSERT INTO lab_missing_roster_clock_v1 VALUES('source',?)").run(now+3600000);
+ const r=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>{calls++;throw Error('cached receipt must not fetch')}});
+ assert.equal(r.status,'roster-saved',JSON.stringify(r));assert.equal(r.externalRequests,0);assert.equal(calls,0);assert.equal(r.storedRunners,1);
+ assert.equal(sql.prepare("SELECT next_batch_at FROM lab_history_collection_budget WHERE name='jra-history'").get().next_batch_at,now+1800000);
+ assert.equal(sql.prepare("SELECT next_at FROM lab_missing_roster_clock_v1 WHERE name='source'").get().next_at,now+3600000);
+ sql.close();
+});
+
+test('OWN roster feeds the existing provisional snapshot writer and independent SHA readback',async()=>{
+ const {db,sql}=fixture();
+ const acquired=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>new Response(ownHtml,{headers:{'content-type':'text/html; charset=utf-8'}})});
+ assert.equal(acquired.status,'roster-saved');
+ const expected=await storedExpectedSources(db,'2026-10-24','2026-10-24');
+ const source=expected.find(r=>r.raceKey==='2026-10-24:東京:1');assert.ok(source);assert.deepEqual(source.names,['試験馬']);
+ const result=await scheduledProvisionalPrediction(db,now,{prepareRoster:async()=>({status:'no-reviewed-candidate',saved:0,externalRequests:0}),sources:async()=>expected,repair:async()=>({repaired:0}),build:async(_db,s)=>({ok:true,status:'provisional-expected-roster',race:{date:s.date,venue:s.venue,raceNo:s.raceNo,raceName:s.raceName},runnerCount:s.names.length,runners:s.names.map((horseName,i)=>({horseName,horseNo:null,frameNo:null,rank:i+1,score:80,mark:i?'○':'◎'})),guardrails:{humanMarksUsed:false,officialCard:false,locked:false,eligibleForLearning:false}})});
+ assert.equal(result.status,'verified',JSON.stringify(result));assert.equal(result.target,'2026-10-24:東京:1');assert.equal(result.saved,1);assert.equal(result.integrityVerified,true);
+ const read=await readProvisionalPrediction(db,source,{exact:true});assert.equal(read.integrityVerified,true);assert.equal(read.snapshotSha256,result.snapshotSha256);assert.deepEqual(read.snapshot.runners.map(r=>r.horseName),source.names);
+ assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,1);assert.equal(sql.prepare('SELECT count(*) n FROM lab_provisional_predictions_v1').get().n,1);sql.close();
+});
+
+test('legacy-source receipt is not reused as OWN and a fresh OWN request waits for its natural slot',async()=>{
+ const {db,sql}=fixture(),key='2026-10-24:東京:1',legacyUrl=supplementaryRosterUrl(p),legacyHtml='<html><title>generic empty shell</title></html>';let calls=0;
+ sql.exec("CREATE TABLE lab_missing_roster_sources_v1(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_at INTEGER NOT NULL,source_url TEXT,http_status INTEGER,body_sha256 TEXT,body_html TEXT,observed_at TEXT,error TEXT);CREATE TABLE lab_missing_roster_clock_v1(name TEXT PRIMARY KEY,next_at INTEGER NOT NULL)");
+ sql.prepare('INSERT INTO lab_missing_roster_sources_v1 VALUES(?,?,?,?,?,?,?,?,?)').run(key,'source-received',0,legacyUrl,200,await sha256(legacyHtml),legacyHtml,new Date(now-3600000).toISOString(),null);
+ sql.prepare("INSERT INTO lab_missing_roster_clock_v1 VALUES('source',?)").run(now+3600000);
+ const limited=await collectMissingRoster(db,null,{now:()=>now,fetcher:()=>{calls++;throw Error('must respect source clock')}});
+ assert.equal(limited.status,'source-not-due');assert.equal(limited.externalRequests,0);assert.equal(calls,0);
+ const saved=await collectMissingRoster(db,null,{now:()=>now+3600000,fetcher:async requested=>{calls++;assert.equal(requested,ownUrl);return new Response(ownHtml,{headers:{'content-type':'text/html; charset=utf-8'}})}});
+ assert.equal(saved.status,'roster-saved',JSON.stringify(saved));assert.equal(saved.externalRequests,1);assert.equal(calls,1);assert.equal(saved.storedRunners,1);
+ assert.equal(sql.prepare('SELECT source_url FROM lab_missing_roster_sources_v1').get().source_url,ownUrl);assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,1);sql.close();
+});
+test('invalid stored race identity defers without HTTP, gate lease or source slot and the next valid race still advances',async()=>{
+ for(const invalid of [0,13,1.5]){
+  const {db,sql}=fixture();sql.prepare('UPDATE jra_race_program SET race_no=?').run(invalid);
+  const gateBefore=sql.prepare('SELECT * FROM lab_history_collection_budget').get();let calls=0;
+  const fetcher=async()=>{calls++;return new Response(ownHtml.replace('1R','2R'),{headers:{'content-type':'text/html; charset=utf-8'}});};
+  const held=await collectMissingRoster(db,null,{now:()=>now,fetcher});
+  assert.equal(held.status,'program-identity-incomplete');assert.equal(held.externalRequests,0);assert.equal(calls,0);
+  assert.deepEqual(sql.prepare('SELECT * FROM lab_history_collection_budget').get(),gateBefore);
+  assert.equal(sql.prepare('SELECT next_at FROM lab_missing_roster_clock_v1').get().next_at,0);
+  assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);
+  const receipt=sql.prepare('SELECT * FROM lab_missing_roster_sources_v1').get();assert.equal(receipt.next_at,now+6*3600000);
+  sql.exec("INSERT INTO jra_race_program(race_date,venue,race_no,meeting_no,day_no,race_label) VALUES('2026-10-24','東京',2,4,8,'2歳未勝利')");
+  const next=await collectMissingRoster(db,null,{now:()=>now,fetcher});
+  assert.equal(next.status,'roster-saved');assert.equal(next.target,'2026-10-24:東京:2');assert.equal(calls,1);assert.equal(next.independentRosterReadback,true);sql.close();
+ }
+});
+
+test('supplementary identities reject noncanonical dates while valid race boundary URLs remain unchanged',()=>{
+ for(const race_date of [null,20261024,'2026-1-24','2026-02-30','2026-11-31','2026-10-24T00:00:00Z','not-a-date']){
+  assert.throws(()=>supplementaryRosterUrl({...p,race_date}));assert.throws(()=>expectedRosterSourceUrl({...p,race_date}));
+ }
+ for(const race_no of [1,12]){const suffix=String(race_no).padStart(2,'0');assert.equal(supplementaryRosterUrl({...p,race_no}),'https://race.netkeiba.com/race/shutuba.html?race_id=2026050408'+suffix);assert.equal(expectedRosterSourceUrl({...p,race_no}),'https://own.netkeiba.com/race/shutuba.html?race_id=2026050408'+suffix);}
+});
+
+
+test('HTTP failure evidence decodes HTML meta UTF-8 without relaxing 403 cooldown',async()=>{
+ const {db,sql}=fixture();const body='<meta charset="utf-8"><p>取得制限中・しばらくお待ちください</p>';
+ const r=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>new Response(new TextEncoder().encode(body),{status:403,headers:{'content-type':'text/html'}})});
+ assert.equal(r.status,'source-blocked');assert.equal(r.httpStatus,403);
+ assert.equal(r.failureEvidence.storedDecodedBodySha256,await sha256(body));
+ const saved=sql.prepare('SELECT body_html FROM lab_missing_roster_sources_v1').get();
+ assert.equal(saved.body_html,body);
+ assert.equal(sql.prepare('SELECT next_batch_at FROM lab_history_collection_budget').get().next_batch_at,now+3600000);
+ assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);sql.close();
+});
+
+test('unsupported HTTP failure charset preserves bounded evidence and 403 cooldown',async()=>{
+ const {db,sql}=fixture();const body='<p>source unavailable</p>';
+ const r=await collectMissingRoster(db,null,{now:()=>now,fetcher:async()=>new Response(new TextEncoder().encode(body),{status:403,headers:{'content-type':'text/html; charset=not-a-real-charset'}})});
+ assert.equal(r.status,'source-blocked');assert.equal(r.httpStatus,403);
+ assert.equal(r.failureEvidence.charsetSource,'unsupported-declared-charset-euc-jp-fallback');
+ assert.equal(sql.prepare('SELECT body_html FROM lab_missing_roster_sources_v1').get().body_html,body);
+ assert.equal(sql.prepare('SELECT next_batch_at FROM lab_history_collection_budget').get().next_batch_at,now+3600000);
+ assert.equal(sql.prepare('SELECT count(*) n FROM lab_expected_roster_registry').get().n,0);sql.close();
 });

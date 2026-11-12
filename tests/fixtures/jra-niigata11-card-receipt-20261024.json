@@ -1,0 +1,22 @@
+{
+  "note": "Actual independent prelock-audit GET for the saved card; not the original HTML.",
+  "race": {
+    "raceKey": "2026-10-24:新潟:11",
+    "date": "2026-10-24",
+    "venue": "新潟",
+    "raceNo": 11,
+    "raceName": "魚沼ステークス"
+  },
+  "audit": {
+    "stored": 12
+  },
+  "storedCardEvidence": {
+    "current": true,
+    "sourceUrl": "https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0104202604031120261024/A2",
+    "sourceSha256": "4a571d17ae1fd778000321bc5fd714f5267f132726c7b11c82a323a8ebac74de",
+    "runnerSha256": "d390174dedaa0f50ee19b21df432abec8487dd65f79f36532c6da44ce404cc84",
+    "cardFetchedAt": "2026-10-24T03:12:55.424Z",
+    "sourceHashBasis": "complete-decoded-source-html-utf8",
+    "runnerHashBasis": "horseNo-frameNo-name-sorted-json-v1"
+  }
+}

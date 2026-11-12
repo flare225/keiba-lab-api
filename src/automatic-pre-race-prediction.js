@@ -11,10 +11,22 @@ async function ensure(db){
  await db.prepare(`CREATE TABLE IF NOT EXISTS ${RECEIPTS}(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_attempt_at INTEGER NOT NULL,detail_json TEXT NOT NULL)`).run();
  for(const action of ['UPDATE','DELETE'])await db.prepare(`CREATE TRIGGER IF NOT EXISTS automatic_prediction_no_${action.toLowerCase()} BEFORE ${action} ON ${TABLE} BEGIN SELECT RAISE(ABORT,'automatic prediction is immutable'); END`).run();
 }
-export async function readAutomaticPrediction(db,input){
+export async function readAutomaticPrediction(db,input,{includePending=false,historyHorseNo=null}={}){
  const t=targetInput(input);let row;
+ if(historyHorseNo!==null&&(!includePending||!/^([1-9]|1[0-8])$/.test(String(historyHorseNo))))throw Error('保留履歴の読取にはinclude_pending=1と馬番1〜18が必要です。');
  try{row=await db.prepare(`SELECT * FROM ${TABLE} WHERE race_key=?`).bind(`${t.date}:${t.venue}:${t.raceNo}`).first()}catch(e){if(/no such table/i.test(String(e)))return{ok:true,available:false};throw e}
- if(!row)return{ok:true,available:false};
+ if(!row){
+  if(!includePending)return{ok:true,available:false};
+  let pending;try{pending=await db.prepare(`SELECT status,next_attempt_at,detail_json FROM ${RECEIPTS} WHERE race_key=?`).bind(`${t.date}:${t.venue}:${t.raceNo}`).first()}catch(e){if(!/no such table/i.test(String(e)))throw e;}
+  const detail=pending?JSON.parse(pending.detail_json):null;let storedHistory;
+  if(historyHorseNo!==null){
+   const held=detail?.missingHistoryDetails?.find(r=>r.horseNo===Number(historyHorseNo));
+   if(!held)throw Error('指定馬は保存された保留根拠に含まれていません。');
+   const rows=(await db.prepare(`SELECT p.race_date,p.venue,p.race_name,p.surface,p.distance,p.finish_position,p.field_size,p.time_text,p.last3f,p.source_url,p.fetched_at FROM jra_past_performances p JOIN jra_runners r ON r.horse_name=p.horse_name WHERE r.race_key=? AND r.horse_no=? AND r.horse_name=? AND r.age BETWEEN 2 AND 20 AND p.race_date>=MAX('2016-01-01',printf('%d-01-01',CAST(substr(?,1,4) AS INTEGER)-r.age+2)) AND p.race_date<? ORDER BY p.race_date DESC,p.venue,p.race_name LIMIT 3`).bind(`${t.date}:${t.venue}:${t.raceNo}`,Number(historyHorseNo),held.horseName,t.date,t.date).all()).results||[];
+   storedHistory={horseNo:Number(historyHorseNo),horseName:held.horseName,readOnly:true,limit:3,targetDateExcluded:true,rows};
+  }
+  return{ok:true,available:false,target:t,pending:pending?{status:pending.status,nextAttemptAt:new Date(pending.next_attempt_at).toISOString(),detail}:null,...(storedHistory?{storedHistory}:{})};
+ }
  if(await sha256(row.snapshot_json)!==row.snapshot_sha256)throw Error('自動事前予想のハッシュが一致しません。');
  const snapshot=JSON.parse(row.snapshot_json);
  if(snapshot.race.raceKey!==row.race_key||snapshot.savedAt!==row.saved_at||!await featureCapturedBeforeOfficialStart(db,snapshot.race,Date.parse(row.saved_at)))throw Error('自動事前予想の保存証跡が一致しません。');
@@ -35,8 +47,12 @@ export async function captureAutomaticPrediction(db,input,now=Date.now()){
  const detail=await db.prepare('SELECT 1 AS found FROM lab_race_result_details WHERE race_key=? LIMIT 1').bind(context.raceKey).first();
  if(outcome||detail)throw Error('対象結果が保存済みのため事前予想を作成しません。');
  const {histories,all}=await officialHistoryEvidence(db,context,null,await postRaceHistoryBatch(db,context));
- const missing=all.filter(r=>!r.assessment.available||!Number.isFinite(r.assessment.evidenceScore)).map(r=>r.horseName);
- if(missing.length)return{ok:true,status:'awaiting-prior-history',missingHistoryHorses:missing,saved:0,externalRequests:0};
+ const missing=all.filter(r=>!r.assessment.available||!Number.isFinite(r.assessment.evidenceScore));
+ if(missing.length)return{ok:true,status:'awaiting-prior-history',missingHistoryHorses:missing.map(r=>r.horseName),evaluatedHistoryHorses:all.filter(r=>!missing.includes(r)).map(r=>r.horseName),missingHistoryDetails:missing.map(r=>{
+  const h=histories.find(h=>h.horseName===r.horseName),warnings=h?.warnings||[];
+  const reason=warnings.includes('conflicting-history-identity')?'conflicting-history-identity':warnings.some(w=>w.endsWith('-table-unavailable'))?'history-table-unavailable':h?.summary?.storedStarts===0?'no-stored-prior-history':r.assessment.validFinishRows===0?'no-valid-prior-finishes':'assessment-unavailable';
+  return{horseNo:r.horseNo,horseName:r.horseName,reason,storedPriorRows:h?.summary?.storedStarts??null,selectedPriorRows:r.assessment.historyRows,validFinishRows:r.assessment.validFinishRows,warnings,notes:r.assessment.notes};
+ }),saved:0,externalRequests:0};
  const savedAt=new Date(now+Date.now()-started).toISOString();
  if(!await featureCapturedBeforeOfficialStart(db,t,Date.parse(savedAt)))throw Error('評価中に事前保存締切を過ぎました。');
  if(JSON.stringify(await card(db,context))!==JSON.stringify(runners))throw Error('評価中に出馬表が更新されました。次回再評価します。');
@@ -56,16 +72,17 @@ export async function captureAutomaticPrediction(db,input,now=Date.now()){
  return{...read,saved:Number(result.meta?.changes)||0,externalRequests:0};
  }catch(e){e.saveMayHaveSucceeded=true;throw e;}
 }
-export async function scheduledAutomaticPrediction(db,now=Date.now()){
+export async function scheduledAutomaticPrediction(db,now=Date.now(),target=null){
+ const focus=target?targetInput(target):null;
  await ensure(db);const today=jstDay(now),since=new Date(Date.parse(today+'T00:00:00Z')-7*86400000).toISOString().slice(0,10),until=new Date(Date.parse(today+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);
  // One indexed, bounded queue, independent of user marks and frozen experiments.
- const rows=(await db.prepare(`SELECT r.race_date AS date,r.venue,r.race_no AS raceNo,(a.race_key IS NOT NULL) AS existingSnapshot FROM jra_races r JOIN jra_race_program p ON p.race_date=r.race_date AND p.venue=r.venue AND p.race_no=r.race_no LEFT JOIN ${TABLE} a ON a.race_key=r.race_date||':'||r.venue||':'||r.race_no LEFT JOIN ${RECEIPTS} c ON c.race_key=r.race_date||':'||r.venue||':'||r.race_no WHERE r.race_date BETWEEN ? AND ? AND r.runner_count>0 AND COALESCE(c.next_attempt_at,0)<=? AND ((a.race_key IS NOT NULL AND COALESCE(c.status,'')<>'saved') OR (a.race_key IS NULL AND r.race_date>=? AND datetime(p.race_date||'T'||p.start_time||':00+09:00')>datetime(?,'unixepoch','+5 minutes'))) ORDER BY COALESCE(c.next_attempt_at,0),r.race_date,p.start_time,r.venue,r.race_no LIMIT 1`).bind(since,until,now,today,now/1000).all()).results||[];
+ const rows=(await db.prepare(`SELECT r.race_date AS date,r.venue,r.race_no AS raceNo,(a.race_key IS NOT NULL) AS existingSnapshot FROM jra_races r JOIN jra_race_program p ON p.race_date=r.race_date AND p.venue=r.venue AND p.race_no=r.race_no LEFT JOIN ${TABLE} a ON a.race_key=r.race_date||':'||r.venue||':'||r.race_no LEFT JOIN ${RECEIPTS} c ON c.race_key=r.race_date||':'||r.venue||':'||r.race_no WHERE r.race_date BETWEEN ? AND ? ${focus?'AND r.race_date=? AND r.venue=? AND r.race_no=?':''} AND r.runner_count>0 AND COALESCE(c.next_attempt_at,0)<=? AND ((a.race_key IS NOT NULL AND COALESCE(c.status,'')<>'saved') OR (a.race_key IS NULL AND r.race_date>=? AND datetime(p.race_date||'T'||p.start_time||':00+09:00')>datetime(?,'unixepoch','+5 minutes'))) ORDER BY COALESCE(c.next_attempt_at,0),r.race_date,p.start_time,r.venue,r.race_no LIMIT 1`).bind(since,until,...(focus?[focus.date,focus.venue,focus.raceNo]:[]),now,today,now/1000).all()).results||[];
  if(!rows.length)return{ok:true,status:'no-due-race',saved:0,externalRequests:0};
  const queued=rows[0],t={date:queued.date,venue:queued.venue,raceNo:queued.raceNo},key=`${t.date}:${t.venue}:${t.raceNo}`;let result;
  try{
   if(queued.existingSnapshot){const read=await readAutomaticPrediction(db,t);if(!read.available)throw Error('保存済み予想の再照合で対象が見つかりません。再生成しません。');result={...read,saved:0,verificationOnly:true,externalRequests:0};}
   else result=await captureAutomaticPrediction(db,t,now);
- }catch(e){if(e.saveMayHaveSucceeded)throw e;result={ok:false,status:'deferred',error:String(e.message||e),saved:0,externalRequests:0}}
+ }catch(e){if(e.saveMayHaveSucceeded||e?.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;result={ok:false,status:'deferred',error:String(e.message||e),saved:0,externalRequests:0}}
  await db.prepare(`INSERT INTO ${RECEIPTS} VALUES(?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET status=excluded.status,next_attempt_at=excluded.next_attempt_at,detail_json=excluded.detail_json`).bind(key,result.available?'saved':result.status,now+3600000,JSON.stringify(result.available?{snapshotSha256:result.snapshotSha256}:{...result})).run();
  return{...result,target:t};
 }

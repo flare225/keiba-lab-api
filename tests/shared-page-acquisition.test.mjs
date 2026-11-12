@@ -1,0 +1,462 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';
+import {discoverSharedSelectedCard,createSharedSelectedCardDiscoverer,canonicalPublishedPage,parseSharedPage,runSharedPageStep,planSharedPages,SHARED_PAGE_POLICY} from '../src/shared-page-acquisition.js';
+import {inspectSourceCard,sha256,runnerFingerprint,requireLockEvidence} from '../src/card-evidence.js';
+import {runWithScheduledReadBudget} from '../src/scheduled-read-budget.js';
+import {collectLiveHistory} from '../src/live-source-dispatch.js';
+import {collectMissingOfficialCard} from '../src/missing-official-cards.js';
+import {ensureHistoryTable} from '../src/collection-profile-parser-v3.32.0.js';
+import {scheduledAutomaticPrediction,readAutomaticPrediction} from '../src/automatic-pre-race-prediction.js';
+import {fixtureDatabase,racesFixture,pageGraph,fixtureFetcher,FIXTURE_STAMP,SCOPE,INDEX,cardUrl,drawnHtml,calendar,meetingUrl} from './helpers/shared-page-fixture.mjs';
+const input=races=>({scope:SCOPE,races});
+const rows=sql=>sql.prepare('SELECT * FROM lab_shared_page_receipts_v1').all();
+test('an inventory with preserved predraw pages yields to saved history instead of claiming an attempted card forever',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture()[0],now=FIXTURE_STAMP;
+ const card=cardUrl(race);sql.prepare('INSERT INTO lab_shared_page_receipts_v1(scope_key,page_url,status,next_at) VALUES(?,?,?,?)').run(race.date,card,'predraw',now+86400000);
+ const source={...race,officialRosterDiscoveryUrl:race.rootUrl,sharedInventory:[{...race,cardUrl:card}]};
+ const cards=()=>discoverSharedSelectedCard(db,source,{now:()=>now,fetcher:()=>assert.fail('preserved page must not be fetched')});
+ const held=await cards();assert.equal(held.status,'awaiting-source-or-deadline');assert.equal(held.waitingRaces,1);assert.equal(held.attempted,false);
+ let histories=0;
+ const result=await collectLiveHistory(db,{scheduledTime:now},{now:()=>now,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',cards,registered:async()=>[race],priorityExpected:async()=>{histories++;return{status:'collected',attempted:1,externalRequests:1,addedRows:2}},missing:()=>assert.fail('saved history precedes unrelated rosters')});
+ assert.equal(histories,1);assert.equal(result.historyWorkStage,'history');assert.equal(result.addedRows,2);sql.close();
+});
+test('stored production drl10 meeting links retain date and venue identity',async()=>{
+ const evidence=JSON.parse(await readFile(new URL('./fixtures/jra-stored-index-links-20261029.json',import.meta.url),'utf8'));
+ const {metaFromMeetingListUrl}=await import('../src/index-v1.1.4.js');
+ const meetings=evidence.links.filter(url=>new URL(url).searchParams.get('CNAME').startsWith('pw01drl10'));
+ assert.equal(meetings.length,6);
+ for(const url of meetings){
+  const m=metaFromMeetingListUrl(url);assert.ok(m,url);assert.ok(['2026-10-24','2026-10-25'].includes(m.date));
+  assert.ok(['東京','京都','新潟'].includes(m.venue));assert.equal(m.url,url);
+  assert.equal(metaFromMeetingListUrl(url+'&extra=1'),null);
+  assert.equal(metaFromMeetingListUrl(url.replace('www.jra.go.jp','attacker.invalid')),null);
+ }
+});
+test('expired navigation refreshes before walking its previous-week descendants and reaches a newly published card',async()=>{
+ const evidence=JSON.parse(await readFile(new URL('./fixtures/jra-stored-index-links-20261029.json',import.meta.url),'utf8'));
+ const {db,sql}=await fixtureDatabase(),base=racesFixture()[0],race={...base,date:'2026-10-31',rootUrl:calendar('2026-10-31'),startAt:'2026-10-31T09:45:00+09:00'};
+ let now=FIXTURE_STAMP,published=false;const requests=[];
+ const pages=new Map([[race.rootUrl,`<a href="${INDEX}">index</a>`],[INDEX,evidence.links.map(u=>`<a href="${u}">recorded link</a>`).join('')]]);
+ const fetcher=async(url,options)=>{
+  const actual=canonicalPublishedPage(options?.method==='POST'?url+'?'+options.body:url);requests.push(actual);
+  assert.ok(pages.has(actual),'must refresh stale navigation instead of fetching '+actual);
+  const html=published&&actual===INDEX?`<a href="${cardUrl(race)}">new card</a>`:pages.get(actual);
+  return new Response(html,{headers:{'content-type':'text/html;charset=utf-8'}});
+ };
+ await runSharedPageStep(db,{scope:'2026-10-31',races:[race]},{now:()=>now,fetcher});now+=61000;
+ await runSharedPageStep(db,{scope:'2026-10-31',races:[race]},{now:()=>now,fetcher});
+ published=true;now+=SHARED_PAGE_POLICY.refreshMs+61000;pages.set(cardUrl(race),drawnHtml(race));
+ for(let i=0;i<3;i++){const r=await runSharedPageStep(db,{scope:'2026-10-31',races:[race]},{now:()=>now,fetcher});assert.ok(r.externalRequests<=1);now+=61000;}
+ assert.deepEqual(requests,[race.rootUrl,INDEX,INDEX,cardUrl(race)]);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_runners WHERE race_key=?').get('2026-10-31:東京:1').n,2);
+ sql.close();
+});
+test('only saved literal official links are accepted; witnessed calendar excerpt yields index, not race success',async()=>{
+ const html=await readFile(new URL('./fixtures/jra-calendar-index-link-20261023.html',import.meta.url),'utf8');const p=parseSharedPage(html,calendar('2026-10-24'));assert.deepEqual(p.pages,[INDEX]);assert.equal(p.cards.length,0);
+ for(const url of ['https://attacker.invalid/JRADB/accessD.html?CNAME=pw01dli00/F3','https://user@www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dli00/F3','https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud00/AA'])assert.throws(()=>canonicalPublishedPage(url));
+ assert.equal(canonicalPublishedPage(INDEX.replace('%2F','/')),INDEX);
+ const evidence=JSON.parse(await readFile(new URL('./fixtures/jra-meeting-links-20261024.json',import.meta.url),'utf8'));
+ const findings=parseSharedPage(evidence.links.map(u=>`<a href="${u}">recorded URL</a>`).join(''),INDEX);
+ const {metaFromMeetingListUrl}=await import('../src/index-v1.1.4.js');
+ for(const venue of ['東京','京都','新潟']){
+  const r=racesFixture().find(r=>r.date==='2026-10-24'&&r.venue===venue&&r.raceNo===12),race={...r,rootUrl:INDEX,start:Date.parse(r.startAt),enqueued:FIXTURE_STAMP};
+  const plan=planSharedPages([race],[{page_url:INDEX,status:'parsed',body_sha:'fixture',parser_version:SHARED_PAGE_POLICY.parserVersion,observed_at:FIXTURE_STAMP,findings_json:JSON.stringify(findings)}],FIXTURE_STAMP);
+  assert.equal(plan.jobs.length,1);const m=metaFromMeetingListUrl(plan.jobs[0].url);assert.equal(m.date,r.date);assert.equal(m.venue,venue);
+ }
+
+});
+test('one index serves all 72 exact identities without fetching unrelated cards or repeating calendar/index',async()=>{
+ const {db,sql}=await fixtureDatabase(),races=racesFixture(),requests=[],pages=pageGraph(races);let now=FIXTURE_STAMP,formal=0;
+ for(let i=0;i<76;i++){const r=await runSharedPageStep(db,input(races),{now:()=>now,fetcher:fixtureFetcher(pages,requests)});formal+=Number(r.formalCardSaved||false);assert.ok(r.externalRequests<=1);now+=61000;if(r.status==='complete')break;}
+ assert.equal(formal,72);assert.equal(requests.length,74);assert.equal(requests.filter(x=>x===INDEX).length,1);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,72);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_runners').get().n,144);
+ const race=races[0],key=`${race.date}:${race.venue}:${race.raceNo}`,saved=sql.prepare('SELECT horse_no,frame_no,horse_name FROM jra_runners WHERE race_key=? ORDER BY horse_no').all(key),e=sql.prepare('SELECT * FROM lab_card_source_evidence WHERE race_key=?').get(key);
+ assert.equal(e.runner_sha256,await sha256(runnerFingerprint(saved)));assert.equal(e.source_sha256,await sha256(pages.get(cardUrl(race))));await requireLockEvidence(db,{race_key:key},saved);sql.close();
+});
+test('nested synthetic index/meeting/race graph is traversed one page at a time with shared meeting pages',async()=>{
+ const {db,sql}=await fixtureDatabase(),races=racesFixture(),requests=[];let now=FIXTURE_STAMP,formal=0;
+ for(let i=0;i<90;i++){const r=await runSharedPageStep(db,input(races),{now:()=>now,fetcher:fixtureFetcher(pageGraph(races,{nested:true}),requests)});formal+=Number(r.formalCardSaved||false);now+=61000;if(r.status==='complete')break;}
+ assert.equal(formal,72);assert.equal(new Set(requests).size,requests.length);assert.equal(requests.length,81);sql.close();
+});
+test('restart after body saved/parse failure reuses same immutable body without another source request',async()=>{
+ const {db,sql}=await fixtureDatabase(),races=racesFixture(1).slice(0,1),requests=[];let now=FIXTURE_STAMP;
+ let r=await runSharedPageStep(db,input(races),{now:()=>now,fetcher:fixtureFetcher(pageGraph(races),requests),parser:()=>{throw Error('parser crash')}});assert.equal(r.bodyStored,true);assert.equal(requests.length,1);assert.equal(rows(sql)[0].status,'parse-failed');
+ now+=61000;r=await runSharedPageStep(db,input(races),{now:()=>now,fetcher:()=>assert.fail('no repeated source'),parserVersion:'fixed-local-parser'});assert.equal(r.status,'page-parsed');assert.equal(r.externalRequests,0);assert.equal(requests.length,1);
+ const body=sql.prepare('SELECT * FROM lab_shared_page_bodies_v1').get();assert.equal(await sha256(body.body_html),body.sha256);assert.throws(()=>sql.exec("UPDATE lab_shared_page_bodies_v1 SET body_html='changed'"),/immutable/);assert.throws(()=>sql.exec('DELETE FROM lab_shared_page_bodies_v1'),/immutable/);sql.close();
+});
+test('lost acknowledgement after atomic body/receipt commit recovers without refetch',async()=>{
+ const {db,sql}=await fixtureDatabase(),races=racesFixture(1).slice(0,1),requests=[];let now=FIXTURE_STAMP,fail=true;
+ const wrapped={...db,async batch(ss){const result=await db.batch(ss);if(fail){fail=false;throw Error('lost response after commit')}return result;}};
+ const first=await runSharedPageStep(wrapped,input(races),{now:()=>now,fetcher:fixtureFetcher(pageGraph(races),requests)});assert.equal(first.saveMayHaveSucceeded,true);assert.equal(rows(sql)[0].status,'body-stored');
+ now+=61000;const recovered=await runSharedPageStep(db,input(races),{now:()=>now,fetcher:()=>assert.fail('no refetch')});assert.equal(recovered.status,'page-parsed');assert.equal(recovered.externalRequests,0);assert.equal(requests.length,1);sql.close();
+});
+test('403/429/503 advance the unchanged shared gate by one hour; another venue cannot bypass',async()=>{
+ for(const status of [403,429,503]){const {db,sql}=await fixtureDatabase();let calls=0;const races=racesFixture(1),deps={now:()=>FIXTURE_STAMP,fetcher:async()=>{calls++;return new Response('',{status})}};
+  const first=await runSharedPageStep(db,input(races),deps);assert.match(first.error,new RegExp(String(status)));assert.equal(sql.prepare('SELECT next_batch_at FROM lab_history_collection_budget').get().next_batch_at,FIXTURE_STAMP+3600000);
+  assert.equal((await runSharedPageStep(db,input(races.slice(12)),deps)).status,'cooldown');assert.equal(calls,1);sql.close();}
+});
+test('held shared lease and a lost atomic claim cause zero external calls',async()=>{
+ const {db,sql}=await fixtureDatabase(),races=racesFixture(1);sql.prepare('UPDATE lab_history_collection_budget SET locked_until=?').run(FIXTURE_STAMP+1000);
+ assert.equal((await runSharedPageStep(db,input(races),{now:()=>FIXTURE_STAMP,fetcher:()=>assert.fail('lease')})).status,'cooldown');
+ sql.prepare('UPDATE lab_history_collection_budget SET locked_until=0').run();const raceDb={...db,prepare(q){if(q.startsWith('UPDATE lab_history_collection_budget SET locked_until=?'))return{bind(){return{async run(){return{meta:{changes:0}}}}}};return db.prepare(q)}};
+ assert.equal((await runSharedPageStep(raceDb,input(races),{now:()=>FIXTURE_STAMP,fetcher:()=>assert.fail('lost claim')})).status,'lease-unavailable');sql.close();
+});
+test('D1 quota propagation stops same-binding subsequent scheduled attempts before further queries',async()=>{
+ const {db,sql}=await fixtureDatabase();let calls=0;const broken={prepare(){calls++;throw Error('exceeded D1 daily row read limit')}};
+ const first=await runWithScheduledReadBudget(broken,()=>runSharedPageStep(broken,input(racesFixture()),{now:()=>FIXTURE_STAMP,fetcher:()=>assert.fail()}),()=>FIXTURE_STAMP);assert.equal(first.reason,'d1-daily-read-limit');
+ assert.equal((await runSharedPageStep(broken,input(racesFixture()),{now:()=>FIXTURE_STAMP,fetcher:()=>assert.fail()})).reason,'d1-daily-read-limit');assert.equal(calls,1);sql.close();
+});
+test('deadline priority, per-page retry exclusion, urgent override and aged distant work are independent',()=>{
+ const races=racesFixture(),sat=races[0],sun=races[36];sat.rootUrl=cardUrl(sat);sun.rootUrl=cardUrl(sun);sat.start=Date.parse(sat.startAt);sun.start=Date.parse(sun.startAt);sat.enqueued=sun.enqueued=FIXTURE_STAMP;
+ let p=planSharedPages([sun,sat],[],FIXTURE_STAMP);assert.equal(p.jobs[0].url,sat.rootUrl);
+ p=planSharedPages([sun,sat],[{page_url:sat.rootUrl,status:'http-or-source-failed',next_at:FIXTURE_STAMP+1}],FIXTURE_STAMP);assert.equal(p.jobs[0].url,sun.rootUrl);
+ sun.enqueued=FIXTURE_STAMP-7*3600000;p=planSharedPages([sat,sun],[],FIXTURE_STAMP);assert.equal(p.jobs[0].url,sun.rootUrl);
+ sat.start=FIXTURE_STAMP+3600000;p=planSharedPages([sat,sun],[],FIXTURE_STAMP);assert.equal(p.jobs[0].url,sat.rootUrl);
+});
+test('shared acquisition prioritizes an equally waiting same-day main without overriding urgent or older work',async()=>{
+ const stamp=Date.parse('2026-11-06T09:10:00+09:00');
+ const race=(date,raceNo,hour)=>({date,venue:'東京',raceNo,startAt:`${date}T${hour}:00:00+09:00`,enqueuedAt:new Date(stamp).toISOString(),rootUrl:cardUrl({date,venue:'東京',raceNo})});
+ const flat=race('2026-11-07',1,'10'),main=race('2026-11-07',11,'15'),later=race('2026-11-08',11,'15');
+ const parsed=r=>({...r,start:Date.parse(r.startAt),enqueued:stamp});
+ assert.equal(planSharedPages([flat,main,later].map(parsed),[],stamp).jobs[0].url,main.rootUrl);
+ // A not-due main is excluded before sorting; no private retry is bypassed.
+ assert.equal(planSharedPages([flat,main].map(parsed),[{page_url:main.rootUrl,status:'http-or-source-failed',next_at:stamp+1}],stamp).jobs[0].url,flat.rootUrl);
+ const old={...parsed(flat),enqueued:stamp-7*3600000};
+ assert.equal(planSharedPages([parsed(main),old],[],stamp).jobs[0].url,flat.rootUrl);
+ const urgent={...parsed(flat),start:stamp+3600000};
+ assert.equal(planSharedPages([parsed(main),urgent],[],stamp).jobs[0].url,flat.rootUrl);
+ assert.equal(planSharedPages([parsed(later),parsed(flat)],[],stamp).jobs[0].url,flat.rootUrl);
+ // Same bound and real card writer: one request saves the chosen main only.
+ const {db,sql}=await fixtureDatabase(),requests=[];
+ const out=await runSharedPageStep(db,{scope:'2026-11-06',races:[flat,main,later]},{now:()=>stamp,fetcher:fixtureFetcher(new Map([[main.rootUrl,drawnHtml(main)]]),requests)});
+ assert.deepEqual(requests,[main.rootUrl]);assert.equal(out.formalCardSaved,true);
+ assert.equal(sql.prepare('SELECT race_key FROM jra_races').get().race_key,'2026-11-07:東京:11');
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_runners').get().n,2);
+ sql.close();
+});
+test('finished/complete races and wrong-date card links never become fetchable formal cards',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture()[0];let calls=0;
+ const r=await runSharedPageStep(db,input([{...race,formalSaved:true}]),{now:()=>FIXTURE_STAMP,fetcher:()=>calls++});assert.equal(r.status,'complete');assert.equal(calls,0);
+ assert.equal((await runSharedPageStep(db,input([race]),{now:()=>Date.parse(race.startAt),fetcher:()=>calls++})).externalRequests,0);assert.equal(calls,0);
+ await assert.rejects(runSharedPageStep(db,input([{...race,cardUrl:cardUrl({...race,date:'2026-10-25'})}]),{now:()=>FIXTURE_STAMP,fetcher:()=>assert.fail()}),/identity/);sql.close();
+});
+test('predraw remains a separate preserved page version, never an official card or old roster overwrite',async()=>{
+ const {db,sql}=await fixtureDatabase(),r={...racesFixture()[0]};r.cardUrl=cardUrl(r);const url=cardUrl(r),html=`<table><caption>2026年10月24日 東京<img alt="1レース"></caption><thead></thead><tr><td class="waku"></td><td class="num"></td><td class="horse"><div class="name"><a href="https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud002023000001/AA">テストア</a></div></td><td class="jockey"><p class="age">牡2/黒鹿</p><p class="weight">55kg</p><p class="jockey">山田</p></td></tr></table>`;
+ const result=await runSharedPageStep(db,input([r]),{now:()=>FIXTURE_STAMP,fetcher:fixtureFetcher(new Map([[url,html]]))});assert.equal(result.status,'predraw-page-preserved');assert.equal(result.formalCardSaved,false);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);assert.equal(rows(sql)[0].status,'predraw');assert.equal(rows(sql)[0].next_at,FIXTURE_STAMP+SHARED_PAGE_POLICY.refreshMs);
+ const {readConfirmedPredraw}=await import('../src/confirmed-predraw-roster.js');const stored=await readConfirmedPredraw(db,r);assert.ok(stored,'parsed shared roster must reach existing preparation store');assert.equal(stored.runners[0].horse_name,'テストア');assert.equal(stored.runners[0].horse_no,null);assert.equal(stored.source_sha256,await sha256(html));assert.equal(stored.checked_at,new Date(FIXTURE_STAMP).toISOString());
+ const {nextConfirmedPredrawSource}=await import('../src/confirmed-predraw-history-source.js');const source=await nextConfirmedPredrawSource(db,FIXTURE_STAMP+1);assert.deepEqual(source.names,['テストア']);assert.equal(source.rosterBasis,'confirmed-predraw');
+ const {buildProvisionalPrediction}=await import('../src/provisional-expected-prediction.js');const {saveProvisionalPrediction,readProvisionalPrediction}=await import('../src/provisional-prediction-snapshots.js');
+ const histories=new Map([['テストア',{horseName:'テストア',available:true,recent:[{date:'2026-10-01',venue:'東京',surface:'芝',distance:2000,finish:2,fieldSize:12,dbSource:'jra'}]}]]);
+ const evaluation=buildProvisionalPrediction(source,{surface:'芝',distance:2000},histories,FIXTURE_STAMP+1);assert.equal(evaluation.preparation.label,'暫定予想・枠順未確定');assert.equal(evaluation.runners[0].horseNo,null);
+ const {scheduledProvisionalPrediction}=await import('../src/provisional-prediction-queue.js');const saved=await scheduledProvisionalPrediction(db,FIXTURE_STAMP+1,{repair:async()=>({repaired:0}),build:async()=>evaluation}),read=await readProvisionalPrediction(db,source);assert.equal(saved.saved,1);assert.equal(saved.basis,'confirmed-predraw');assert.equal(read.snapshotSha256,saved.snapshotSha256);assert.equal(read.snapshot.preparation.stage,'entries-confirmed-predraw');assert.equal(read.snapshot.guardrails.locked,false);assert.equal(read.snapshot.guardrails.eligibleForLearning,false);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);sql.close();
+});
+test('wrong source header fails closed and stores body for diagnosis without formal writes',async()=>{
+ const {db,sql}=await fixtureDatabase(),r=racesFixture()[0];r.cardUrl=cardUrl(r);const result=await runSharedPageStep(db,input([r]),{now:()=>FIXTURE_STAMP,fetcher:fixtureFetcher(new Map([[r.cardUrl,drawnHtml(r).replace('2026年10月24日','2026年10月25日')]]))});
+ assert.match(result.error,/header mismatch/);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);assert.equal(rows(sql)[0].status,'card-ready');assert.equal(rows(sql)[0].next_at,FIXTURE_STAMP+3600000);sql.close();
+});
+test('graph cycles and page/byte/link caps are bounded, and no arbitrary default fetch exists',async()=>{
+ const {db,sql}=await fixtureDatabase(),r=racesFixture()[0];await assert.rejects(runSharedPageStep(db,input([r])),/explicit fetcher/);
+ const loop=[{page_url:r.rootUrl,status:'parsed',next_at:0,body_sha:'hash',observed_at:FIXTURE_STAMP,parser_version:SHARED_PAGE_POLICY.parserVersion,findings_json:JSON.stringify({pages:[r.rootUrl],cards:[]})}];const validated={...r,start:Date.parse(r.startAt),enqueued:FIXTURE_STAMP};assert.equal(planSharedPages([validated],loop,FIXTURE_STAMP).jobs.length,0);
+ assert.throws(()=>parseSharedPage(Array.from({length:257},(_,i)=>`<a href="https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dle${i}/AA">x</a>`).join(''),r.rootUrl),/bound/);
+ const result=await runSharedPageStep(db,input([r]),{now:()=>FIXTURE_STAMP,fetcher:async()=>new Response('x'.repeat(SHARED_PAGE_POLICY.maxBytes+1))});assert.match(result.error,/byte bound/);sql.close();
+});
+test('source refresh appends an immutable URL/hash/time version while preserving the earlier body',async()=>{
+ const {db,sql}=await fixtureDatabase(),races=racesFixture(1).slice(0,1);let now=FIXTURE_STAMP;
+ await runSharedPageStep(db,input(races),{now:()=>now,fetcher:async()=>new Response('<p>no published links</p>',{headers:{'content-type':'text/html;charset=utf-8'}})});
+ const old=sql.prepare('SELECT * FROM lab_shared_page_bodies_v1').get();now+=3601000;
+ await runSharedPageStep(db,input(races),{now:()=>now,fetcher:fixtureFetcher(pageGraph(races))});
+ const versions=sql.prepare('SELECT * FROM lab_shared_page_bodies_v1 ORDER BY observed_at').all();assert.equal(versions.length,2);assert.deepEqual(versions[0],old);assert.equal(versions[1].page_url,races[0].rootUrl);assert.notEqual(versions[1].sha256,old.sha256);sql.close();
+});
+test('existing child findings are followed before refreshing stale parent pages',()=>{
+ const race=racesFixture()[0],now=FIXTURE_STAMP+2*3600000,child=meetingUrl(race),version=SHARED_PAGE_POLICY.parserVersion;
+ const record={page_url:race.rootUrl,status:'parsed',next_at:0,body_sha:'source',observed_at:FIXTURE_STAMP,parser_version:version,findings_json:JSON.stringify({pages:[child],cards:[]})};
+ const p=planSharedPages([{...race,start:Date.parse(race.startAt),enqueued:FIXTURE_STAMP}],[record],now);assert.equal(p.jobs[0].url,child);
+});
+test('source cache storage budget is checked before network; no silent pruning of earlier evidence',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture()[0];sql.prepare('INSERT INTO lab_shared_page_bodies_v1(scope_key,page_url,sha256,body_html,byte_length,observed_at) VALUES(?,?,?,?,?,?)').run(SCOPE,race.rootUrl,'fixture','x',SHARED_PAGE_POLICY.maxStoredBodyBytes,FIXTURE_STAMP);
+ const r=await runSharedPageStep(db,input([race]),{now:()=>FIXTURE_STAMP,fetcher:()=>assert.fail('storage full')});assert.equal(r.status,'source-storage-budget');assert.equal(r.externalRequests,0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_shared_page_bodies_v1').get().n,1);sql.close();
+});
+test('stored formal body recovers a lost card-save acknowledgement without rewriting existing evidence or predictions',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture()[0];race.cardUrl=cardUrl(race);let now=FIXTURE_STAMP;
+ sql.exec("CREATE TABLE protected_snapshots(id TEXT PRIMARY KEY,body TEXT,sha TEXT,saved_at TEXT,locked INTEGER);INSERT INTO protected_snapshots VALUES('old21','old21json','oldsha','oldtime',1),('formal18','formal18json','formalsha','formaltime',0),('comparison18','comparisonjson','comparisonsha','comparisontime',0)");
+ const before=sql.prepare('SELECT * FROM protected_snapshots').all();const first=await runSharedPageStep(db,input([race]),{now:()=>now,fetcher:fixtureFetcher(pageGraph([race]))});assert.equal(first.formalCardSaved,true);
+ const evidence=sql.prepare('SELECT * FROM lab_card_source_evidence').get(),runners=sql.prepare('SELECT * FROM jra_runners').all();sql.prepare("UPDATE lab_shared_page_receipts_v1 SET status='card-ready',next_at=0").run();now+=61000;
+ const recovered=await runSharedPageStep(db,input([race]),{now:()=>now,fetcher:()=>assert.fail('stored formal body')});assert.equal(recovered.status,'existing-card-reconciled');assert.equal(recovered.formalCardSaved,false);assert.equal(recovered.externalRequests,0);
+ assert.deepEqual(sql.prepare('SELECT * FROM lab_card_source_evidence').get(),evidence);assert.deepEqual(sql.prepare('SELECT * FROM jra_runners').all(),runners);assert.deepEqual(sql.prepare('SELECT * FROM protected_snapshots').all(),before);sql.close();
+});
+test('an existing official card with different source SHA is never silently relabelled to a new body',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture()[0];race.cardUrl=cardUrl(race);let now=FIXTURE_STAMP;
+ await runSharedPageStep(db,input([race]),{now:()=>now,fetcher:fixtureFetcher(pageGraph([race]))});const evidence=sql.prepare('SELECT * FROM lab_card_source_evidence').get();
+ sql.prepare("UPDATE lab_shared_page_receipts_v1 SET status='http-or-source-failed',next_at=0,body_sha=NULL").run();now+=61000;
+ const result=await runSharedPageStep(db,input([race]),{now:()=>now,fetcher:async()=>new Response(drawnHtml(race)+'<!-- later page -->',{headers:{'content-type':'text/html;charset=utf-8'}})});assert.match(result.error,/refusing evidence rewrite/);assert.deepEqual(sql.prepare('SELECT * FROM lab_card_source_evidence').get(),evidence);sql.close();
+});
+test('per-page version cap yields to another eligible page instead of stopping the whole week',async()=>{
+ const {db,sql}=await fixtureDatabase(),races=[racesFixture()[0],racesFixture()[36]],requests=[];
+ for(let i=0;i<4;i++)sql.prepare('INSERT INTO lab_shared_page_bodies_v1(scope_key,page_url,sha256,body_html,byte_length,observed_at) VALUES(?,?,?,?,?,?)').run(SCOPE,races[0].rootUrl,'fixture'+i,'x',1,FIXTURE_STAMP);
+ const r=await runSharedPageStep(db,input(races),{now:()=>FIXTURE_STAMP,fetcher:fixtureFetcher(pageGraph(races),requests)});assert.equal(r.externalRequests,1);assert.equal(requests[0],races[1].rootUrl);sql.close();
+});
+test('a source response crossing the five-minute cutoff is preserved but never passed to the card writer',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture()[0];let now=Date.parse(race.startAt)-300100;race.cardUrl=cardUrl(race);
+ const r=await runSharedPageStep(db,input([race]),{now:()=>now,fetcher:async()=>{now+=200;return new Response(drawnHtml(race),{headers:{'content-type':'text/html;charset=utf-8'}})}});assert.equal(r.status,'deadline-passed');assert.equal(r.formalCardSaved,false);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_shared_page_bodies_v1').get().n,1);sql.close();
+});
+test('existing history dispatcher can delegate one source slot without fallthrough or a second fetch',async()=>{
+ const {db,sql}=await fixtureDatabase(),races=racesFixture(1),requests=[];let cards=0;
+ const r=await collectLiveHistory(db,{scheduledTime:FIXTURE_STAMP},{now:()=>FIXTURE_STAMP,missing:async()=>({status:'official-card-priority',externalRequests:0}),registered:async()=>races,cards:async()=>{cards++;return runSharedPageStep(db,input(races),{now:()=>FIXTURE_STAMP,fetcher:fixtureFetcher(pageGraph(races),requests)})},programs:()=>assert.fail('must not fall through to another source')});
+ assert.equal(cards,1);assert.equal(r.externalRequests,1);assert.equal(requests.length,1);sql.close();
+});
+test('shared formal card feeds the unchanged scheduled prediction writer and independent hash readback in SQLite',async()=>{
+ const {db,sql}=await fixtureDatabase(),r=racesFixture()[0];r.cardUrl=cardUrl(r);const source=await runSharedPageStep(db,input([r]),{now:()=>FIXTURE_STAMP,fetcher:fixtureFetcher(pageGraph([r]))});assert.equal(source.formalCardSaved,true);
+ await ensureHistoryTable(db);sql.exec('CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,start_time TEXT,source_url TEXT);CREATE TABLE lab_race_outcomes(race_key TEXT,horse_no INTEGER,finish_position INTEGER);CREATE TABLE lab_race_result_details(race_key TEXT,horse_no INTEGER,finish_position INTEGER,finish_status TEXT,time_text TEXT,time_seconds REAL,corner_positions TEXT,last3f REAL,source_url TEXT)');
+ sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(r.date,r.venue,r.raceNo,r.startAt.slice(11,16),r.rootUrl);
+ for(const name of ['テストア','テストイ'])for(const date of ['2026-09-01','2026-09-15','2026-10-01'])sql.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,surface,distance,finish_position,field_size,track_condition,source_url,fetched_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(name,date,'東京','隔離検証','芝',1600,2,12,'良','https://www.jra.go.jp/profile',new Date(FIXTURE_STAMP).toISOString());
+ const result=await scheduledAutomaticPrediction(db,FIXTURE_STAMP+61000);assert.equal(result.saved,1);const read=await readAutomaticPrediction(db,r);assert.equal(read.integrityVerified,true);assert.equal(read.snapshot.runners.length,2);assert.equal(read.snapshotSha256,await sha256(JSON.stringify(read.snapshot)));assert.ok(read.snapshot.runners.every(x=>x.rank&&x.mark));assert.equal(read.snapshot.guardrails.immutable,true);assert.equal(read.snapshot.guardrails.humanMarksUsed,false);assert.throws(()=>sql.exec('DELETE FROM lab_automatic_predictions_v1'),/immutable/);sql.close();
+});
+test('an unparsed replacement body cannot lend individual links from its older parsed version',()=>{
+ const race=racesFixture()[0],row={page_url:race.rootUrl,status:'body-stored',next_at:0,body_sha:'new-source',observed_at:FIXTURE_STAMP,parser_version:SHARED_PAGE_POLICY.parserVersion,findings_json:JSON.stringify({pages:[],cards:[{...race,url:cardUrl(race)}]})};
+ const p=planSharedPages([{...race,start:Date.parse(race.startAt),enqueued:FIXTURE_STAMP}],[row],FIXTURE_STAMP);assert.equal(p.jobs[0].url,race.rootUrl);assert.equal(p.jobs[0].row.body_sha,'new-source');
+});
+test('planner query omits saved card results and obsolete findings instead of retransferring full receipts',async()=>{
+ const {db,sql,stats,reset}=await fixtureDatabase(),race=racesFixture()[0];race.cardUrl=cardUrl(race);let now=FIXTURE_STAMP;
+ await runSharedPageStep(db,input([race]),{now:()=>now,fetcher:fixtureFetcher(pageGraph([race]))});sql.prepare('UPDATE lab_shared_page_receipts_v1 SET card_result_json=?').run('x'.repeat(100000));reset();now+=61000;
+ const r=await runSharedPageStep(db,input([race]),{now:()=>now,fetcher:()=>assert.fail('already complete')});assert.equal(r.status,'complete');assert.ok(stats.readJsonBytes<3000);const query=stats.executed.find(q=>q.includes('ORDER BY page_url LIMIT'));assert.ok(query&&!query.includes('SELECT *')&&!query.includes('card_result_json'));sql.close();
+});
+
+test('selected-source seam keeps collector target and shares sibling navigation without saving the wrong race',async()=>{
+ const {db,sql}=await fixtureDatabase(),races=racesFixture(1),selected=races[0],sibling=races[1],later=races[2],root=cardUrl(sibling),requests=[];let now=FIXTURE_STAMP;
+ const html=drawnHtml(sibling)+[selected,later].map(r=>`<a href="${cardUrl(r)}">published</a>`).join('');
+ const pages=new Map([[root,html],[cardUrl(selected),drawnHtml(selected)],[cardUrl(later),drawnHtml(later)]]);
+ const discover=createSharedSelectedCardDiscoverer({scope:SCOPE,races},{now:()=>now,fetcher:fixtureFetcher(pages,requests)});
+ const source=r=>({date:r.date,venue:r.venue,raceNo:r.raceNo,officialRosterDiscoveryUrl:root});
+ const first=await discover(db,source(selected));assert.equal(first.status,'page-parsed');assert.equal(first.externalRequests,1);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);
+ now+=61000;const second=await discover(db,source(later));assert.equal(second.formalCardSaved,true);assert.equal(second.target.raceNo,later.raceNo);assert.equal(requests.length,2);assert.equal(requests[1],cardUrl(later));
+ now+=61000;const third=await discover(db,source(selected));assert.equal(third.formalCardSaved,true);assert.equal(requests.length,3);assert.equal(requests.filter(u=>u===root).length,1);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races WHERE race_no=?').get(sibling.raceNo).n,0);
+ now+=61000;const own=await discover(db,{...source(sibling),officialCardUrl:root});assert.equal(own.formalCardSaved,true);assert.equal(own.externalRequests,0);assert.equal(requests.length,3);assert.equal(own.target.raceNo,sibling.raceNo);sql.close();
+});
+test('selected-source seam rejects unknown or duplicate identities and keeps shared cooldown',async()=>{
+ const {db,sql}=await fixtureDatabase(),races=racesFixture(1),race=races[0],source={...race,officialRosterDiscoveryUrl:race.rootUrl};
+ const discover=createSharedSelectedCardDiscoverer({scope:SCOPE,races},{now:()=>FIXTURE_STAMP,fetcher:()=>assert.fail('no network')});
+ await assert.rejects(discover(db,{...source,raceNo:99}),/existing inventory/);
+ await assert.rejects(createSharedSelectedCardDiscoverer({scope:SCOPE,races:[race,race]})(db,source),/existing inventory/);
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=?').run(FIXTURE_STAMP+3600000);
+ const wait=await discover(db,source);assert.equal(wait.status,'cooldown');assert.equal(wait.externalRequests,0);sql.close();
+});
+
+test('selected shared handoff resumes the existing discovery receipt without another calendar request',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture()[0],requests=[],snapshotId='official-card:'+race.date+':'+race.venue+':'+race.raceNo+':official-program';
+ const receipt={snapshot_id:snapshotId,card_url:cardUrl(race),next_attempt_at:FIXTURE_STAMP-1,status:'official-card-link-found'};
+ const discover=createSharedSelectedCardDiscoverer({scope:SCOPE,races:[race]},{now:()=>FIXTURE_STAMP,fetcher:fixtureFetcher(pageGraph([race]),requests)});
+ const r=await discover(db,{...race,snapshotId,officialRosterDiscoveryUrl:race.rootUrl,discoveryReceipt:receipt});
+ assert.equal(r.formalCardSaved,true);assert.deepEqual(requests,[cardUrl(race)]);assert.equal(r.attempted,true);sql.close();
+});
+test('legacy receipt cooldown and wrong-target links fail before shared-store reads or network',async()=>{
+ const race=racesFixture()[0],snapshotId='legacy-id',source={...race,snapshotId,officialRosterDiscoveryUrl:race.rootUrl};
+ const db={prepare(){assert.fail('no SQL before deferred or invalid receipt')}};
+ const discover=createSharedSelectedCardDiscoverer({scope:SCOPE,races:[race]},{now:()=>FIXTURE_STAMP,fetcher:()=>assert.fail('no fetch')});
+ const wait=await discover(db,{...source,discoveryReceipt:{snapshot_id:snapshotId,next_attempt_at:FIXTURE_STAMP+1000,card_url:cardUrl(race)}});
+ assert.equal(wait.status,'card-discovery-not-due');assert.equal(wait.externalRequests,0);
+ await assert.rejects(discover(db,{...source,discoveryReceipt:{snapshot_id:snapshotId,next_attempt_at:0,card_url:cardUrl({...race,venue:'京都'})}}),/receipt.*identity/i);
+ await assert.rejects(discover(db,{...source,discoveryReceipt:{snapshot_id:'other-id',next_attempt_at:0,card_url:cardUrl(race)}}),/receipt.*identity/i);
+});
+test('cached navigation consumes the selected history stage without falling through to a second source stage',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture()[0];let now=FIXTURE_STAMP;
+ await runSharedPageStep(db,input([race]),{now:()=>now,fetcher:fixtureFetcher(pageGraph([race])),parser:()=>{throw Error('saved body awaits parser')}});now+=61000;
+ const discover=createSharedSelectedCardDiscoverer({scope:SCOPE,races:[race]},{now:()=>now,parserVersion:'resume-parser',fetcher:()=>assert.fail('cached body')});
+ const source={...race,officialRosterDiscoveryUrl:race.rootUrl};
+ const result=await collectLiveHistory(db,{scheduledTime:now},{now:()=>now,registered:async()=>[race],missing:async()=>({status:'official-card-priority',externalRequests:0}),cards:()=>discover(db,source),programs:()=>assert.fail('cached work must not fall through')});
+ assert.equal(result.status,'page-parsed');assert.equal(result.externalRequests,0);assert.equal(result.historyWorkStage,'acquisition');sql.close();
+});
+
+test('existing Kyoto/Niigata candidate selector passes its receipt to shared continuation without a duplicate receipt SELECT',async()=>{
+ for(const venue of ['京都','新潟'])for(const meetingReceipt of [false,true]){
+  const {readFile}=await import('node:fs/promises'),{metaFromMeetingListUrl}=await import('../src/index-v1.1.4.js');
+  const actual=JSON.parse(await readFile(new URL('./fixtures/jra-meeting-links-20261024.json',import.meta.url),'utf8'));
+  const resumeUrl=meetingReceipt?actual.links.find(u=>{const m=metaFromMeetingListUrl(u);return m?.date==='2026-10-24'&&m.venue===venue}):INDEX;
+  const {db,sql,stats,reset}=await fixtureDatabase(),race=racesFixture().find(r=>r.venue===venue&&r.raceNo===1),requests=[];let now=FIXTURE_STAMP;
+  sql.exec('CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,start_time TEXT,source_url TEXT);CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,card_url TEXT,next_attempt_at INTEGER,status TEXT,error TEXT)');
+  const snapshotId=`official-card:${race.date}:${venue}:1:official-program`;
+  sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(race.date,venue,1,'09:45',race.rootUrl);
+  sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?,?)').run(snapshotId,resumeUrl,now-1,'official-card-index-found',null);
+  const before=sql.prepare('SELECT * FROM lab_expected_card_discovery').get();
+  const pages=pageGraph([race]);pages.set(resumeUrl,pages.get(INDEX));
+  const discover=discoverSharedSelectedCard,fetcher=fixtureFetcher(pages,requests);
+  sql.exec('DROP TABLE lab_shared_page_receipts_v1;DROP TABLE lab_shared_page_bodies_v1');
+  reset();const first=await collectMissingOfficialCard(db,{date:race.date,venue,raceNo:1},{now:()=>now,discover,fetcher});
+  assert.equal(first.status,'page-parsed');assert.deepEqual(requests,[resumeUrl]);assert.equal(stats.executed.filter(q=>/FROM lab_expected_card_discovery/.test(q)).length,1);
+  now+=61000;const second=await collectMissingOfficialCard(db,{date:race.date,venue,raceNo:1},{now:()=>now,discover,fetcher});
+  assert.equal(second.formalCardSaved,true);assert.equal(second.target.venue,venue);assert.deepEqual(requests,[resumeUrl,cardUrl(race)]);
+  assert.deepEqual(sql.prepare('SELECT * FROM lab_expected_card_discovery').get(),before);
+  const saved=sql.prepare('SELECT horse_no,frame_no,horse_name FROM jra_runners ORDER BY horse_no').all(),evidence=sql.prepare('SELECT runner_sha256 FROM lab_card_source_evidence').get();
+  assert.equal(saved.length,2);assert.equal(evidence.runner_sha256,await sha256(runnerFingerprint(saved)));
+  await ensureHistoryTable(db);sql.exec('CREATE TABLE lab_race_outcomes(race_key TEXT,horse_no INTEGER,finish_position INTEGER);CREATE TABLE lab_race_result_details(race_key TEXT,horse_no INTEGER,finish_position INTEGER,finish_status TEXT,time_text TEXT,time_seconds REAL,corner_positions TEXT,last3f REAL,source_url TEXT)');
+  // Synthetic prior evidence only. No live race data or source fetch here.
+  for(const horse of saved)for(const date of ['2026-09-01','2026-09-15','2026-10-01'])sql.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,surface,distance,finish_position,field_size,track_condition,source_url,fetched_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(horse.horse_name,date,venue,'隔離検証','芝',1600,2,12,'良','https://www.jra.go.jp/profile',new Date(now).toISOString());
+  assert.equal((await scheduledAutomaticPrediction(db,now+1000)).saved,1);
+  const prediction=await readAutomaticPrediction(db,race);assert.equal(prediction.integrityVerified,true);assert.equal(prediction.snapshotSha256,await sha256(JSON.stringify(prediction.snapshot)));assert.deepEqual(prediction.snapshot.runners.map(r=>r.horseName).sort(),saved.map(r=>r.horse_name).sort());assert.ok(prediction.snapshot.runners.every(r=>r.rank&&r.mark));
+  assert.equal(prediction.snapshot.guardrails.humanMarksUsed,false);assert.equal(requests.length,2);assert.throws(()=>sql.exec('DELETE FROM lab_automatic_predictions_v1'),/immutable/);sql.close();
+ }
+});
+
+test('shared handoff honors a verified sibling meeting URL while retaining exact card and receipt wait',async()=>{
+ const race=racesFixture()[0],actual=JSON.parse(await readFile(new URL('./fixtures/jra-meeting-links-20261024.json',import.meta.url),'utf8')),meta=(await import('../src/index-v1.1.4.js')).metaFromMeetingListUrl,meeting=canonicalPublishedPage(actual.links.find(u=>meta(u)?.date===race.date&&meta(u)?.venue===race.venue)),wrong=actual.links.find(u=>meta(u)?.date===race.date&&meta(u)?.venue!==race.venue),id=`official-card:${race.date}:${race.venue}:${race.raceNo}:official-program`;
+ for(const mode of ['meeting','card','wait']){
+  const {db,sql}=await fixtureDatabase(),requests=[],pages=pageGraph([race]);pages.set(meeting,pages.get(INDEX));
+  const discover=createSharedSelectedCardDiscoverer({scope:SCOPE,races:[race]},{now:()=>FIXTURE_STAMP,fetcher:fixtureFetcher(pages,requests)});
+  const result=await discover(db,{...race,snapshotId:id,officialRosterDiscoveryUrl:INDEX,officialMeetingListUrl:meeting,discoveryReceipt:{snapshot_id:id,card_url:mode==='card'?cardUrl(race):INDEX,next_attempt_at:mode==='wait'?FIXTURE_STAMP+1000:0}});
+  assert.deepEqual(requests,mode==='wait'?[]:[mode==='card'?cardUrl(race):meeting]);
+  if(mode==='wait')assert.equal(result.status,'card-discovery-not-due');
+  await assert.rejects(discover(db,{...race,officialRosterDiscoveryUrl:INDEX,officialMeetingListUrl:wrong}),/meeting.*identity/i);
+  sql.close();
+ }
+});
+
+test('natural shared connection can retain a started card without creating a retrospective pre-race prediction',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture()[0],now=Date.parse(race.startAt)+60000;
+ const result=await discoverSharedSelectedCard(db,{...race,officialRosterDiscoveryUrl:race.rootUrl,officialCardUrl:cardUrl(race)},{now:()=>now,fetcher:fixtureFetcher(pageGraph([race]))});
+ assert.equal(result.formalCardSaved,true);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,1);
+ await ensureHistoryTable(db);sql.exec('CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,start_time TEXT,source_url TEXT)');sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(race.date,race.venue,race.raceNo,race.startAt.slice(11,16),race.rootUrl);assert.equal((await scheduledAutomaticPrediction(db,now+1000)).saved,0);assert.equal((await readAutomaticPrediction(db,race)).available,false);sql.close();
+});
+
+test('natural connection calls the Worker global fetch with its required receiver',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture()[0],original=globalThis.fetch,calls=[];
+ globalThis.fetch=function(url,init){if(this!==globalThis)throw Error('Illegal invocation: incorrect this');return fixtureFetcher(pageGraph([race]),calls)(url,init)};
+ try{
+  const result=await discoverSharedSelectedCard(db,{...race,officialRosterDiscoveryUrl:race.rootUrl,officialCardUrl:cardUrl(race)},{now:()=>FIXTURE_STAMP});
+  assert.equal(result.formalCardSaved,true);assert.deepEqual(calls,[cardUrl(race)]);
+ }finally{globalThis.fetch=original;sql.close();}
+});
+
+test('shared natural handoff can process another due card while the legacy-selected page is deferred',async()=>{
+ const {db,sql}=await fixtureDatabase(),races=racesFixture(1).filter(r=>r.venue==='京都'&&[9,10].includes(r.raceNo)),selected=races.find(r=>r.raceNo===10),other=races.find(r=>r.raceNo===9),requests=[];
+ sql.exec('CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,start_time TEXT,source_url TEXT);CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,card_url TEXT,next_attempt_at INTEGER,status TEXT,error TEXT)');
+ for(const r of races){sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(r.date,r.venue,r.raceNo,r.startAt.slice(11,16),r.rootUrl);sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?,?)').run(`official-card:${r.date}:${r.venue}:${r.raceNo}:official-program`,cardUrl(r),FIXTURE_STAMP-1,'official-card-link-found',null);}
+ const until=FIXTURE_STAMP+3600000;sql.prepare('INSERT INTO lab_shared_page_receipts_v1(scope_key,page_url,status,next_at) VALUES(?,?,?,?)').run(selected.date,cardUrl(selected),'http-or-source-failed',until);
+ const result=await collectMissingOfficialCard(db,{date:selected.date},{now:()=>FIXTURE_STAMP,discover:discoverSharedSelectedCard,fetcher:fixtureFetcher(pageGraph(races),requests)});
+ assert.equal(result.formalCardSaved,true);assert.equal(result.target.raceNo,other.raceNo);assert.equal(result.cardSelection.target,`${other.date}:${other.venue}:${other.raceNo}`);assert.deepEqual(requests,[cardUrl(other)]);
+ assert.equal(sql.prepare('SELECT next_at FROM lab_shared_page_receipts_v1 WHERE page_url=?').get(cardUrl(selected)).next_at,until);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_runners').get().n,2);
+ const waiting=await collectLiveHistory(db,{scheduledTime:FIXTURE_STAMP+61000},{now:()=>FIXTURE_STAMP+61000,cardCompletionFirst:true,cards:(d,input,deps)=>collectMissingOfficialCard(d,{date:selected.date},{...deps,discover:discoverSharedSelectedCard,fetcher:()=>assert.fail('private retry is not due')}),previousHistoryWorkStage:'acquisition',registered:async()=>[selected],priorityExpected:async()=>({status:'collected',attempted:1,externalRequests:1}),missing:()=>assert.fail('saved history precedes unrelated acquisition'),programs:()=>assert.fail('one source only')});
+ assert.equal(waiting.status,'collected');assert.equal(waiting.externalRequests,1);assert.equal(waiting.historyWorkStage,'history');assert.equal(sql.prepare('SELECT next_at FROM lab_shared_page_receipts_v1 WHERE page_url=?').get(cardUrl(selected)).next_at,until);sql.close();
+});
+
+test('a meeting URL parsed for one race is reused by another race without revisiting its calendar',()=>{
+ const literal='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01drl00042026040420261025%2F21';
+ const race=racesFixture().find(r=>r.date==='2026-10-25'&&r.venue==='新潟'&&r.raceNo===1),input={...race,start:Date.parse(race.startAt),enqueued:FIXTURE_STAMP};
+ const saved={page_url:INDEX,status:'parsed',next_at:0,body_sha:'already-saved-index',parser_version:SHARED_PAGE_POLICY.parserVersion,observed_at:FIXTURE_STAMP,findings_json:JSON.stringify({pages:[literal],cards:[]})};
+ assert.equal(planSharedPages([input],[saved],FIXTURE_STAMP).jobs[0].url,canonicalPublishedPage(literal));
+ for(const other of [{...input,venue:'京都'},{...input,date:'2026-10-24',rootUrl:calendar('2026-10-24')}])assert.equal(planSharedPages([other],[saved],FIXTURE_STAMP).jobs[0].url,other.rootUrl);
+});
+
+test('failed shared card parsing preserves the actual race and bounded saved-body evidence',async()=>{
+ const {db,sql}=await fixtureDatabase(),races=racesFixture(1).filter(r=>r.venue==='京都'&&[9,10].includes(r.raceNo)),selected=races.find(r=>r.raceNo===9),actual=races.find(r=>r.raceNo===10),inventory=races.map(r=>({...r,cardUrl:cardUrl(r)}));
+ const result=await discoverSharedSelectedCard(db,{...selected,officialRosterDiscoveryUrl:selected.rootUrl,sharedInventory:inventory},{now:()=>FIXTURE_STAMP,fetcher:fixtureFetcher(pageGraph(races)),inspectSourceCard:()=>({allHorseNumbersObserved:false,sourceRowCount:2,raw:[],declaredCount:2})});
+ assert.equal(result.status,'deferred');assert.deepEqual(result.target,{date:actual.date,venue:actual.venue,raceNo:actual.raceNo},JSON.stringify(result));
+ assert.equal(result.failureEvidence.sourceUrl,cardUrl(actual));assert.equal(result.failureEvidence.httpStatus,200);assert.equal(result.failureEvidence.bodySha256,await sha256(drawnHtml(actual)));assert.equal(result.failureEvidence.target.raceNo,actual.raceNo);
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);sql.close();
+});
+
+test('shared acquisition prioritizes upcoming races over already-started races even when archival collection is enabled',()=>{
+ const races=racesFixture(),past={...races[0]},future={...races[36]};
+ past.start=FIXTURE_STAMP-3600000;future.start=FIXTURE_STAMP+3600000;
+ past.enqueued=future.enqueued=FIXTURE_STAMP;
+ past.rootUrl=cardUrl(past);future.rootUrl=cardUrl(future);
+ const plan=planSharedPages([past,future],[],FIXTURE_STAMP,SHARED_PAGE_POLICY.parserVersion,{allowStartedCards:true});
+ assert.equal(plan.jobs[0].url,future.rootUrl);
+ assert.equal(plan.jobs[1].url,past.rootUrl);
+});
+
+test('explicit completion priorities select only due unsaved past cards without displacing future deadlines',()=>{
+ const stamp=Date.parse('2026-10-25T13:30:00Z'),races=racesFixture().filter(r=>r.date==='2026-10-25'&&((r.venue==='京都'&&[3,8,9,10].includes(r.raceNo))||(r.venue==='東京'&&r.raceNo===8))).map(r=>({...r,start:Date.parse(r.startAt),enqueued:stamp,cardUrl:cardUrl(r)}));
+ const tokyo=races.find(r=>r.venue==='東京');tokyo.start=Date.parse('2026-10-25T04:00:00Z');
+ const focus=races.filter(r=>r.venue==='京都').map(r=>`${r.date}:${r.venue}:${r.raceNo}`),kyoto3=races.find(r=>r.raceNo===3);
+ const deferred={page_url:cardUrl(kyoto3),status:'card-ready',next_at:stamp+3600000,body_sha:'saved',parser_version:SHARED_PAGE_POLICY.parserVersion};
+ const plan=(rs,rows=[])=>planSharedPages(rs,rows,stamp,SHARED_PAGE_POLICY.parserVersion,{allowStartedCards:true,completionPriorityRaceKeys:focus});
+ assert.equal(plan(races,[deferred]).jobs[0].races[0].venue,'京都');
+ assert.equal(plan(races,[deferred]).jobs[0].races[0].raceNo,8);
+ const future={...tokyo,raceNo:12,start:stamp+3600000,cardUrl:null,rootUrl:INDEX};assert.equal(plan([...races,future],[deferred]).jobs[0].url,INDEX);
+ const completed=races.map(r=>({...r,formalSaved:r.venue==='京都'}));assert.equal(plan(completed).jobs[0].races[0].venue,'東京');
+ assert.equal(plan(races,[deferred]).jobs.some(j=>j.races.some(r=>r.raceNo===3)),false);
+});
+
+// Reconstructs the observed cancellation cells only; other runner rows are synthetic.
+test('observed cancellation is not misclassified as predraw and no missing horse number is invented',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture().find(r=>r.date==='2026-10-25'&&r.venue==='京都'&&r.raceNo===3);
+ const html=`<h1>2026年10月25日 京都<img alt="3レース"></h1><p>芝1600m 出走頭数：9頭</p><table>${Array.from({length:9},(_,i)=>{const n=i+1;return `<tr><td class="waku"><img alt="枠${Math.min(n,8)}黄" /></td><td class="num">${n===5?'<span class="cap">取消</span>':n}</td><td class="horse"><a>${n===5?'シュプレヒコール':'テスト'+'アイウエオカキクケ'[i]}</a>父：テスト 母：テスト</td><td class="jockey">牡2 56kg <a>山田</a></td></tr>`}).join('')}</table>`;
+ const inspected=inspectSourceCard(html);assert.equal(inspected.sourceRowCount,9);assert.equal(inspected.raw.length,9);assert.equal(inspected.raw[4].horseNo,null);assert.equal(inspected.allHorseNumbersObserved,false);assert.deepEqual(inspected.cancelledRows,[{horseName:'シュプレヒコール',horseNo:null,frameNo:5,status:'取消',numberBasis:'not-shown-by-source'}]);
+ const result=await runSharedPageStep(db,{scope:race.date,races:[{...race,cardUrl:cardUrl(race)}]},{now:()=>FIXTURE_STAMP,fetcher:fixtureFetcher(new Map([[cardUrl(race),html]]))});assert.equal(result.status,'deferred');assert.match(result.error,/取消・除外馬/);assert.doesNotMatch(result.error,/pre-draw/);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);
+ const receipt=sql.prepare('SELECT * FROM lab_shared_page_receipts_v1 WHERE page_url=?').get(cardUrl(race));assert.equal(receipt.status,'parse-failed');assert.equal(receipt.parser_version,SHARED_PAGE_POLICY.parserVersion);
+ const other={...race,raceNo:4,startAt:race.startAt},requests=[];
+ const next=await runSharedPageStep(db,{scope:race.date,races:[{...race,cardUrl:cardUrl(race)},{...other,cardUrl:cardUrl(other)}]},{now:()=>FIXTURE_STAMP+61000,fetcher:fixtureFetcher(pageGraph([other]),requests)});assert.equal(next.formalCardSaved,true);assert.deepEqual(requests,[cardUrl(other)]);assert.equal(sql.prepare('SELECT body_sha FROM lab_shared_page_receipts_v1 WHERE page_url=?').get(cardUrl(race)).body_sha,receipt.body_sha);
+ const post=await runSharedPageStep(db,{scope:race.date,races:[{...race,cardUrl:cardUrl(race)}]},{now:()=>Date.parse(race.startAt)+3600000,allowStartedCards:true,fetcher:()=>assert.fail('reuse saved cancelled card')});assert.equal(post.formalCardSaved,true,JSON.stringify(post));assert.equal(post.card.runnerCount,9);
+ const {readWithdrawalEvidence}=await import('../src/reviewed-withdrawal-card.js');const proof=await readWithdrawalEvidence(db,post.card.raceKey);assert.equal(proof[0].horseNo,5);assert.equal(proof[0].horseName,'シュプレヒコール');assert.equal(sql.prepare('SELECT horse_numbers_observed FROM lab_card_source_evidence WHERE race_key=?').get(post.card.raceKey).horse_numbers_observed,0);assert.throws(()=>sql.exec('DELETE FROM lab_card_withdrawals_v1'),/immutable/);await assert.rejects(requireLockEvidence(db,{race_key:post.card.raceKey},sql.prepare('SELECT * FROM jra_runners WHERE race_key=? ORDER BY horse_no').all(post.card.raceKey)),/source-observed/);
+ sql.exec('CREATE TABLE lab_race_result_details(race_key TEXT,horse_no INTEGER,finish_position INTEGER,finish_status TEXT,time_text TEXT,time_seconds REAL,margin TEXT,corner_positions TEXT,last3f REAL,popularity INTEGER,odds REAL,body_weight INTEGER,body_weight_change INTEGER,source_sha256 TEXT,fetched_at TEXT)');
+ const {default:app}=await import('../src/index-v3.49.0.js');const read=await app.fetch(new Request('https://test/v1/lab/history/race?date=2026-10-25&venue='+encodeURIComponent('京都')+'&race_no=3'),{DB:db},{});const data=await read.json();assert.equal(read.status,200,JSON.stringify(data));assert.equal(data.runners.length,9);assert.equal(data.runners.find(r=>r.horseNo===5).entryStatus,'cancelled');assert.equal(data.withdrawals[0].horseNo,5);assert.equal(await sha256(runnerFingerprint(data.runners.map(r=>({...r,name:r.horseName})))),post.card.runnerSha256);sql.close();
+});
+
+test('observed 282-link JRA response ignores 207 non-acquisition links while retaining bounded published pages',async()=>{
+ const evidence=JSON.parse(await readFile(new URL('./fixtures/jra-shared-links-20261026.json',import.meta.url),'utf8'));
+ // Reconstruct only the observed URL set, not the original copyrighted HTML/body SHA.
+ const html=evidence.links.map(u=>`<a href="${u}">observed URL</a>`).join('');
+ const {extractLinks}=await import('../src/index-v1.1.4.js');assert.equal(extractLinks(html,evidence.pageUrl).length,282);
+ const findings=parseSharedPage(html,evidence.pageUrl);assert.equal(findings.pages.length,45);assert.equal(findings.cards.length,30);
+ assert.deepEqual([...new Set(findings.cards.map(c=>c.date))].sort(),['2026-10-24','2026-10-25']);
+ const target={...racesFixture()[0],date:'2026-10-31',start:Date.parse('2026-10-31T01:00:00Z'),enqueued:FIXTURE_STAMP,rootUrl:evidence.pageUrl};
+ const plan=planSharedPages([target],[{page_url:evidence.pageUrl,status:'parsed',body_sha:evidence.bodySha256,parser_version:SHARED_PAGE_POLICY.parserVersion,observed_at:FIXTURE_STAMP,findings_json:JSON.stringify(findings)}],FIXTURE_STAMP);
+ assert.ok(plan.jobs.every(j=>!findings.cards.some(c=>j.url===c.url))); // old-week cards cannot become future race input
+ const overflow=Array.from({length:257},(_,i)=>`<a href="https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dtest${i}/AA">page</a>`).join('');
+ assert.throws(()=>parseSharedPage(overflow,evidence.pageUrl),/bound exceeded/);
+});
+
+test('observed failed URL set is reparsed from the saved body on parser revision without external refetch or stale-week card save',async()=>{
+ const evidence=JSON.parse(await readFile(new URL('./fixtures/jra-shared-links-20261026.json',import.meta.url),'utf8'));
+ const html=evidence.links.map(u=>`<a href="${u}">observed URL</a>`).join('');
+ const f=await fixtureDatabase(),race={...racesFixture()[0],date:evidence.scope,startAt:evidence.scope+'T10:00:00+09:00',rootUrl:evidence.pageUrl};
+ const args={scope:evidence.scope,races:[race]},oldVersion='shared-page-v1-local';
+ const failed=await runSharedPageStep(f.db,args,{now:()=>FIXTURE_STAMP,fetcher:async()=>new Response(html),parserVersion:oldVersion,parser:()=>{throw Error('Published-link bound exceeded')}});
+ assert.equal(failed.bodyStored,true);assert.equal(failed.externalRequests,1);
+ const body=f.sql.prepare('SELECT * FROM lab_shared_page_bodies_v1').get();
+ const recovered=await runSharedPageStep(f.db,args,{now:()=>FIXTURE_STAMP+61000,fetcher:()=>assert.fail('cached body must not be fetched again')});
+ assert.equal(recovered.status,'page-parsed');assert.equal(recovered.externalRequests,0);assert.equal(recovered.discoveredCards,30);assert.equal(recovered.discoveredPages,45);assert.notEqual(SHARED_PAGE_POLICY.parserVersion,oldVersion);
+ assert.deepEqual(f.sql.prepare('SELECT * FROM lab_shared_page_bodies_v1').get(),body);
+ assert.equal(f.sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);
+ assert.equal(f.sql.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='lab_automatic_predictions_v1'").get().n,0);f.sql.close();
+});
+
+test('observed Kyoto9 predraw receipt becomes due after the regular formal publication window, not Saturday morning',()=>{
+ const race={date:'2026-10-31',venue:'京都',raceNo:9,cardUrl:'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202604100920261031%2FFA',rootUrl:calendar('2026-10-31'),start:Date.parse('2026-10-31T14:25:00+09:00'),enqueued:Date.parse('2026-10-29T22:48:52.711Z')};
+ const row={page_url:race.cardUrl,status:'predraw',card_key:'2026-10-31:京都:9',body_sha:'8e48f723bf7fdd19a2b3779ec8d10b0911865cd65ecc941cf5404de5eee2a505',observed_at:Date.parse('2026-10-29T22:48:52.711Z'),next_at:Date.parse('2026-10-30T22:48:52.711Z'),parser_version:SHARED_PAGE_POLICY.parserVersion};
+ assert.equal(planSharedPages([race],[row],Date.parse('2026-10-30T01:14:59Z')).jobs.length,0);
+ assert.equal(planSharedPages([race],[row],Date.parse('2026-10-30T01:15:00Z')).jobs[0]?.url,race.cardUrl);
+ // A failure/cancellation/manual retry is a different state, never capped.
+ for(const status of ['http-or-source-failed','card-ready','parse-failed'])assert.equal(planSharedPages([race],[{...row,status}],Date.parse('2026-10-30T01:15:00Z')).jobs.length,0);
+ for(const invalid of [{card_key:'2026-10-31:京都:10'},{body_sha:null},{observed_at:null}])assert.equal(planSharedPages([race],[{...row,...invalid}],Date.parse('2026-10-30T01:15:00Z')).jobs.length,0);
+ assert.equal(row.next_at,Date.parse('2026-10-30T22:48:52.711Z'),'planning does not rewrite the receipt');
+});
+
+test('natural shared step refreshes preserved predraw into a strict formal card after publication and keeps the old body immutable',async()=>{
+ const {db,sql}=await fixtureDatabase();let now=Date.parse('2026-10-22T13:00:00Z');
+ const race={...racesFixture()[0],enqueuedAt:new Date(now).toISOString()};race.cardUrl=cardUrl(race);
+ const predraw='<table><caption>2026年10月24日 東京<img alt="1レース"></caption><thead></thead>'+['テストア','テストイ'].map((name,i)=>'<tr><td class="waku"></td><td class="num"></td><td class="horse"><div class="name"><a href="https://www.jra.go.jp/JRADB/accessU.html?CNAME=pw01dud00202410000'+i+'/AA">'+name+'</a></div></td><td class="jockey"><p class="age">牡2/黒鹿</p><p class="weight">55kg</p><p class="jockey">山田</p></td></tr>').join('')+'</table>';
+ let calls=0;const deps={now:()=>now,fetcher:async()=>{calls++;return new Response(calls===1?predraw:drawnHtml(race),{headers:{'content-type':'text/html;charset=utf-8'}})}};
+ const first=await runSharedPageStep(db,input([race]),deps);assert.equal(first.status,'predraw-page-preserved');assert.equal(calls,1);
+ const old=sql.prepare('SELECT * FROM lab_shared_page_bodies_v1').get(),prep=sql.prepare('SELECT * FROM lab_confirmed_predraw_rosters').get();
+ const publication=Date.parse('2026-10-23T01:15:00Z');assert.equal(rows(sql)[0].next_at,publication);
+ now=publication-1;assert.equal((await runSharedPageStep(db,input([race]),deps)).externalRequests,0);assert.equal(calls,1);
+ // Even the successful-preparation transition cannot cross a global stop.
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=?').run(publication+60000);now=publication;
+ assert.equal((await runSharedPageStep(db,input([race]),deps)).status,'cooldown');assert.equal(calls,1);
+ now=publication+60001;
+ const formal=await runSharedPageStep(db,input([race]),deps);assert.equal(formal.status,'official-card-saved');assert.equal(formal.formalCardSaved,true);assert.equal(formal.externalRequests,1);assert.equal(calls,2);
+ const key='2026-10-24:東京:1',saved=sql.prepare('SELECT * FROM jra_runners WHERE race_key=? ORDER BY horse_no').all(key),e=sql.prepare('SELECT * FROM lab_card_source_evidence WHERE race_key=?').get(key);
+ assert.deepEqual(saved.map(r=>[r.horse_no,r.frame_no,r.horse_name]),[[1,1,'テストア'],[2,2,'テストイ']]);
+ assert.equal(e.source_sha256,await sha256(drawnHtml(race)));assert.equal(e.runner_sha256,await sha256(runnerFingerprint(saved)));await requireLockEvidence(db,{race_key:key},saved);
+ assert.deepEqual(sql.prepare('SELECT * FROM lab_shared_page_bodies_v1 WHERE sha256=?').get(old.sha256),old);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_shared_page_bodies_v1').get().n,2);
+ assert.deepEqual(sql.prepare('SELECT * FROM lab_confirmed_predraw_rosters').get(),prep,'preparation record is not relabelled as numbered');
+ now+=61000;assert.equal((await runSharedPageStep(db,input([race]),deps)).status,'complete');assert.equal(calls,2);sql.close();
+});
+
+test('post-publication predraw responses keep a full refresh interval and failed refresh keeps the existing one-hour stop',async()=>{
+ const {db,sql}=await fixtureDatabase(),race=racesFixture()[0];race.cardUrl=cardUrl(race);
+ const old=FIXTURE_STAMP-2*3600000;
+ sql.prepare('INSERT INTO lab_shared_page_receipts_v1(scope_key,page_url,status,next_at,body_sha,observed_at,parser_version,card_key) VALUES(?,?,?,?,?,?,?,?)').run(SCOPE,race.cardUrl,'predraw',old+86400000,'a'.repeat(64),old,SHARED_PAGE_POLICY.parserVersion,`${race.date}:${race.venue}:${race.raceNo}`);
+ let now=FIXTURE_STAMP,calls=0;const r=await runSharedPageStep(db,input([race]),{now:()=>now,fetcher:async()=>{calls++;return new Response('',{status:429})}});
+ assert.equal(r.status,'deferred');assert.equal(calls,1);assert.equal(rows(sql)[0].status,'http-or-source-failed');assert.equal(rows(sql)[0].next_at,now+3600000);
+ now+=61000;assert.equal((await runSharedPageStep(db,input([race]),{now:()=>now,fetcher:()=>assert.fail('shared 429 pause')})).status,'cooldown');assert.equal(calls,1);sql.close();
+});

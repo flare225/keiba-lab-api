@@ -1,4 +1,5 @@
 import {sha256} from './card-evidence.js';
+import {targetInput} from './race-history-assessment-v3.31.0.js';
 import {jstDay} from './history-collection-v3.37.0.js';
 export function validateExpectedRoster(input,stamp=Date.now()){
  const date=String(input.date||''),venue=input.venue,raceNo=Number(input.raceNo),observed=Date.parse(input.observedAt);
@@ -13,7 +14,9 @@ export function validateExpectedRoster(input,stamp=Date.now()){
  if(input.officialHorsePage!=null){const p=new URL(input.officialHorsePage);if(p.protocol!=='https:'||p.hostname!=='www.jra.go.jp'||p.username||p.password||p.port||p.search||p.hash||!/^\/keiba\/(?:g1|race)\/[a-z0-9_-]+\/horse\.html$/.test(p.pathname))throw Error('公式プロフィール発見先が不正です。');officialHorsePage=p.href;}
  const runners=input.runners;
  if(!Array.isArray(runners)||!runners.length||runners.length>100||new Set(runners.map(r=>r.horseName)).size!==runners.length||runners.some(r=>typeof r.horseName!=='string'||!r.horseName.trim()||r.horseName!==r.horseName.trim()||r.horseName.length>40||!input.sourceText.includes(r.horseName)||!Number.isInteger(r.age)||r.age<2||r.age>15||r.horseNo!=null||r.frameNo!=null))throw Error('登録馬名・年齢・根拠本文を検証できません。枠番・馬番は保存しません。');
- return{date,venue,raceNo,raceName:String(input.raceName||'登録・想定名簿').slice(0,100),provider,kind:input.kind,sourceUrl:url.href,...(officialHorsePage?{officialHorsePage}:{}),...(officialRacePage?{officialRacePage}:{}),observedAt:new Date(observed).toISOString(),sourceText:input.sourceText,runners:runners.map(r=>({horseName:r.horseName,age:r.age}))};
+ let rosterCoverage;
+ if(input.rosterCoverage!=null){const c=input.rosterCoverage,n=c.declaredRunnerCount;if(c.observedRunnerCount!==runners.length||!(n===null||Number.isInteger(n)&&n>=runners.length&&n<=100)||typeof c.complete!=='boolean'||c.complete&&n!==runners.length)throw Error('名簿の公開頭数を検証できません。');rosterCoverage={observedRunnerCount:runners.length,declaredRunnerCount:n,complete:c.complete};}
+ return{date,venue,raceNo,raceName:String(input.raceName||'登録・想定名簿').slice(0,100),provider,kind:input.kind,sourceUrl:url.href,...(officialHorsePage?{officialHorsePage}:{}),...(officialRacePage?{officialRacePage}:{}),observedAt:new Date(observed).toISOString(),sourceText:input.sourceText,runners:runners.map(r=>({horseName:r.horseName,age:r.age})),...(rosterCoverage?{rosterCoverage}:{})};
 }
 export async function saveExpectedRoster(db,input,stamp=Date.now()){
  const record=validateExpectedRoster(input,stamp),body=JSON.stringify(record),hash=await sha256(body),key=`${record.date}:${record.venue}:${record.raceNo}`;
@@ -25,7 +28,22 @@ export async function saveExpectedRoster(db,input,stamp=Date.now()){
  return{ok:true,snapshotId:hash,storedRunners:record.runners.length,idempotent:Number(result.meta?.changes)!==1,formalCardSaved:false,officialIdentityVerified:false,externalRequests:0};
  }catch(e){e.saveMayHaveSucceeded=true;throw e;}
 }
-export async function storedExpectedSources(db,from,to){
- let rows;try{rows=(await db.prepare('SELECT snapshot_id,record_json FROM lab_expected_roster_registry WHERE substr(race_key,1,10) BETWEEN ? AND ? ORDER BY stored_at DESC,rowid DESC LIMIT 120').bind(from,to).all()).results||[]}catch(e){if(/no such table/.test(String(e)))return [];throw e;}
+// Audit only a previously witnessed immutable version; never scan for a latest
+// roster, create a store, acquire an upstream page, or upgrade partial coverage.
+export async function readExpectedRosterSnapshot(db,input){
+ const t=targetInput(input),hash=input.snapshotSha256;
+ if(typeof hash!=='string'||!/^[a-f0-9]{64}$/.test(hash))throw Error('保存名簿SHAを確認してください。');
+ const raceKey=`${t.date}:${t.venue}:${t.raceNo}`;let row;
+ try{row=await db.prepare('SELECT snapshot_id,race_key,record_json,source_sha256,stored_at FROM lab_expected_roster_registry WHERE snapshot_id=? AND race_key=?').bind(hash,raceKey).first();}
+ catch(e){if(/no such table.*lab_expected_roster_registry/i.test(String(e)))return{ok:true,available:false,externalRequests:0};throw e;}
+ if(!row)return{ok:true,available:false,externalRequests:0};
+ if(row.snapshot_id!==hash||row.race_key!==raceKey||typeof row.record_json!=='string'||await sha256(row.record_json)!==hash)throw Error('保存名簿のハッシュ・対象が一致しません。');
+ const snapshot=JSON.parse(row.record_json);
+ if(snapshot.date!==t.date||snapshot.venue!==t.venue||snapshot.raceNo!==t.raceNo||typeof snapshot.sourceText!=='string'||await sha256(snapshot.sourceText)!==row.source_sha256)throw Error('保存名簿の根拠・対象が一致しません。');
+ return{ok:true,available:true,integrityVerified:true,snapshotSha256:hash,sourceSha256:row.source_sha256,savedAt:row.stored_at,snapshotJson:row.record_json,snapshot,formalCardSaved:false,externalRequests:0,guardrails:{readOnly:true,eligibleForProspectiveSeal:false,horseNumbersNeverInferred:true}};
+}
+export async function storedExpectedSources(db,from,to,target=null){
+ const t=target?targetInput(target):null;
+ let rows;try{rows=(await db.prepare(`SELECT snapshot_id,record_json FROM lab_expected_roster_registry WHERE ${t?'race_key=?':'substr(race_key,1,10) BETWEEN ? AND ?'} ORDER BY stored_at DESC,rowid DESC LIMIT 120`).bind(...(t?[`${t.date}:${t.venue}:${t.raceNo}`]:[from,to])).all()).results||[]}catch(e){if(/no such table/.test(String(e)))return [];throw e;}
  const result=[],seen=new Set();for(const row of rows){if(await sha256(row.record_json)!==row.snapshot_id)throw Error('登録・想定名簿のハッシュが一致しません。');const s=JSON.parse(row.record_json),key=`${s.date}:${s.venue}:${s.raceNo}`;if(seen.has(key))continue;seen.add(key);result.push({...s,sourceText:undefined,runners:undefined,snapshotId:'registered:'+row.snapshot_id,raceKey:key,names:s.runners.map(r=>r.horseName),ages:Object.fromEntries(s.runners.map(r=>[r.horseName,r.age])),priority:50,rosterBasis:'expected-snapshot'});}return result;
 }

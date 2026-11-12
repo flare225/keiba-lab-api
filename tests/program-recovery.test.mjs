@@ -29,3 +29,20 @@ test('D1 limit stops immediately without cleanup queries; next invocation reuses
 test('partial publication refreshes instead of reusing a partial receipt for twenty-four hours',async()=>{
  const {sql,db}=fixture();const partial=page(['東京']).replace(/<tr><td>12レース[\s\S]*?<\/tr>/,'');const first=await recoverMissingPrograms(db,{now:()=>stamp,fetcher:async()=>response(partial)});assert.equal(first.status,'partial-published-program');assert.equal(first.programRowsSaved,11);focus(sql);let calls=0;const next=await recoverMissingPrograms(db,{now:()=>stamp+3600001,fetcher:async()=>{calls++;return response(page(['東京']));}});assert.equal(calls,1);assert.equal(next.programRowsSaved,1);assert.equal(next.status,'verified-published-program');sql.close();
 });
+test('quota while recording a source or readback failure stops cleanup and preserves uncertain saves',async()=>{
+ for(const phase of ['http403','readback'])for(const kind of ['flag','message']){
+  const {sql,db}=fixture();let stopped=false,after=0,calls=0;
+  const limit=Error(kind==='flag'?'budget exhausted':"D1_ERROR: Your account has exceeded D1's free tier daily row read limit.");if(kind==='flag')limit.d1DailyReadLimit=true;
+  const wrapped={prepare(q){
+   if(stopped){after++;throw Error('SQL after failure-receipt quota');}
+   if(phase==='readback'&&q.startsWith('SELECT * FROM jra_race_program WHERE program_key IN'))return{bind(){return{all:async()=>({results:[]})}}};
+   if(q.includes('SET status=?,next_attempt_at=?,error=? WHERE date=?'))return{bind(){return{async run(){stopped=true;throw limit;}}}};
+   return db.prepare(q);
+  }};
+  await assert.rejects(recoverMissingPrograms(wrapped,{now:()=>stamp,fetcher:async()=>{calls++;return phase==='http403'?new Response('',{status:403}):response(page());}}),e=>e===limit);
+  assert.equal(after,0);assert.equal(calls,1);assert.equal(Boolean(limit.saveMayHaveSucceeded),phase==='readback');
+  const gate=sql.prepare('SELECT locked_until,next_batch_at FROM lab_history_collection_budget').get();assert.equal(gate.locked_until,stamp+120000);assert.equal(gate.next_batch_at,0);
+  assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_race_program').get().n,phase==='readback'?36:0);
+  assert.equal(sql.prepare("SELECT status FROM lab_program_recovery_v1 WHERE date='2026-10-21'").get().status,phase==='readback'?'pending-readback':'pending');sql.close();
+ }
+});

@@ -1,8 +1,15 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';
 import {missingOfficialCards,collectMissingOfficialCard} from '../src/missing-official-cards.js';
-function fixture(){const sql=new DatabaseSync(':memory:');sql.exec("CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,start_time TEXT,source_url TEXT);CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,runner_count INTEGER,source_url TEXT);CREATE TABLE jra_runners(race_key TEXT);CREATE TABLE lab_history_collection_budget(name TEXT,next_batch_at INTEGER,locked_until INTEGER DEFAULT 0);INSERT INTO lab_history_collection_budget VALUES('jra-history',0,0);");const db={prepare(q){const wrap=(args=[])=>({bind(...a){return wrap(a)},async all(){return{results:sql.prepare(q).all(...args)}},async first(){return sql.prepare(q).get(...args)||null}});return wrap()}};return{sql,db};}
+function fixture(){const sql=new DatabaseSync(':memory:');sql.exec("CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,start_time TEXT,source_url TEXT);CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,runner_count INTEGER,source_url TEXT);CREATE TABLE jra_runners(race_key TEXT);CREATE TABLE lab_history_collection_budget(name TEXT,next_batch_at INTEGER,locked_until INTEGER DEFAULT 0);INSERT INTO lab_history_collection_budget VALUES('jra-history',0,0);");const db={prepare(q){const wrap=(args=[])=>({bind(...a){return wrap(a)},async all(){return{results:sql.prepare(q).all(...args)}},async first(){return sql.prepare(q).get(...args)||null},async run(){const r=sql.prepare(q).run(...args);return{meta:{changes:Number(r.changes)}}}});return wrap()}};return{sql,db};}
 const now=Date.parse('2026-10-18T05:15:00Z'),date='2026-10-18';
 const card='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0104202604021120261018/AA';
+test('publication preflight uses stored dates, preserves blocked gates and reuses its plan for later discovery',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-26T00:00:00Z');sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-31','京都',1,'10:00','https://www.jra.go.jp/keiba/calendar2026/2026/10/1031.html');
+ let programReads=0,external=0;const measured={prepare(q){if(q.startsWith('SELECT p.race_date'))programReads++;return db.prepare(q)}},deps={now:()=>stamp,programPlanCache:new Map(),discover:async()=>{external++;return{status:'page-parsed',externalRequests:1}}};
+ const hold=await collectMissingOfficialCard(measured,{date:'2026-10-26',includeFuture:true,publicationWindowOnly:true},deps);assert.equal(hold.status,'awaiting-official-publication');assert.equal(external,0);assert.equal(programReads,1);
+ const next=await collectMissingOfficialCard(measured,{date:'2026-10-26',includeFuture:true},deps);assert.equal(next.externalRequests,1);assert.equal(programReads,1);
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=?').run(stamp+3600000);assert.equal((await collectMissingOfficialCard(measured,{date:'2026-10-26',includeFuture:true,publicationWindowOnly:true},deps)).status,'cooldown');assert.equal(programReads,1);assert.equal(external,1);sql.close();
+});
 test('missing cards use stored program links and prioritize upcoming races without refetching complete cards',async()=>{
  const {sql,db}=fixture();const put=sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)');
  put.run(date,'新潟',11,'15:20',card);put.run(date,'新潟',4,'11:20','https://www.jra.go.jp/calendar');put.run(date,'京都',11,'15:40','https://www.jra.go.jp/calendar');sql.exec("INSERT INTO jra_races VALUES('complete','2026-10-18','京都',11,1,'https://www.jra.go.jp/card');INSERT INTO jra_runners VALUES('complete')");
@@ -59,7 +66,7 @@ test('explicit target restricts SQL and receipt discovery to one race even with 
  for(const day of ['2026-10-24','2026-10-25'])for(const venue of ['東京','京都','新潟'])for(let raceNo=1;raceNo<=12;raceNo++)sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(day,venue,raceNo,'10:00','https://www.jra.go.jp/calendar');
  const observed=[];const tracked={prepare(q){const statement=db.prepare(q);return{...statement,bind(...args){observed.push({q,args});return statement.bind(...args)}}}};
  const result=await collectMissingOfficialCard(tracked,{date:'2026-10-24',venue:'新潟',race_no:3,includeFuture:true},{now:()=>now,discover:async(_,s)=>{assert.deepEqual([s.date,s.venue,s.raceNo],['2026-10-24','新潟',3]);return{ok:true,externalRequests:1}}});
- assert.equal(result.target.raceNo,3);const program=observed.find(x=>x.q.includes('FROM jra_race_program p'));assert.match(program.q,/WHERE p.race_date=\? AND p.venue=\? AND p.race_no=\? AND NOT EXISTS/);assert.deepEqual(program.args,['2026-10-24','新潟',3]);const receipts=observed.find(x=>x.q.includes('SELECT snapshot_id'));assert.equal(JSON.parse(receipts.args[0]).length,1);sql.close();
+ assert.equal(result.target.raceNo,3);const program=observed.find(x=>x.q.includes('FROM jra_race_program p'));assert.match(program.q,/WHERE p.race_date=\? AND p.venue=\? AND p.race_no=\? AND NOT EXISTS/);assert.deepEqual(program.args,['2026-10-24','新潟',3]);const receipts=observed.find(x=>x.q.includes('SELECT snapshot_id'));assert.equal(JSON.parse(receipts.args[0]).length,24);assert.ok(JSON.parse(receipts.args[0]).every(id=>id.startsWith('official-card:2026-10-24:新潟:')));sql.close();
 });
 test('invalid explicit target fails before any DB read, including cooldown lookup',async()=>{
  let reads=0;const db={prepare(){reads++;throw Error('unexpected query')}};
@@ -149,4 +156,181 @@ test('discovered cards respect individual wait and urgent Saturday cards',async(
  for(const [day,venue,no] of [['2026-10-24','東京',1],['2026-10-25','京都',9]])sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(day,venue,no,'15:00','https://www.jra.go.jp/calendar');
  sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run('official-card:2026-10-25:京都:9:official-program',stamp+1,card,'official-card-link-found');
  const result=await collectMissingOfficialCard(db,{date:'2026-10-24',includeFuture:true,upcomingOnly:true},{now:()=>stamp,discover:async(_,s)=>{assert.equal(s.date,'2026-10-24');return{ok:true,externalRequests:1}}});assert.equal(result.target.venue,'東京');sql.prepare('UPDATE lab_expected_card_discovery SET next_attempt_at=?').run(stamp-1);const urgent=await collectMissingOfficialCard(db,{date:'2026-10-24',includeFuture:true,upcomingOnly:true},{now:()=>stamp,discover:async(_,s)=>{assert.equal(s.date,'2026-10-24');return{ok:true,externalRequests:1}}});assert.equal(urgent.target.venue,'東京');sql.close();
+});
+test('published index receipt progresses through the same queue before an unrelated untried calendar',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-23T03:00:00Z');sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');
+ for(const [venue,no] of [['東京',1],['京都',2]])sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-24',venue,no,'10:00','https://www.jra.go.jp/calendar');
+ sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run('official-card:2026-10-24:京都:2:official-program',stamp-1,'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dli00/F3','official-card-index-found');
+ const r=await collectMissingOfficialCard(db,{date:'2026-10-23',includeFuture:true,upcomingOnly:true},{now:()=>stamp,discover:async(_,s)=>{assert.equal(s.venue,'京都');return{ok:true,status:'official-card-link-found',externalRequests:1}}});assert.equal(r.target.raceNo,2);sql.close();
+});
+test('Saturday discovery receives a slot after Sunday card completion even with many ready Sunday links',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-23T04:00:00Z');sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');
+ sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-24','東京',1,'10:05','https://www.jra.go.jp/calendar');sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run('official-card:2026-10-24:東京:1:official-program',stamp-1,null,'failed');
+ for(let no=1;no<=12;no++){sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-25','京都',no,'15:00','https://www.jra.go.jp/calendar');sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(`official-card:2026-10-25:京都:${no}:official-program`,stamp-1,`https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde010820260409${String(no).padStart(2,'0')}20261025/AA`,'official-card-link-found');}
+ let previous={lane:'card'};const visited=[];for(let i=0;i<4;i++){const r=await collectMissingOfficialCard(db,{date:'2026-10-23',includeFuture:true,upcomingOnly:true},{now:()=>stamp,previousCardSelection:previous,discover:async(_,s)=>{visited.push(s.date);return{ok:true,status:'failed',externalRequests:1}}});previous=r.cardSelection;}
+ assert.deepEqual(visited,['2026-10-24','2026-10-25','2026-10-24','2026-10-25']);sql.close();
+});
+test('fair selection never overrides shared lease or a discovery receipt waiting after HTTP403',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-23T04:00:00Z');sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');
+ sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-24','東京',1,'10:05','https://www.jra.go.jp/calendar');sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run('official-card:2026-10-24:東京:1:official-program',stamp+3600000,null,'failed');
+ const deps={now:()=>stamp,previousCardSelection:{lane:'card'},discover:()=>assert.fail('blocked')},input={date:'2026-10-23',includeFuture:true,upcomingOnly:true};assert.equal((await collectMissingOfficialCard(db,input,deps)).status,'card-discovery-not-due');sql.prepare('UPDATE lab_history_collection_budget SET locked_until=?').run(stamp+120000);assert.equal((await collectMissingOfficialCard(db,input,deps)).status,'cooldown');sql.close();
+});
+
+test('ready card receives its turn after discovery even when many linked index pages remain',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-23T04:00:00Z');sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');
+ for(let no=1;no<=12;no++){sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-24','東京',no,'15:00','https://www.jra.go.jp/calendar');sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(`official-card:2026-10-24:東京:${no}:official-program`,stamp-1,'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dli00/F3','official-card-index-found');}
+ sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-25','京都',9,'15:00','https://www.jra.go.jp/calendar');sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run('official-card:2026-10-25:京都:9:official-program',stamp-1,'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202604090920261025/AA','official-card-link-found');
+ const r=await collectMissingOfficialCard(db,{date:'2026-10-23',includeFuture:true,upcomingOnly:true},{now:()=>stamp,previousCardSelection:{lane:'discovery'},discover:async()=>({ok:true,externalRequests:1})});assert.equal(r.target.date,'2026-10-25');assert.equal(r.cardSelection.lane,'card');sql.close();
+});
+test('fair Saturday selection reaches the existing one-page published-index discovery and receipt writer',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-23T04:00:00Z');sql.exec("DROP TABLE lab_history_collection_budget;CREATE TABLE lab_history_collection_budget(name TEXT PRIMARY KEY,next_batch_at INTEGER,locked_until INTEGER DEFAULT 0,lock_token TEXT);INSERT INTO lab_history_collection_budget VALUES('jra-history',0,0,NULL)");sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-24','東京',1,'10:05','https://www.jra.go.jp/keiba/calendar2026/2026/10/1024.html');
+ let requests=0;const r=await collectMissingOfficialCard(db,{date:'2026-10-23',includeFuture:true,upcomingOnly:true},{now:()=>stamp,previousCardSelection:{lane:'card'},fetcher:async()=>{requests++;return new Response('<a href="/JRADB/accessD.html?CNAME=pw01dli00/F3">出馬表</a>',{status:200,headers:{'content-type':'text/html; charset=utf-8'}})}});
+ assert.equal(requests,1);assert.equal(r.status,'official-card-index-found');assert.equal(r.cardSelection.lane,'discovery');assert.equal(r.officialCardsCreated,false);const receipt=sql.prepare('SELECT * FROM lab_expected_card_discovery').get();assert.equal(receipt.snapshot_id,'official-card:2026-10-24:東京:1:official-program');assert.equal(receipt.next_attempt_at,stamp+60000);assert.equal(receipt.status,r.status);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);sql.close();
+});
+
+test('due discovery retries and untried races both receive slots across all 72 weekend races',async()=>{
+ const {sql,db}=fixture();sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');let stamp=Date.parse('2026-10-29T05:00:00Z');
+ for(const day of ['2026-10-31','2026-11-01'])for(const venue of ['東京','京都','新潟'])for(let no=1;no<=12;no++){sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(day,venue,no,'10:00','https://www.jra.go.jp/calendar');if(day==='2026-10-31')sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(`official-card:${day}:${venue}:${no}:official-program`,stamp-86400000,null,'failed');}
+ let previous={lane:'discovery',lastDiscoveryClass:'untried'};const seen=[];
+ for(let i=0;i<72;i++){const r=await collectMissingOfficialCard(db,{date:'2026-10-29',includeFuture:true,upcomingOnly:true},{now:()=>stamp,previousCardSelection:previous,discover:async(_,s)=>{seen.push(s.snapshotId);sql.prepare('INSERT OR REPLACE INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(s.snapshotId,stamp+3600000,null,'failed');return{ok:false,status:'failed',externalRequests:1}}});previous=r.cardSelection;stamp+=18*60000;}
+ assert.equal(new Set(seen).size,72);assert.match(seen[0],/2026-10-31/);assert.match(seen[1],/2026-11-01/);assert.deepEqual(seen.slice(0,6).map(x=>x.includes('2026-10-31')), [true,false,true,false,true,false]);sql.close();
+});
+test('discovery retry fairness survives an intervening card slot and excludes blocked receipts',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-23T06:00:00Z');sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');
+ for(const [day,venue,no] of [['2026-10-24','東京',1],['2026-10-24','新潟',1],['2026-10-25','京都',4],['2026-10-25','京都',5]])sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(day,venue,no,'15:00','https://www.jra.go.jp/calendar');
+ sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run('official-card:2026-10-24:東京:1:official-program',stamp-1,null,'failed');sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run('official-card:2026-10-24:新潟:1:official-program',stamp+3600000,null,'failed');sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run('official-card:2026-10-25:京都:5:official-program',stamp-1,'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202604090520261025/AA','official-card-link-found');
+ const input={date:'2026-10-23',includeFuture:true,upcomingOnly:true},discover=async()=>({ok:true,externalRequests:1});
+ const card=await collectMissingOfficialCard(db,input,{now:()=>stamp,previousCardSelection:{lane:'discovery',lastDiscoveryClass:'untried'},discover});assert.equal(card.cardSelection.lane,'card');assert.equal(card.cardSelection.lastDiscoveryClass,'untried');
+ const retry=await collectMissingOfficialCard(db,input,{now:()=>stamp,previousCardSelection:card.cardSelection,discover});assert.deepEqual(retry.target,{date:'2026-10-24',venue:'東京',raceNo:1});assert.equal(retry.cardSelection.lastDiscoveryClass,'retry');sql.close();
+});
+test('discovery class fairness does not replace urgent selection, and waiting shared gate consumes no turn',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-24T01:00:00Z');sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');
+ for(const venue of ['東京','京都'])sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-24',venue,1,'10:05','https://www.jra.go.jp/calendar');sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-25','新潟',11,'15:00','https://www.jra.go.jp/calendar');sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run('official-card:2026-10-24:京都:1:official-program',stamp-1,null,'failed');
+ let requests=0,queries=0;const tracked={prepare(q){queries++;return db.prepare(q)}},previous={lane:'card',lastDiscoveryClass:'untried'},deps={now:()=>stamp,previousCardSelection:previous,discover:async()=>{requests++;return{ok:true,externalRequests:1}}},input={date:'2026-10-24',includeFuture:true,upcomingOnly:true};
+ const result=await collectMissingOfficialCard(tracked,input,deps);assert.equal(result.target.venue,'東京');assert.equal(result.cardSelection.reason,'urgent');assert.equal(queries,4);assert.equal(requests,1);
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=?,locked_until=?').run(stamp+3600000,stamp+120000);queries=0;const blocked=await collectMissingOfficialCard(tracked,input,deps);assert.equal(blocked.status,'cooldown');assert.equal(blocked.cardSelection,undefined);assert.equal(queries,1);assert.equal(requests,1);sql.close();
+});
+
+const publishedIndex='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dli00%2FF3';
+function continuationFixture(){const f=fixture(),stamp=Date.parse('2026-10-23T07:54:49Z');f.sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');for(const venue of ['東京','京都','新潟'])for(let no=1;no<=12;no++){const id=`official-card:2026-10-24:${venue}:${no}:official-program`,hasIndex=no===(venue==='京都'?12:11);f.sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-24',venue,no,'15:00','https://www.jra.go.jp/keiba/calendar2026/2026/10/1024.html');f.sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(id,stamp-(hasIndex?(venue==='東京'?7200000:venue==='京都'?3600000:60000):86400000),hasIndex?publishedIndex:null,hasIndex?'official-card-index-found':'failed');}return{...f,stamp};}
+test('index continuation and undiscovered retries alternate without starving either direction',async()=>{
+ const {sql,db,stamp}=continuationFixture();let time=stamp,previous={lane:'card',lastDiscoveryClass:'untried'},queries=0;const stages=[],continued=[];const tracked={prepare(q){queries++;return db.prepare(q)}};
+ for(let i=0;i<6;i++){const r=await collectMissingOfficialCard(tracked,{date:'2026-10-23',includeFuture:true,upcomingOnly:true},{now:()=>time,previousCardSelection:previous,discover:async(_,s)=>{const row=sql.prepare('SELECT card_url FROM lab_expected_card_discovery WHERE snapshot_id=?').get(s.snapshotId),stage=row.card_url?'continuation':'reexploration';stages.push(stage);if(row.card_url)continued.push(s.snapshotId);sql.prepare('UPDATE lab_expected_card_discovery SET next_attempt_at=? WHERE snapshot_id=?').run(time+3600000,s.snapshotId);return{ok:false,status:'failed',externalRequests:1}}});if(i===0)assert.equal(stages[0],'continuation');assert.equal(r.cardSelection.retryDiscoveryStage,stages.at(-1));previous=r.cardSelection;time+=18*60000;}
+ assert.deepEqual(stages,['continuation','reexploration','continuation','reexploration','continuation','reexploration']);assert.equal(new Set(continued).size,3);assert.equal(queries,24);sql.close();
+});
+test('retry continuation cursor survives untried discovery and direct-card turns',async()=>{
+ const {sql,db,stamp}=continuationFixture(),input={date:'2026-10-23',includeFuture:true,upcomingOnly:true};
+ for(const no of [1,2])sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-25','京都',no,'15:00','https://www.jra.go.jp/calendar');const cardId='official-card:2026-10-25:京都:2:official-program';sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(cardId,stamp-1,'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202604090220261025/AA','official-card-link-found');
+ const deps={now:()=>stamp,previousCardSelection:{lane:'discovery',lastDiscoveryClass:'retry',lastRetryDiscoveryStage:'continuation'},discover:async()=>({ok:true,externalRequests:1})};
+ const card=await collectMissingOfficialCard(db,input,deps);assert.equal(card.cardSelection.lane,'card');assert.equal(card.cardSelection.lastRetryDiscoveryStage,'continuation');sql.prepare('UPDATE lab_expected_card_discovery SET next_attempt_at=? WHERE snapshot_id=?').run(stamp+3600000,cardId);
+ deps.previousCardSelection=card.cardSelection;const fresh=await collectMissingOfficialCard(db,input,deps);assert.equal(fresh.target.date,'2026-10-25');assert.equal(fresh.cardSelection.discoveryClass,'untried');assert.equal(fresh.cardSelection.lastRetryDiscoveryStage,'continuation');
+ deps.previousCardSelection=fresh.cardSelection;const retry=await collectMissingOfficialCard(db,input,deps);assert.equal(retry.cardSelection.retryDiscoveryStage,'reexploration');sql.close();
+});
+test('continuation preference respects receipt403 wait and shared lease without consuming a turn',async()=>{
+ const {sql,db,stamp}=continuationFixture();sql.prepare('UPDATE lab_expected_card_discovery SET next_attempt_at=? WHERE card_url IS NOT NULL').run(stamp+3600000);const deps={now:()=>stamp,previousCardSelection:{lane:'card',lastDiscoveryClass:'untried'},discover:async(_,s)=>{assert.equal(sql.prepare('SELECT card_url FROM lab_expected_card_discovery WHERE snapshot_id=?').get(s.snapshotId).card_url,null);return{ok:true,externalRequests:1}}};
+ const r=await collectMissingOfficialCard(db,{date:'2026-10-23',includeFuture:true,upcomingOnly:true},deps);assert.equal(r.cardSelection.retryDiscoveryStage,'reexploration');sql.prepare('UPDATE lab_history_collection_budget SET locked_until=?').run(stamp+120000);const blocked=await collectMissingOfficialCard(db,{date:'2026-10-23',includeFuture:true}, {...deps,discover:()=>assert.fail('lease held')});assert.equal(blocked.status,'cooldown');assert.equal(blocked.cardSelection,undefined);sql.close();
+});
+test('continuation selection reaches existing index parser and saves only exact individual URL in one request',async()=>{
+ const {sql,db,stamp}=continuationFixture();sql.exec("DROP TABLE lab_history_collection_budget;CREATE TABLE lab_history_collection_budget(name TEXT PRIMARY KEY,next_batch_at INTEGER,locked_until INTEGER DEFAULT 0,lock_token TEXT);INSERT INTO lab_history_collection_budget VALUES('jra-history',0,0,NULL)");sql.exec('DROP TABLE lab_expected_card_discovery;CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,card_url TEXT,next_attempt_at INTEGER,status TEXT,error TEXT)');
+ for(const row of sql.prepare('SELECT * FROM jra_race_program').all()){const indexed=row.race_no===(row.venue==='京都'?12:11);sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?,?)').run(`official-card:2026-10-24:${row.venue}:${row.race_no}:official-program`,indexed?publishedIndex:null,stamp-(indexed?(row.venue==='東京'?7200000:row.venue==='京都'?3600000:60000):86400000),indexed?'official-card-index-found':'failed',null);}
+ const url='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0105202604081120261024/AA';let requests=0;
+ const r=await collectMissingOfficialCard(db,{date:'2026-10-23',includeFuture:true,upcomingOnly:true},{now:()=>stamp,previousCardSelection:{lane:'card',lastDiscoveryClass:'untried'},fetcher:async(request,options)=>{requests++;assert.equal(request,'https://www.jra.go.jp/JRADB/accessD.html');assert.equal(new URLSearchParams(options.body).get('CNAME'),'pw01dli00/F3');return new Response(`<a href="${url.replace('20261024','20261025')}">wrong date</a><a href="${url.replace('dde0105','dde0108')}">wrong venue</a><a href="${url.replace('08112026','08122026')}">wrong race</a><a href="${url}">correct</a>`,{headers:{'content-type':'text/html;charset=utf-8'}})}});
+ assert.equal(requests,1);assert.equal(r.status,'official-card-link-found');assert.deepEqual(r.target,{date:'2026-10-24',venue:'東京',raceNo:11});assert.equal(r.cardSelection.retryDiscoveryStage,'continuation');assert.equal(r.officialCardsCreated,false);assert.equal(sql.prepare("SELECT card_url FROM lab_expected_card_discovery WHERE snapshot_id='official-card:2026-10-24:東京:11:official-program'").get().card_url,url);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);sql.close();
+});
+
+test('natural Niigata12 reuses the due Niigata11 meeting URL without changing selection, SQL count, or fetching the generic index',async()=>{
+ const {readFile}=await import('node:fs/promises');
+ const e=JSON.parse(await readFile(new URL('./fixtures/jra-meeting-links-20261024.json',import.meta.url),'utf8')),meeting=e.links.find(x=>decodeURIComponent(x).includes('pw01drl00042026040320261024/'));
+ const stamp=Date.parse('2026-10-24T01:08:01Z'),index=e.sourceUrl,runs=[];
+ for(const reuse of [false,true]){
+  const {sql,db}=fixture();sql.exec("CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,card_url TEXT,next_attempt_at INTEGER,status TEXT,error TEXT);ALTER TABLE lab_history_collection_budget ADD COLUMN lock_token TEXT;CREATE UNIQUE INDEX gate_name ON lab_history_collection_budget(name);UPDATE lab_history_collection_budget SET next_batch_at=0");
+  for(const no of [11,12]){sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-24','新潟',no,'15:25','https://www.jra.go.jp/keiba/calendar2026/2026/10/1024.html');sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?,?)').run(`official-card:2026-10-24:新潟:${no}:official-program`,no===11&&reuse?meeting:index,stamp-(no===11?60000:3600000),'official-card-index-found',null);}
+  let statements=0;const measured={prepare(q){statements++;return db.prepare(q)}};let calls=0;const seen=[];
+  const result=await collectMissingOfficialCard(measured,{date:'2026-10-24',upcomingOnly:true},{now:()=>stamp,previousCardSelection:{lane:'discovery'},fetcher:async(url,options)=>{calls++;const cname=new URLSearchParams(options.body).get('CNAME');seen.push(cname);return new Response(cname.includes('drl')?'<a href="https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0104202604031220261024/AA">routing fixture only</a>':e.links.map(x=>`<a href="${x}">recorded link</a>`).join(''),{headers:{'content-type':'text/html;charset=utf-8'}})}});
+  assert.equal(result.target.raceNo,12);assert.equal(calls,1);assert.equal(result.status,reuse?'official-card-link-found':'official-card-index-found');assert.equal(seen[0],new URL(reuse?meeting:index).searchParams.get('CNAME'));assert.equal(sql.prepare('SELECT COUNT(*) n FROM jra_races').get().n,0);
+  runs.push(statements);sql.close();
+ }
+ assert.equal(runs[0],runs[1]);
+});
+
+test('saved Niigata11 changes sibling basis but Niigata12 keeps its existing meeting receipt and cooldown',async()=>{
+ const {readFile}=await import('node:fs/promises'),real=JSON.parse(await readFile(new URL('./fixtures/jra-niigata11-card-receipt-20261024.json',import.meta.url),'utf8'));
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-24T03:24:00Z'),oldId='official-card:2026-10-24:新潟:12:official-program',newId='official-card:2026-10-24:新潟:12:stored-sibling-card';
+ const meeting='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01drl00042026040320261024%2F33';
+ sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');
+ sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-24','新潟',12,'16:00','https://www.jra.go.jp/keiba/calendar2026/2026/10/1024.html');
+ sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?,?)').run(real.race.raceKey,'2026-10-24','新潟',11,real.audit.stored,real.storedCardEvidence.sourceUrl);
+ for(let i=0;i<real.audit.stored;i++)sql.prepare('INSERT INTO jra_runners VALUES(?)').run(real.race.raceKey);
+ sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(oldId,stamp-1,meeting,'official-card-index-found');
+ let observed;const deps={now:()=>stamp,discover:async(_,s)=>{observed=s;return{ok:true,externalRequests:0}}};
+ await collectMissingOfficialCard(db,{date:'2026-10-24',venue:'新潟',raceNo:12},deps);
+ assert.equal(observed.snapshotId,oldId);assert.equal(observed.officialMeetingListUrl,meeting);assert.equal(observed.officialRosterDiscoveryUrl,real.storedCardEvidence.sourceUrl);
+ // A second legacy identity waiting after a failure must not be bypassed by
+ // selecting the older active continuation. Both identities denote one race.
+ sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(newId,stamp+3600000,null,'failed');
+ assert.equal((await collectMissingOfficialCard(db,{date:'2026-10-24',venue:'新潟',raceNo:12},{...deps,discover:()=>assert.fail('race retry still blocked')})).status,'card-discovery-not-due');
+ sql.close();
+});
+
+test('completed sibling keeps its meeting URL available to an untried race, without bypassing its own wait',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-24T03:24:00Z');
+ const meeting='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01drl00042026040320261024%2F33';
+ sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');
+ sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-10-24','新潟',12,'16:00','https://www.jra.go.jp/keiba/calendar2026/2026/10/1024.html');
+ sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?,?)').run('saved11','2026-10-24','新潟',11,1,'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0104202604031120261024/AA');
+ sql.prepare('INSERT INTO jra_runners VALUES(?)').run('saved11');
+ sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run('official-card:2026-10-24:新潟:11:official-program',stamp+3600000,meeting,'official-card-index-found');
+ let observed;
+ const input={date:'2026-10-24',venue:'新潟',raceNo:12},deps={now:()=>stamp,discover:async(_,s)=>{observed=s;return{ok:true,externalRequests:0}}};
+ await collectMissingOfficialCard(db,input,deps);
+ assert.equal(observed.officialMeetingListUrl,meeting);
+ assert.equal(observed.snapshotId,'official-card:2026-10-24:新潟:12:stored-sibling-card');
+ // The sibling's next_attempt_at must not block the independent target.
+ sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run('official-card:2026-10-24:新潟:12:stored-sibling-card',stamp+3600000,null,'failed');
+ assert.equal((await collectMissingOfficialCard(db,input,{...deps,discover:()=>assert.fail('own cooldown required')})).status,'card-discovery-not-due');
+ sql.close();
+});
+
+test('completion-first selects the earliest due date without bypassing earlier private retries or the shared gate',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-24T04:50:00Z'),input={date:'2026-10-24',includeFuture:true,completeDateFirst:true};
+ for(const day of ['2026-10-24','2026-10-25'])sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(day,'京都',1,'09:45','https://www.jra.go.jp/calendar');
+ sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');
+ const saturday='official-card:2026-10-24:京都:1:official-program';
+ sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(saturday,stamp+3600000,null,'failed');
+ const advanced=await collectMissingOfficialCard(db,input,{now:()=>stamp,discover:async(_,source)=>{assert.equal(source.date,'2026-10-25');return{status:'official-card-link-found',externalRequests:1}}});
+ assert.equal(advanced.target.date,'2026-10-25');assert.equal(sql.prepare('SELECT next_attempt_at FROM lab_expected_card_discovery WHERE snapshot_id=?').get(saturday).next_attempt_at,stamp+3600000);
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=?').run(stamp+60000);assert.equal((await collectMissingOfficialCard(db,input,{now:()=>stamp,discover:()=>assert.fail('shared gate must stop all dates')})).status,'cooldown');sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=0').run();
+ sql.prepare('UPDATE lab_expected_card_discovery SET next_attempt_at=0').run();
+ const selected=[];const deps={now:()=>stamp,discover:async(_,source)=>{selected.push(source.date);return{status:'official-card-saved',externalRequests:1}}};
+ await collectMissingOfficialCard(db,input,deps);assert.deepEqual(selected,['2026-10-24']);
+ sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?,?)').run('saturday-saved','2026-10-24','京都',1,1,'https://www.jra.go.jp/card');sql.prepare('INSERT INTO jra_runners VALUES(?)').run('saturday-saved');
+ await collectMissingOfficialCard(db,input,deps);assert.deepEqual(selected,['2026-10-24','2026-10-25']);sql.close();
+});
+
+// Already-observed individual links are stronger evidence than a calendar heuristic.
+test('publication window permits only an exact published receipt and preserves every retry deadline',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-22T01:00:00Z');
+ const day='2026-10-24',url='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0104202604031120261024/A2';
+ const input={date:day,venue:'新潟',raceNo:11,publicationWindowOnly:true};
+ sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(day,'新潟',11,'15:20','https://www.jra.go.jp/keiba/calendar2026/2026/10/1024.html');
+ sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');
+ const id='official-card:2026-10-24:新潟:11:official-program';
+ sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(id,stamp-1,url,'official-card-link-found');
+ let calls=0;const deps={now:()=>stamp,discover:async(_,s)=>{calls++;assert.equal(s.discoveryReceipt.card_url,url);assert.deepEqual([s.date,s.venue,s.raceNo],[day,'新潟',11]);return{status:'official-card-saved',externalRequests:1};}};
+ assert.equal((await collectMissingOfficialCard(db,input,deps)).status,'official-card-saved');assert.equal(calls,1);
+ for(const column of ['next_batch_at','locked_until']){sql.prepare('UPDATE lab_history_collection_budget SET '+column+'=?').run(stamp+3600000);assert.equal((await collectMissingOfficialCard(db,input,deps)).status,'cooldown');sql.prepare('UPDATE lab_history_collection_budget SET '+column+'=0').run();}
+ // A legacy source-basis receipt's later deadline must still win.
+ sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,NULL,NULL)').run('official-card:2026-10-24:新潟:11:stored-sibling-card',stamp+3600000);
+ assert.equal((await collectMissingOfficialCard(db,input,deps)).status,'card-discovery-not-due');assert.equal(calls,1);sql.close();
+});
+test('publication window rejects generic, mismatched and failed links without requesting them',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-22T01:00:00Z'),day='2026-10-24';
+ sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(day,'新潟',11,'15:20','https://www.jra.go.jp/calendar');
+ sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');
+ const id='official-card:2026-10-24:新潟:11:official-program',url='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0104202604031120261024/A2';
+ for(const [link,status] of [[url,'failed'],['https://www.jra.go.jp/calendar','official-card-link-found'],[url.replace('031120261024','031020261024'),'official-card-link-found'],[url.replace('www.jra.go.jp','example.com'),'official-card-link-found']]){
+  sql.prepare('INSERT OR REPLACE INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(id,stamp-1,link,status);
+  const r=await collectMissingOfficialCard(db,{date:day,venue:'新潟',raceNo:11,publicationWindowOnly:true},{now:()=>stamp,discover:()=>assert.fail('no published target evidence')});assert.equal(r.status,'awaiting-official-publication');
+ }
+ sql.close();
 });

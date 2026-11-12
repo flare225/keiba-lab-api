@@ -79,3 +79,10 @@ test('stored source lookup is exact before hashing and excludes non-JRA roster f
  await saveExpectedRoster(db,base,stamp);sql.prepare('INSERT INTO lab_expected_roster_registry VALUES(?,?,?,?,?)').run('bad-other','2026-11-14:東京:3','corrupt unrelated record','bad',new Date(stamp).toISOString());
  queries.length=0;assert.deepEqual(await focusedStoredSources(db,target,stamp),[]);assert.ok(queries.some(q=>q.includes('WHERE race_key=? ORDER BY stored_at')));sql.close();
 });
+
+test('focused collector does not treat duplicate runner numbers as a complete formal card',async()=>{
+ const {db,sql}=fixture();sql.exec(`CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,runner_count INTEGER);CREATE TABLE jra_runners(race_key TEXT,horse_no INTEGER,horse_name TEXT);INSERT INTO jra_races VALUES('target','2026-11-15','京都',11,2);INSERT INTO jra_runners VALUES('target',1,'A'),('target',1,'B');`);
+ let historyCalls=0,cardCalls=0;
+ const result=await collectFocusedRace(db,target,{}, {now:()=>stamp,collect:async()=>{historyCalls++;throw Error('incomplete card must not reach formal history')},cards:async()=>{cardCalls++;return{status:'awaiting-official-publication',externalRequests:0}},sources:async()=>[],expected:async()=>({status:'idle',externalRequests:0})});
+ assert.equal(historyCalls,0);assert.equal(cardCalls,1);assert.equal(result.cardStatus,'awaiting-official-publication');sql.close();
+});

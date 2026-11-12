@@ -45,9 +45,11 @@ export async function collectFocusedRace(db,target,context={},deps={}){
  if(!Number.isFinite(start)||stamp>=start-300000)return{ok:true,status:'focus-start-unverified-or-cutoff',externalRequests:0};
  const formal=await optionalFirst(db,'SELECT race_key FROM jra_races r WHERE race_date=? AND venue=? AND race_no=? AND runner_count>0 AND runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key) LIMIT 1',[target.date,target.venue,target.raceNo]);
  if(formal)return{...await(deps.collect||collectHistoryBatch)(db,{...target,historyLimit:3,batchSize:1,storedBatchSize:2},{now}),historyWorkStage:'history',focusRaceKey:key(target)};
+ let waitingHistory=null;
  const history=async()=>{
   const sources=await(deps.sources||focusedStoredSources)(db,target,stamp);
-  return(deps.expected||collectUpcomingExpectedHistory)(db,{now,sources,previousExpectedHistoryWorkKind:context.previousExpectedHistoryWorkKind});
+  waitingHistory=await(deps.expected||collectUpcomingExpectedHistory)(db,{now,sources,previousExpectedHistoryWorkKind:context.previousExpectedHistoryWorkKind});
+  return waitingHistory;
  };
  if(context.previousHistoryWorkStage==='acquisition'){
   const r=await history();if(worked(r))return{...r,historyWorkStage:'history'};
@@ -58,7 +60,7 @@ export async function collectFocusedRace(db,target,context={},deps={}){
   const r=await history();if(worked(r))return{...r,historyWorkStage:'history'};
  }
  // No supplementary netkeiba roster or unrelated calendar fallback.
- return{ok:true,status:'focus-awaiting-jra-card-or-profiles',historyWorkStage:'history',focusRaceKey:key(target),externalRequests:0};
+ return{ok:true,status:'focus-awaiting-jra-card-or-profiles',historyWorkStage:'history',focusRaceKey:key(target),cardStatus:card?.status||null,historyStatus:waitingHistory?.status||null,blockedStage:card?.status==='awaiting-official-publication'?'official-publication':'jra-card-or-profile-readiness',waiting:waitingHistory?.waiting||[],externalRequests:0};
 }
 export async function runFocusedScheduled(event,env,target,deps={}){
  const now=deps.now||Date.now,stamp=now(),state=focusScheduleState(target,event,stamp);
@@ -76,6 +78,15 @@ export async function runFocusedScheduled(event,env,target,deps={}){
  const deferred=async()=>({ok:true,status:'focus-background-deferred',focusRaceKey:key(target),externalRequests:0});
  // Retain the existing 3-lane rotation: do not turn deferred archive/result
  // slots into extra source requests while reserving DB work for this target.
- const history=async context=>({...await(deps.collect||collectFocusedRace)(db,target,context,{now,shared:env.LAB_SHARED_PAGE_ACQUISITION==='true'}),...(stageErrors.length?{stageErrors}:{})});
+ const history=async context=>{
+  // The coordinator intentionally carries old metadata forward. A new focus
+  // must not inherit another race's selection or one-shot history handoff.
+  const same=context.previousCardSelection?.target===key(target);
+  const scoped=same?context:{...context,previousCardSelection:null,previousHistoryWorkStage:null,previousExpectedHistoryWorkKind:null,previousOfficialHistoryCursor:0};
+  const result=await(deps.collect||collectFocusedRace)(db,target,scoped,{now,shared:env.LAB_SHARED_PAGE_ACQUISITION==='true'});
+  if(result.cardSelection?.target&&result.cardSelection.target!==key(target))throw Error('Focused collector returned another race selection');
+  const selection=result.cardSelection||scoped.previousCardSelection||{lane:'discovery',reason:'focused-race-completion'};
+  return{...result,focusRaceKey:key(target),cardSelection:{...selection,target:key(target)},...(stageErrors.length?{stageErrors}:{})};
+ };
  return(deps.coordinate||runSourceCoordinator)(event,env,{now,jobs:{archive:deferred,results:deferred,history}});
 }

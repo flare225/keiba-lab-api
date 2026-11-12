@@ -306,3 +306,31 @@ test('completion-first selects the earliest due date without bypassing earlier p
  sql.prepare('INSERT INTO jra_races VALUES(?,?,?,?,?,?)').run('saturday-saved','2026-10-24','京都',1,1,'https://www.jra.go.jp/card');sql.prepare('INSERT INTO jra_runners VALUES(?)').run('saturday-saved');
  await collectMissingOfficialCard(db,input,deps);assert.deepEqual(selected,['2026-10-24','2026-10-25']);sql.close();
 });
+
+// Already-observed individual links are stronger evidence than a calendar heuristic.
+test('publication window permits only an exact published receipt and preserves every retry deadline',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-22T01:00:00Z');
+ const day='2026-10-24',url='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0104202604031120261024/A2';
+ const input={date:day,venue:'新潟',raceNo:11,publicationWindowOnly:true};
+ sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(day,'新潟',11,'15:20','https://www.jra.go.jp/keiba/calendar2026/2026/10/1024.html');
+ sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');
+ const id='official-card:2026-10-24:新潟:11:official-program';
+ sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(id,stamp-1,url,'official-card-link-found');
+ let calls=0;const deps={now:()=>stamp,discover:async(_,s)=>{calls++;assert.equal(s.discoveryReceipt.card_url,url);assert.deepEqual([s.date,s.venue,s.raceNo],[day,'新潟',11]);return{status:'official-card-saved',externalRequests:1};}};
+ assert.equal((await collectMissingOfficialCard(db,input,deps)).status,'official-card-saved');assert.equal(calls,1);
+ for(const column of ['next_batch_at','locked_until']){sql.prepare('UPDATE lab_history_collection_budget SET '+column+'=?').run(stamp+3600000);assert.equal((await collectMissingOfficialCard(db,input,deps)).status,'cooldown');sql.prepare('UPDATE lab_history_collection_budget SET '+column+'=0').run();}
+ // A legacy source-basis receipt's later deadline must still win.
+ sql.prepare('INSERT INTO lab_expected_card_discovery VALUES(?,?,NULL,NULL)').run('official-card:2026-10-24:新潟:11:stored-sibling-card',stamp+3600000);
+ assert.equal((await collectMissingOfficialCard(db,input,deps)).status,'card-discovery-not-due');assert.equal(calls,1);sql.close();
+});
+test('publication window rejects generic, mismatched and failed links without requesting them',async()=>{
+ const {sql,db}=fixture(),stamp=Date.parse('2026-10-22T01:00:00Z'),day='2026-10-24';
+ sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run(day,'新潟',11,'15:20','https://www.jra.go.jp/calendar');
+ sql.exec('CREATE TABLE lab_expected_card_discovery(snapshot_id TEXT PRIMARY KEY,next_attempt_at INTEGER,card_url TEXT,status TEXT)');
+ const id='official-card:2026-10-24:新潟:11:official-program',url='https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0104202604031120261024/A2';
+ for(const [link,status] of [[url,'failed'],['https://www.jra.go.jp/calendar','official-card-link-found'],[url.replace('031120261024','031020261024'),'official-card-link-found'],[url.replace('www.jra.go.jp','example.com'),'official-card-link-found']]){
+  sql.prepare('INSERT OR REPLACE INTO lab_expected_card_discovery VALUES(?,?,?,?)').run(id,stamp-1,link,status);
+  const r=await collectMissingOfficialCard(db,{date:day,venue:'新潟',raceNo:11,publicationWindowOnly:true},{now:()=>stamp,discover:()=>assert.fail('no published target evidence')});assert.equal(r.status,'awaiting-official-publication');
+ }
+ sql.close();
+});

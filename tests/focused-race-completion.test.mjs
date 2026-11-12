@@ -50,6 +50,15 @@ test('target-only card/history handoff cannot fall through to another race or ne
  deps.expected=async()=>({status:'idle',externalRequests:0});deps.cards=async()=>({status:'card-discovery-not-due',externalRequests:0});
  assert.equal((await collectFocusedRace(db,target,{},deps)).status,'focus-awaiting-jra-card-or-profiles');
 });
+test('verified registration history can advance without a program clock, but idle history still recovers the program',async()=>{
+ const db=gateDb({program:false}),calls=[];
+ const source={date:target.date,venue:target.venue,raceNo:target.raceNo,provider:'JRA',names:['registered']};
+ const deps={now:()=>stamp,sources:async()=>[source],expected:async(_,o)=>{calls.push('history');assert.deepEqual(o.sources,[source]);return{status:'collected',attempted:1,externalRequests:1}},programs:async()=>{calls.push('program');return{status:'program-not-due',externalRequests:0}}};
+ const collected=await collectFocusedRace(db,target,{},deps);assert.deepEqual(calls,['history']);assert.equal(collected.historyWorkStage,'history');assert.equal(collected.focusRaceKey,'2026-11-15:京都:11');
+ calls.length=0;deps.expected=async()=>{calls.push('history');return{status:'idle',externalRequests:0}};
+ const idle=await collectFocusedRace(db,target,{},deps);assert.deepEqual(calls,['history','program']);assert.equal(idle.status,'program-not-due');
+ calls.length=0;await collectFocusedRace(db,target,{previousHistoryWorkStage:'history'},deps);assert.deepEqual(calls,['program']);
+});
 test('missing target program preserves exact date and a shared wait without inspecting other dates',async()=>{
  const db=gateDb({program:false});let called=0;
  const r=await collectFocusedRace(db,target,{}, {now:()=>stamp,programs:async(_,o)=>{called++;assert.deepEqual(o.target,target);return{status:'cooldown',externalRequests:0}}});assert.equal(called,1);assert.equal(r.status,'cooldown');

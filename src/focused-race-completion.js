@@ -49,7 +49,7 @@ export async function collectFocusedRace(db,target,context={},deps={}){
  if(!program)return await(deps.programs||recoverMissingPrograms)(db,{now,target})||{ok:true,status:'focused-program-not-due',externalRequests:0};
  const start=/^\d{2}:\d{2}$/.test(program.start_time||'')?Date.parse(`${target.date}T${program.start_time}:00+09:00`):NaN;
  if(!Number.isFinite(start)||stamp>=start-300000)return{ok:true,status:'focus-start-unverified-or-cutoff',externalRequests:0};
- const formal=await optionalFirst(db,'SELECT race_key FROM jra_races r WHERE race_date=? AND venue=? AND race_no=? AND runner_count>0 AND runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key) LIMIT 1',[target.date,target.venue,target.raceNo]);
+ const formal=await optionalFirst(db,`SELECT race_key FROM jra_races r WHERE race_date=? AND venue=? AND race_no=? AND runner_count>0 AND runner_count=(SELECT COUNT(*) FROM jra_runners x WHERE x.race_key=r.race_key) AND NOT EXISTS(SELECT 1 FROM jra_runners x WHERE x.race_key=r.race_key AND (x.horse_no NOT BETWEEN 1 AND 18 OR x.horse_name IS NULL OR TRIM(x.horse_name)='')) AND (SELECT COUNT(DISTINCT x.horse_no) FROM jra_runners x WHERE x.race_key=r.race_key)=r.runner_count AND (SELECT COUNT(DISTINCT x.horse_name) FROM jra_runners x WHERE x.race_key=r.race_key)=r.runner_count LIMIT 1`,[target.date,target.venue,target.raceNo]);
  if(formal)return{...await(deps.collect||collectHistoryBatch)(db,{...target,historyLimit:3,batchSize:1,storedBatchSize:2},{now}),historyWorkStage:'history',focusRaceKey:key(target)};
  let waitingHistory=null;
  const history=async()=>{

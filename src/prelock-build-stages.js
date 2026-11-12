@@ -3,9 +3,10 @@
 export async function storedHistoryStage(db,{date,venue,raceNo}){
  const race=await db.prepare('SELECT race_key,runner_count FROM jra_races WHERE race_date=? AND venue=? AND race_no=?').bind(date,venue,raceNo).first();
  if(!race)return{status:409,data:{ok:false,stage:'stored-history',error:'official-card-not-stored',externalRequests:0}};
- const runners=(await db.prepare(`SELECT r.horse_name,(SELECT COUNT(*) FROM (SELECT 1 FROM jra_past_performances p WHERE p.horse_name=r.horse_name AND p.race_date<? AND p.race_date>=printf('%d-01-01',CAST(substr(?,1,4) AS INTEGER)-r.age+2) AND p.finish_position>=1 AND p.field_size>=p.finish_position LIMIT 3)) AS stored_rows FROM jra_runners r WHERE r.race_key=? ORDER BY r.horse_no`).bind(date,date,race.race_key).all()).results||[];
+ const runners=(await db.prepare(`SELECT r.horse_no,r.horse_name,(SELECT COUNT(*) FROM (SELECT 1 FROM jra_past_performances p WHERE p.horse_name=r.horse_name AND p.race_date<? AND p.race_date>=printf('%d-01-01',CAST(substr(?,1,4) AS INTEGER)-r.age+2) AND p.finish_position>=1 AND p.field_size>=p.finish_position LIMIT 3)) AS stored_rows FROM jra_runners r WHERE r.race_key=? ORDER BY r.horse_no`).bind(date,date,race.race_key).all()).results||[];
  const missing=runners.filter(r=>Number(r.stored_rows)===0).map(r=>r.horse_name);
- const ready=Number(race.runner_count)>0&&runners.length===Number(race.runner_count)&&missing.length===0;
+ const uniqueRoster=new Set(runners.map(r=>Number(r.horse_no))).size===runners.length&&new Set(runners.map(r=>r.horse_name)).size===runners.length&&runners.every(r=>Number.isInteger(Number(r.horse_no))&&Number(r.horse_no)>=1&&Number(r.horse_no)<=18&&typeof r.horse_name==='string'&&r.horse_name.trim().length>0);
+ const ready=Number(race.runner_count)>0&&runners.length===Number(race.runner_count)&&uniqueRoster&&missing.length===0;
  return{status:ready?200:409,data:{ok:ready,stage:'stored-history',externalRequests:0,runnerCount:runners.length,missingHistoryHorses:missing,collectionTarget:3,shortHistoryHorses:runners.filter(r=>Number(r.stored_rows)<3).map(r=>r.horse_name),error:ready?null:'awaiting-stored-prior-history'}};
 }
 export async function runPrelockBuildStages(calls,invoke){

@@ -27,3 +27,9 @@ test('actual prelock-build route refuses missing history before invoking any leg
  const db={prepare(query){queries++;assert.match(query,/SELECT race_key,runner_count FROM jra_races/);return{bind(){return{async first(){return null}}}}}};
  const response=await app.fetch(new Request('https://worker.test/v1/lab/prelock-build?date=2026-10-24&venue=東京&race_no=11&track=良'),{DB:db},{});const body=await response.json();assert.equal(body.ok,false);assert.equal(body.blockedBy,'history');assert.equal(body.coreFeatureAudit,null);assert.equal(body.stages.baseRank.skipped,true);assert.equal(queries,1);
 });
+
+test('stored-history stage rejects duplicate horse identities despite complete row count',async()=>{
+ const sql=new DatabaseSync(':memory:');sql.exec(`CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,runner_count INTEGER);CREATE TABLE jra_runners(race_key TEXT,horse_no INTEGER,horse_name TEXT,age INTEGER);CREATE TABLE jra_past_performances(horse_name TEXT,race_date TEXT,finish_position INTEGER,field_size INTEGER);INSERT INTO jra_races VALUES('race','2026-10-24','東京',11,2);INSERT INTO jra_runners VALUES('race',1,'A',3),('race',1,'B',3);INSERT INTO jra_past_performances VALUES('A','2026-10-01',1,10),('B','2026-10-01',1,10);`);
+ const db={prepare(query){const stmt=sql.prepare(query);return{bind(...args){return{async first(){return stmt.get(...args)},async all(){return{results:stmt.all(...args)}}}}}}};
+ const result=await storedHistoryStage(db,{date:'2026-10-24',venue:'東京',raceNo:11});assert.equal(result.status,409);assert.equal(result.data.ok,false);assert.equal(result.data.runnerCount,2);sql.close();
+});

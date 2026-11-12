@@ -1,3 +1,4 @@
+import {EXPECTED_ROSTER_SEEDS,prepareReviewedRoster} from './expected-roster-seeds.js';
 import {targetInput} from './race-history-assessment-v3.31.0.js';
 import {jstDay,collectHistoryBatch} from './history-collection-v3.37.0.js';
 import {collectMissingOfficialCard} from './missing-official-cards.js';
@@ -29,6 +30,11 @@ export function focusScheduleState(target,event,stamp){
 const key=t=>`${t.date}:${t.venue}:${t.raceNo}`;
 const worked=r=>r&&(r.attempted||r.externalRequests||r.saveMayHaveSucceeded||r.formalCardSaved||['roster-saved','partial-roster-saved','roster-reconciled','cooldown','paused','lease-unavailable','shared-gate-unavailable'].includes(r.status));
 async function optionalFirst(db,sql,args){try{return await db.prepare(sql).bind(...args).first();}catch(e){if(/no such table/i.test(String(e)))return null;throw e;}}
+// Reuse only reviewed registration facts for the explicit focus. No source HTTP.
+export function prepareFocusedReviewedRoster(db,target,stamp){
+ const seeds=EXPECTED_ROSTER_SEEDS.filter(s=>s.record.date===target.date&&s.record.venue===target.venue&&s.record.raceNo===target.raceNo);
+ return prepareReviewedRoster(db,target.date,target.date,stamp,seeds);
+}
 export async function focusedStoredSources(db,target,stamp){
  const predraw=await readConfirmedPredraw(db,target),confirmed=predraw&&confirmedPredrawSource(predraw,stamp);
  return confirmed?[confirmed]:(await storedExpectedSources(db,target.date,target.date,target)).filter(s=>s.provider==='JRA');
@@ -51,12 +57,12 @@ export async function collectFocusedRace(db,target,context={},deps={}){
   waitingHistory=await(deps.expected||collectUpcomingExpectedHistory)(db,{now,sources,previousExpectedHistoryWorkKind:context.previousExpectedHistoryWorkKind});
   return waitingHistory;
  };
- if(context.previousHistoryWorkStage==='acquisition'){
+ if(context.previousHistoryWorkStage!=='history'){
   const r=await history();if(worked(r))return{...r,historyWorkStage:'history'};
  }
- const card=await(deps.cards||collectMissingOfficialCard)(db,{...target,publicationWindowOnly:true},{now,previousCardSelection:context.previousCardSelection,...(deps.shared?{discover:discoverSharedSelectedCard}:{})});
+ const card=await(deps.cards||collectMissingOfficialCard)(db,{...target},{now,previousCardSelection:context.previousCardSelection,...(deps.shared?{discover:discoverSharedSelectedCard}:{})});
  if(worked(card)||card?.reusedBody)return{...card,historyWorkStage:'acquisition'};
- if(context.previousHistoryWorkStage!=='acquisition'){
+ if(context.previousHistoryWorkStage==='history'){
   const r=await history();if(worked(r))return{...r,historyWorkStage:'history'};
  }
  // No supplementary netkeiba roster or unrelated calendar fallback.
@@ -66,7 +72,7 @@ export async function runFocusedScheduled(event,env,target,deps={}){
  const now=deps.now||Date.now,stamp=now(),state=focusScheduleState(target,event,stamp);
  if(state!=='active')return{ok:true,status:state,focusRaceKey:key(target),externalRequests:0};
  const db=env.DB;
- if(event.cron==='0 * * * *')return(deps.provisional||scheduledProvisionalPrediction)(db,stamp,{prepareRoster:async()=>({status:'focus-no-broad-seeding'}),sources:()=>focusedStoredSources(db,target,stamp)});
+ if(event.cron==='0 * * * *')return(deps.provisional||scheduledProvisionalPrediction)(db,stamp,{prepareRoster:()=>prepareFocusedReviewedRoster(db,target,stamp),sources:()=>focusedStoredSources(db,target,stamp)});
  // Preserve the ordinary scheduler's failure isolation. A local forecast or
  // seal validation error must not prevent the target's missing-data work;
  // quota exhaustion still stops before any later stage or source request.
@@ -83,10 +89,12 @@ export async function runFocusedScheduled(event,env,target,deps={}){
   // must not inherit another race's selection or one-shot history handoff.
   const same=context.previousCardSelection?.target===key(target);
   const scoped=same?context:{...context,previousCardSelection:null,previousHistoryWorkStage:null,previousExpectedHistoryWorkKind:null,previousOfficialHistoryCursor:0};
-  const result=await(deps.collect||collectFocusedRace)(db,target,scoped,{now,shared:env.LAB_SHARED_PAGE_ACQUISITION==='true'});
+  const rosterPreparation=await(deps.prepareRoster||prepareFocusedReviewedRoster)(db,target,stamp);
+  const focusedContext=rosterPreparation.saved>0?{...scoped,previousHistoryWorkStage:'acquisition'}:scoped;
+  const result=await(deps.collect||collectFocusedRace)(db,target,focusedContext,{now,shared:env.LAB_SHARED_PAGE_ACQUISITION==='true'});
   if(result.cardSelection?.target&&result.cardSelection.target!==key(target))throw Error('Focused collector returned another race selection');
   const selection=result.cardSelection||scoped.previousCardSelection||{lane:'discovery',reason:'focused-race-completion'};
-  return{...result,focusRaceKey:key(target),cardSelection:{...selection,target:key(target)},...(stageErrors.length?{stageErrors}:{})};
+  return{...result,...(!result.historyWorkStage&&rosterPreparation.saved>0?{historyWorkStage:'acquisition'}:{}),rosterPreparation,focusRaceKey:key(target),cardSelection:{...selection,target:key(target)},...(stageErrors.length?{stageErrors}:{})};
  };
  return(deps.coordinate||runSourceCoordinator)(event,env,{now,jobs:{archive:deferred,results:deferred,history}});
 }

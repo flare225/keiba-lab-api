@@ -51,8 +51,7 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  let plan=deps.programPlanCache?.get(planKey);
  if(!plan){plan=await missingOfficialCards(db,date,stamp,until,target);deps.programPlanCache?.set(planKey,plan);}
  if(plan.nextBatchAt&&Date.parse(plan.nextBatchAt)>stamp)return{ok:true,status:'cooldown',externalRequests:0,nextBatchAt:plan.nextBatchAt};
- const candidates=plan.missing.filter(r=>(!input.upcomingOnly||(/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${r.date}T${r.startTime}:00+09:00`)>stamp))&&(!specified||(r.date===date&&r.venue===input.venue&&r.raceNo===Number(input.raceNo??input.race_no))));
- if(input.publicationWindowOnly&&candidates.length&&!candidates.some(r=>officialCardWindowOpen(r.date,stamp)))return{ok:true,status:'awaiting-official-publication',externalRequests:0};
+ let candidates=plan.missing.filter(r=>(!input.upcomingOnly||(/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${r.date}T${r.startTime}:00+09:00`)>stamp))&&(!specified||(r.date===date&&r.venue===input.venue&&r.raceNo===Number(input.raceNo??input.race_no))));
  // Upcoming cards first. Past cards may be stored, never used to recreate forecasts.
  candidates.sort((a,b)=>{
   const future=r=>/^\d{2}:\d{2}$/.test(r.startTime||'')&&Date.parse(`${r.date}T${r.startTime}:00+09:00`)>stamp;
@@ -61,6 +60,18 @@ export async function collectMissingOfficialCard(db,input={},deps={}){
  // Preserve the existing PR257 continuity logic across source-basis changes.
  const receiptIds=r=>['official-program','stored-sibling-card'].map(basis=>`official-card:${r.date}:${r.venue}:${r.raceNo}:${basis}`);
  let waiting=[];try{waiting=(await db.prepare('SELECT snapshot_id,next_attempt_at,card_url,status FROM lab_expected_card_discovery WHERE snapshot_id IN (SELECT value FROM json_each(?))').bind(JSON.stringify([...new Set([...new Map(candidates.map(r=>[`${r.date}:${r.venue}`,r])).values()].flatMap(r=>Array.from({length:12},(_,i)=>receiptIds({...r,raceNo:i+1})).flat()))])).all()).results||[]}catch(e){if(!/no such table/.test(String(e)))throw e;}
+ // A calendar opening time is only a discovery heuristic. An individual
+ // link already observed and persisted by discovery is stronger evidence.
+ // Keep the shared gate above and both legacy receipt deadlines below.
+ if(input.publicationWindowOnly&&candidates.length){
+  const published=r=>receiptIds(r).some(id=>{
+   const row=waiting.find(x=>x.snapshot_id===id);
+   if(row?.status!=='official-card-link-found'||!row.card_url)return false;
+   try{const url=officialUrl(row.card_url),u=new URL(url),m=metaFromRacecardUrl(url);return u.pathname==='/JRADB/accessD.html'&&m?.date===r.date&&m.venue===r.venue&&m.raceNo===r.raceNo;}catch{return false;}
+  });
+  candidates=candidates.filter(r=>officialCardWindowOpen(r.date,stamp)||published(r));
+  if(!candidates.length)return{ok:true,status:'awaiting-official-publication',externalRequests:0};
+ }
  const receiptById=new Map(waiting.map(row=>[row.snapshot_id,row]));
  const identity=r=>{
   const existing=receiptIds(r).map(id=>receiptById.get(id)).filter(Boolean);

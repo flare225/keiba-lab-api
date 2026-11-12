@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
-import {focusedRaceTarget,focusScheduleState,collectFocusedRace,runFocusedScheduled,focusedStoredSources} from '../src/focused-race-completion.js';
+import {focusedRaceTarget,focusScheduleState,collectFocusedRace,runFocusedScheduled,focusedStoredSources,prepareFocusedReviewedRoster} from '../src/focused-race-completion.js';
 import {scheduledAutomaticPrediction} from '../src/automatic-pre-race-prediction.js';
 import {scheduledSavedAutomaticSeal} from '../src/saved-automatic-seal-queue.js';
 import {recoverMissingPrograms} from '../src/program-recovery.js';
@@ -44,7 +44,7 @@ test('ordinary prediction/LOCK failures cannot block target supplementation, but
 test('target-only card/history handoff cannot fall through to another race or netkeiba roster',async()=>{
  const db=gateDb(),calls=[];
  const deps={now:()=>stamp,shared:true,sources:async(_,t)=>{assert.deepEqual(t,target);return[]},expected:async(_,o)=>{calls.push('history');assert.deepEqual(o.sources,[]);return{status:'idle',externalRequests:0}},cards:async(_,input)=>{calls.push('card');assert.equal(input.date,target.date);assert.equal(input.venue,target.venue);assert.equal(input.raceNo,11);return{status:'confirmed-predraw-saved',attempted:true,externalRequests:1}}};
- const first=await collectFocusedRace(db,target,{},deps);assert.equal(first.historyWorkStage,'acquisition');assert.deepEqual(calls,['card']);
+ const first=await collectFocusedRace(db,target,{},deps);assert.equal(first.historyWorkStage,'acquisition');assert.deepEqual(calls,['history','card']);
  calls.length=0;deps.expected=async()=>{calls.push('history');return{status:'collected',attempted:1,externalRequests:1}};
  const next=await collectFocusedRace(db,target,{previousHistoryWorkStage:first.historyWorkStage},deps);assert.equal(next.historyWorkStage,'history');assert.deepEqual(calls,['history']);
  deps.expected=async()=>({status:'idle',externalRequests:0});deps.cards=async()=>({status:'card-discovery-not-due',externalRequests:0});
@@ -78,4 +78,25 @@ test('stored source lookup is exact before hashing and excludes non-JRA roster f
  const {db,sql,queries}=fixture();const base={...target,raceName:'test',kind:'expected-runners',provider:'netkeiba',sourceUrl:'https://own.netkeiba.com/race/shutuba.html?race_id=202608050411',observedAt:new Date(stamp).toISOString(),sourceText:'馬名の原典を照合するための充分な本文です。対象馬',runners:[{horseName:'対象馬',age:4}]};
  await saveExpectedRoster(db,base,stamp);sql.prepare('INSERT INTO lab_expected_roster_registry VALUES(?,?,?,?,?)').run('bad-other','2026-11-14:東京:3','corrupt unrelated record','bad',new Date(stamp).toISOString());
  queries.length=0;assert.deepEqual(await focusedStoredSources(db,target,stamp),[]);assert.ok(queries.some(q=>q.includes('WHERE race_key=? ORDER BY stored_at')));sql.close();
+});
+
+test('focused collection uses real discovery before the estimated publication hour and starts history from registration',async()=>{
+ const calls=[],source={date:target.date,venue:target.venue,raceNo:11,provider:'JRA',kind:'special-registration',names:['登録馬']};
+ const deps={now:()=>stamp,sources:async()=>[source],expected:async(_,o)=>{calls.push('registration-history');assert.deepEqual(o.sources,[source]);return{status:'collected',attempted:1,externalRequests:1};},cards:async(_,input)=>{calls.push('card');assert.notEqual(input.publicationWindowOnly,true);return{status:'not-published',externalRequests:1};}};
+ const first=await collectFocusedRace(gateDb(),target,{},deps);assert.deepEqual(calls,['registration-history']);assert.equal(first.historyWorkStage,'history');
+ calls.length=0;const next=await collectFocusedRace(gateDb(),target,{previousHistoryWorkStage:'history'},deps);assert.deepEqual(calls,['card']);assert.equal(next.historyWorkStage,'acquisition');
+});
+test('natural focused preparation persists only the verified registration and reuses its immutable snapshot',async()=>{
+ const {db,sql}=fixture(),now=Date.parse('2026-11-12T01:02:00Z');
+ const r=await prepareFocusedReviewedRoster(db,target,now);assert.equal(r.saved,1);assert.equal(r.formalCardSaved,false);assert.equal(r.storedRunners,23);
+ const sources=await focusedStoredSources(db,target,now);assert.equal(sources.length,1);assert.equal(sources[0].names.length,23);assert.equal(sources[0].officialHorsePage,'https://www.jra.go.jp/keiba/g1/eliza/horse.html');
+ assert.ok(sources[0].names.includes('カムニャック'));assert.equal(sources[0].ages['ジュウリョクピエロ'],3);assert.equal(sources[0].rosterCoverage.complete,true);
+ const again=await prepareFocusedReviewedRoster(db,target,now);assert.equal(again.saved,0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_expected_roster_registry').get().n,1);
+ const none=await prepareFocusedReviewedRoster(db,{...target,raceNo:10},now);assert.equal(none.saved,0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM lab_expected_roster_registry').get().n,1);sql.close();
+});
+test('natural source turn prepares registration before its real focused history handoff',async()=>{
+ const {db,sql}=fixture(),now=Date.parse('2026-11-12T01:02:00Z');
+ sql.exec("CREATE TABLE lab_history_collection_budget(name TEXT,next_batch_at INTEGER,locked_until INTEGER);INSERT INTO lab_history_collection_budget VALUES('jra-history',0,0);CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,start_time TEXT);INSERT INTO jra_race_program VALUES('2026-11-15','京都',11,'15:40');CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,runner_count INTEGER);CREATE TABLE jra_runners(race_key TEXT)");
+ const r=await runFocusedScheduled(sourceEvent,{DB:db},target,{now:()=>now,predict:async()=>{},seal:async()=>{},coordinate:async(e,env,o)=>o.jobs.history({previousCardSelection:{target:'2026-11-15:京都:11'},previousHistoryWorkStage:'history'}),collect:(d,t,c)=>collectFocusedRace(d,t,c,{now:()=>now,expected:async(_,o)=>{assert.equal(o.sources.length,1);assert.equal(o.sources[0].names.length,23);return{status:'collected',attempted:1,externalRequests:0};},cards:()=>assert.fail('registration work precedes card discovery')})});
+ assert.equal(r.rosterPreparation.storedRunners,23);assert.equal(r.rosterPreparation.saved,1);assert.equal(r.historyWorkStage,'history');assert.equal(r.focusRaceKey,'2026-11-15:京都:11');sql.close();
 });

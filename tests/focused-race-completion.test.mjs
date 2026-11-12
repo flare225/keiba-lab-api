@@ -6,6 +6,7 @@ import {scheduledAutomaticPrediction} from '../src/automatic-pre-race-prediction
 import {scheduledSavedAutomaticSeal} from '../src/saved-automatic-seal-queue.js';
 import {recoverMissingPrograms} from '../src/program-recovery.js';
 import {saveExpectedRoster} from '../src/expected-roster-registry.js';
+import {runPipelineJob} from '../src/pipeline-runs-v3.40.0.js';
 const stamp=Date.parse('2026-11-12T01:00:00Z'),target={date:'2026-11-15',venue:'京都',raceNo:11,expiresAt:'2026-11-15T06:35:00.000Z'},sourceEvent={cron:'*/3 * * * *',scheduledTime:stamp};
 function fixture(){const sql=new DatabaseSync(':memory:'),queries=[];const db={prepare(q){queries.push(q);const w=(a=[])=>({bind(...b){return w(b)},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}},async run(){const r=sql.prepare(q).run(...a);return{meta:{changes:r.changes}}}});return w()}};return{db,sql,queries};}
 function gateDb({blocked=0,program=true,formal=false}={}){const queries=[];return{queries,prepare(q){queries.push(q);return{bind(...args){assert.ok(!q.includes('race_date=?')||args.join(':')==='2026-11-15:京都:11');return this},async first(){if(q.includes('lab_history_collection_budget'))return{next_batch_at:blocked,locked_until:0};if(q.includes('FROM jra_race_program'))return program?{start_time:'15:40'}:null;if(q.includes('FROM jra_races'))return formal?{race_key:'official-target'}:null;assert.fail(q)}}}};}
@@ -54,6 +55,18 @@ test('missing target program preserves exact date and a shared wait without insp
  const r=await collectFocusedRace(db,target,{}, {now:()=>stamp,programs:async(_,o)=>{called++;assert.deepEqual(o.target,target);return{status:'cooldown',externalRequests:0}}});assert.equal(called,1);assert.equal(r.status,'cooldown');
  const f=fixture();let requests=0;const result=await recoverMissingPrograms(f.db,{now:()=>stamp,target,fetcher:async()=>{requests++;return new Response('',{status:403})}});
  assert.equal(requests,1);assert.equal(result.date,target.date);assert.deepEqual(f.sql.prepare('SELECT date FROM lab_program_recovery_v1').all().map(r=>r.date),[target.date]);assert.equal(result.meetingAbsenceInferred,false);f.sql.close();
+});
+test('real coordinator replaces another race selection and handoff flags before persisting focused waiting',async()=>{
+ const {db,sql}=fixture();
+ for(const [job,age] of [['archive',1],['results',2],['history',3]])await runPipelineJob(db,job,'scheduled',async()=>({status:'cooldown',cardSelection:{lane:'discovery',target:'2026-11-14:京都:11',savedPredrawHistoryPending:true},historyWorkStage:'acquisition',expectedHistoryWorkKind:'discovery'}),{scheduledTime:stamp-age,now:()=>stamp-age});
+ let seen;const r=await runFocusedScheduled(sourceEvent,{DB:db},target,{now:()=>stamp,predict:async()=>{},seal:async()=>{},collect:async(_,t,context)=>{seen=context;return{ok:true,status:'focus-awaiting-jra-card-or-profiles',externalRequests:0}}});
+ assert.equal(seen.previousCardSelection,null);assert.equal(seen.previousHistoryWorkStage,null);assert.equal(seen.previousExpectedHistoryWorkKind,null);
+ assert.equal(r.focusRaceKey,'2026-11-15:京都:11');assert.equal(r.cardSelection.target,r.focusRaceKey);assert.equal(r.cardSelection.savedPredrawHistoryPending,undefined);
+ const saved=JSON.parse(sql.prepare("SELECT result_json FROM lab_bounded_pipeline_runs WHERE job='history' ORDER BY started_at DESC LIMIT 1").get().result_json);assert.equal(saved.cardSelection.target,saved.focusRaceKey);sql.close();
+});
+test('focused publication wait retains its real card and history blockers without claiming a fetch',async()=>{
+ const r=await collectFocusedRace(gateDb(),target,{}, {now:()=>stamp,cards:async()=>({status:'awaiting-official-publication',externalRequests:0}),sources:async()=>[],expected:async()=>({status:'idle',waiting:[],externalRequests:0})});
+ assert.equal(r.cardStatus,'awaiting-official-publication');assert.equal(r.historyStatus,'idle');assert.equal(r.blockedStage,'official-publication');assert.equal(r.externalRequests,0);
 });
 test('prediction and LOCK SQL contain exact target predicates with adjacent races present',async()=>{
  const {db,sql,queries}=fixture();sql.exec(`CREATE TABLE jra_races(race_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,runner_count INTEGER);CREATE TABLE jra_race_program(program_key TEXT,race_date TEXT,venue TEXT,race_no INTEGER,start_time TEXT);CREATE TABLE lab_prospective_seals(race_key TEXT,model_version TEXT,track_condition TEXT,seal_kind TEXT);INSERT INTO jra_races VALUES('other','2026-11-14','東京',3,1);INSERT INTO jra_race_program VALUES('2026-11-14:東京:3','2026-11-14','東京',3,'10:00');`);

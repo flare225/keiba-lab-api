@@ -13,3 +13,19 @@ test('genuine finish, distance and same-provider closing-time conflicts remain r
  const h=await historyForExpected(null,source,'A',8,{rich:[],profiles:[raw,{...raw,last3f:39.1}],expected:[],detailEvidence:[],warnings:[]});assert.equal(h.available,false);assert.ok(h.conflictDetails.some(d=>d.field==='last3f'));
 });
 test('normalization preserves unknown formats and differing times',()=>{assert.equal(normalize('surface','ダ?'),'ダ?');assert.equal(normalize('cornerPositions','7 6 8 8'),'7-6-8-8');assert.equal(normalize('cornerPositions','7 X 8'),'7 X 8');assert.equal(normalize('time','0:57.4'),57.4);assert.notEqual(normalize('time','0:57.4'),normalize('time','0:57.5'));});
+
+test('a duplicate JRA profile NULL cannot hide the same validated prior closing time',async()=>{
+ const row={...raw,race_date:'2026-01-04',venue:'京都',race_name:'3歳1勝クラス',surface:'芝',distance:2000,finish_position:1,field_size:7,time_text:'2:00.9',last3f:null,corner_positions:null,source_url:'https://www.jra.go.jp/JRADB/accessU.html?CNAME=prior'};
+ const cached={...row,race_name:'1勝クラス',last3f:34,source_url:'https://www.jra.go.jp/JRADB/accessD.html?CNAME=stored-card'};
+ const input={date:'2026-11-15',age:3,surface:'芝',distance:2200,snapshotId:'no-expected-supplement'};
+ for(const profiles of [[row,cached],[cached,row]]){
+  const pre={rich:[],profiles,expected:[],detailEvidence:[],warnings:[]},before=JSON.stringify(pre);
+  const h=await historyForExpected(null,input,'ジュウリョクピエロ',3,pre);
+  assert.equal(h.available,true);assert.equal(h.recent.length,1);assert.equal(h.recent[0].last3f,34);assert.equal(h.summary.last3fRecorded,1);
+  assert.equal(h.recent[0].sourceEvidence.length,2);assert.ok(h.recent[0].sourceEvidence.some(e=>e.values.last3f===null));assert.equal(JSON.stringify(pre),before);
+ }
+ for(const change of [{distance:1800},{finish_position:2},{field_size:8},{time_text:'2:01.0'},{surface:'ダート'},{source_url:'https://example.com/JRADB/accessD.html'}]){
+  const h=await historyForExpected(null,input,'ジュウリョクピエロ',3,{rich:[],profiles:[row,{...cached,...change}],expected:[],detailEvidence:[],warnings:[]});
+  if(change.source_url)assert.equal(h.recent[0].last3f,null);else assert.equal(h.available,false);
+ }
+});

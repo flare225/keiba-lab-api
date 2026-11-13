@@ -43,9 +43,10 @@ export async function labelAutomaticPrediction(db,input,now=Date.now()){
  return{...read,saved:Number(inserted.meta?.changes)||0,externalRequests:0};
  }catch(e){e.saveMayHaveSucceeded=true;throw e;}
 }
-export async function scheduledAutomaticCandidates(db,now=Date.now()){
+export async function scheduledAutomaticCandidates(db,now=Date.now(),target=null){
+ const t=target?targetInput(target):null;
  await ensure(db);const today=jstDay(now);let row;
- try{row=await db.prepare(`SELECT a.snapshot_json FROM lab_automatic_predictions_v1 a LEFT JOIN ${TABLE} l ON l.race_key=a.race_key LEFT JOIN ${CHECKS} c ON c.race_key=a.race_key WHERE a.race_date<=? AND l.race_key IS NULL AND COALESCE(c.next_check_at,0)<=? ORDER BY COALESCE(c.next_check_at,0),a.race_date,a.race_key LIMIT 1`).bind(today,now).first()}catch(e){if(/no such table/.test(String(e)))return{ok:true,status:'no-saved-automatic-prediction',saved:0,externalRequests:0};throw e}
+ try{row=await db.prepare(`SELECT a.snapshot_json FROM lab_automatic_predictions_v1 a LEFT JOIN ${TABLE} l ON l.race_key=a.race_key LEFT JOIN ${CHECKS} c ON c.race_key=a.race_key WHERE a.race_date<=? ${t?'AND a.race_key=?':''} AND l.race_key IS NULL AND COALESCE(c.next_check_at,0)<=? ORDER BY COALESCE(c.next_check_at,0),a.race_date,a.race_key LIMIT 1`).bind(today,...(t?[`${t.date}:${t.venue}:${t.raceNo}`]:[]),now).first()}catch(e){if(/no such table/.test(String(e)))return{ok:true,status:'no-saved-automatic-prediction',saved:0,externalRequests:0};throw e}
  if(!row)return{ok:true,status:'no-due-automatic-candidate',saved:0,externalRequests:0};
  const race=JSON.parse(row.snapshot_json).race;let result;
  try{result=await labelAutomaticPrediction(db,race,now)}catch(e){if(e.saveMayHaveSucceeded)throw e;result={ok:false,status:'deferred',error:String(e.message||e),saved:0,externalRequests:0}}

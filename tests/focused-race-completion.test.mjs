@@ -13,7 +13,8 @@ function gateDb({blocked=0,program=true,formal=false}={}){const queries=[];retur
 test('explicit scope fails closed on malformed/expired settings; no broad scheduler work',async()=>{
  assert.deepEqual(focusedRaceTarget(JSON.stringify(target)),target);
  assert.throws(()=>focusedRaceTarget('{'));assert.throws(()=>focusedRaceTarget(JSON.stringify({...target,expiresAt:'2026-11-16T00:00:00+09:00'})));
- assert.equal(focusScheduleState(target,sourceEvent,Date.parse(target.expiresAt)),'focus-expired-or-outside-window');
+ assert.equal(focusScheduleState(target,sourceEvent,Date.parse(target.expiresAt)),'outcomes');
+ assert.equal(focusScheduleState(target,sourceEvent,Date.parse(target.expiresAt)+86400000),'focus-expired-or-outside-window');
  const app=(await import('../src/index-v3.49.0.js')).default;let sql=0;const DB={prepare(){sql++;throw Error('must not touch D1')}};
  await app.scheduled({cron:'0,10,20,30,40,50 * * * *',scheduledTime:stamp},{DB,LAB_COMPLETION_FOCUS:JSON.stringify(target)},{});
  assert.equal(sql,0);

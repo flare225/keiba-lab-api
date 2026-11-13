@@ -10,15 +10,16 @@ const requiresCorners=r=>!isObstacle(r)&&!(r.venue==='新潟'&&r.surface==='芝'
 const missingAverage="SUM(CASE WHEN "+obstacleSql+" AND d.finish_position IS NOT NULL AND (a.average_1f IS NULL OR a.average_1f<=0) THEN 1 ELSE 0 END)";
 const missingLast="SUM(CASE WHEN NOT "+obstacleSql+" AND d.finish_position IS NOT NULL AND (d.last3f IS NULL OR d.last3f<=0) THEN 1 ELSE 0 END)";
 const missingCorner="SUM(CASE WHEN d.finish_position IS NOT NULL AND (d.corner_positions IS NULL OR d.corner_positions='') THEN 1 ELSE 0 END)";
-export async function richResultStatus(db,date){
+export async function richResultStatus(db,date,target=null){
  targetInput({date,venue:'東京',raceNo:1});
- const statusSql=`SELECT r.race_key,r.race_date,r.venue,r.race_no,r.race_name,r.runner_count,r.surface,r.distance,COUNT(d.id) detail_rows,COUNT(DISTINCT d.horse_no) detail_distinct,${missingLast} last3f_missing,${missingCorner} corners_missing,${missingAverage} average1f_missing,MAX(d.source_url) source_url FROM jra_races r LEFT JOIN lab_race_result_details d ON d.race_key=r.race_key LEFT JOIN lab_obstacle_average1f a ON a.race_key=d.race_key AND a.horse_no=d.horse_no AND a.horse_name=d.horse_name WHERE r.race_date=? GROUP BY r.race_key ORDER BY r.venue,r.race_no`;
+ const t=target?targetInput(target):null,args=[date,...(t?[t.venue,t.raceNo]:[])];
+ const statusSql=`SELECT r.race_key,r.race_date,r.venue,r.race_no,r.race_name,r.runner_count,r.surface,r.distance,COUNT(d.id) detail_rows,COUNT(DISTINCT d.horse_no) detail_distinct,${missingLast} last3f_missing,${missingCorner} corners_missing,${missingAverage} average1f_missing,MAX(d.source_url) source_url FROM jra_races r LEFT JOIN lab_race_result_details d ON d.race_key=r.race_key LEFT JOIN lab_obstacle_average1f a ON a.race_key=d.race_key AND a.horse_no=d.horse_no AND a.horse_name=d.horse_name WHERE r.race_date=? ${t?'AND r.venue=? AND r.race_no=?':''} GROUP BY r.race_key ORDER BY r.venue,r.race_no`;
  let rows,average1fStorageReady=true;
- try{rows=(await db.prepare(statusSql).bind(date).all()).results||[]}catch(e){
+ try{rows=(await db.prepare(statusSql).bind(...args).all()).results||[]}catch(e){
   if(!/no such table.*lab_obstacle_average1f/.test(String(e)))throw e;
   average1fStorageReady=false;
   const fallback=statusSql.replace(missingAverage,"SUM(CASE WHEN "+obstacleSql+" AND d.finish_position IS NOT NULL THEN 1 ELSE 0 END)").replace(" LEFT JOIN lab_obstacle_average1f a ON a.race_key=d.race_key AND a.horse_no=d.horse_no AND a.horse_name=d.horse_name","");
-  rows=(await db.prepare(fallback).bind(date).all()).results||[];
+  rows=(await db.prepare(fallback).bind(...args).all()).results||[];
  }
  const details=rows.map(r=>{const complete=Number(r.runner_count)>0&&Number(r.detail_rows)===Number(r.runner_count)&&Number(r.detail_distinct)===Number(r.runner_count);return{...r,complete,last3fRequired:!isObstacle(r),last3fComplete:isObstacle(r)?null:complete&&Number(r.last3f_missing)===0,average1fRequired:isObstacle(r),richComplete:complete&&Number(r.last3f_missing)===0&&Number(r.average1f_missing)===0&&(!requiresCorners(r)||Number(r.corners_missing)===0)}});
  const expected=details.reduce((s,x)=>s+Number(x.runner_count),0),stored=details.reduce((s,x)=>s+Number(x.detail_rows),0);
@@ -33,7 +34,7 @@ export async function collectRichResult(db,input,deps={}){
  const race=await db.prepare('SELECT race_key,race_date,venue,race_no,race_name,runner_count,surface,distance FROM jra_races WHERE race_date=? AND venue=? AND race_no=?').bind(t.date,t.venue,t.raceNo).first();if(!race)throw Error('正式出馬表が未保存です。');
  const runners=(await db.prepare('SELECT horse_no,horse_name FROM jra_runners WHERE race_key=? ORDER BY horse_no').bind(race.race_key).all()).results||[];
  if(!runners.length||runners.length!==Number(race.runner_count)||runners.length>18)throw Error('正式出馬表の全馬を確認できません。');
- const status=await richResultStatus(db,t.date),existing=status.details.find(x=>x.race_key===race.race_key);
+ const status=await richResultStatus(db,t.date,t),existing=status.details.find(x=>x.race_key===race.race_key);
  const rec=await db.prepare('SELECT * FROM lab_rich_collection_receipts WHERE race_key=?').bind(race.race_key).first();
  if(existing?.richComplete)return{ok:true,status:'complete',externalRequests:0,raceKey:race.race_key,storedRows:runners.length,complete:true,last3fMissing:0,policy:RICH_POLICY};
  if(rec?.policy_version===RICH_POLICY.version&&Number(rec.next_check_at)>now())return{ok:true,status:'receipt-cooldown',externalRequests:0,nextCheckAt:new Date(rec.next_check_at).toISOString(),raceKey:race.race_key,policy:RICH_POLICY};

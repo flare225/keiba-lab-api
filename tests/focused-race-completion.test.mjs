@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
-import {focusedRaceTarget,focusScheduleState,collectFocusedRace,runFocusedScheduled,focusedStoredSources,prepareFocusedReviewedRoster} from '../src/focused-race-completion.js';
+import {focusedRaceTarget,focusScheduleState,preparationRaceTargets,collectFocusedRace,runFocusedScheduled,focusedStoredSources,prepareFocusedReviewedRoster} from '../src/focused-race-completion.js';
 import {scheduledAutomaticPrediction} from '../src/automatic-pre-race-prediction.js';
 import {scheduledSavedAutomaticSeal} from '../src/saved-automatic-seal-queue.js';
 import {recoverMissingPrograms} from '../src/program-recovery.js';
 import {saveExpectedRoster} from '../src/expected-roster-registry.js';
 import {runPipelineJob} from '../src/pipeline-runs-v3.40.0.js';
 const stamp=Date.parse('2026-11-12T01:00:00Z'),target={date:'2026-11-15',venue:'京都',raceNo:11,expiresAt:'2026-11-15T06:35:00.000Z'},sourceEvent={cron:'*/3 * * * *',scheduledTime:stamp};
+const saturday=[{date:'2026-11-14',venue:'東京',raceNo:11,expiresAt:'2026-11-14T06:00:00.000Z'},{date:'2026-11-14',venue:'京都',raceNo:11,expiresAt:'2026-11-14T06:00:00.000Z'}];
 function fixture(){const sql=new DatabaseSync(':memory:'),queries=[];const db={prepare(q){queries.push(q);const w=(a=[])=>({bind(...b){return w(b)},async first(){return sql.prepare(q).get(...a)||null},async all(){return{results:sql.prepare(q).all(...a)}},async run(){const r=sql.prepare(q).run(...a);return{meta:{changes:r.changes}}}});return w()}};return{db,sql,queries};}
 function gateDb({blocked=0,program=true,formal=false}={}){const queries=[];return{queries,prepare(q){queries.push(q);return{bind(...args){assert.ok(!q.includes('race_date=?')||args.join(':')==='2026-11-15:京都:11');return this},async first(){if(q.includes('lab_history_collection_budget'))return{next_batch_at:blocked,locked_until:0};if(q.includes('FROM jra_race_program'))return program?{start_time:'15:40'}:null;if(q.includes('FROM jra_races'))return formal?{race_key:'official-target'}:null;assert.fail(q)}}}};}
 test('explicit scope fails closed on malformed/expired settings; no broad scheduler work',async()=>{
@@ -116,4 +117,35 @@ test('focused collector does not treat duplicate runner numbers as a complete fo
  let historyCalls=0,cardCalls=0;
  const result=await collectFocusedRace(db,target,{}, {now:()=>stamp,collect:async()=>{historyCalls++;throw Error('incomplete card must not reach formal history')},cards:async()=>{cardCalls++;return{status:'awaiting-official-publication',externalRequests:0}},sources:async()=>[],expected:async()=>({status:'idle',externalRequests:0})});
  assert.equal(historyCalls,0);assert.equal(cardCalls,1);assert.equal(result.cardStatus,'awaiting-official-publication');sql.close();
+});
+
+test('authorized Saturday preparation validates exact main targets and expires without broad fallback',()=>{
+ assert.deepEqual(preparationRaceTargets(JSON.stringify(saturday),target,stamp),saturday);
+ assert.deepEqual(preparationRaceTargets('',target,stamp),[]);
+ assert.deepEqual(preparationRaceTargets(JSON.stringify(saturday),target,Date.parse(saturday[0].expiresAt)),[]);
+ for(const bad of ['{}','[]',JSON.stringify([saturday[0],saturday[0]]),JSON.stringify([...saturday,saturday[0]]),JSON.stringify([{...saturday[0],raceNo:10}]),JSON.stringify([target])])assert.throws(()=>preparationRaceTargets(bad,target,stamp));
+});
+test('natural source rotation alternates only the two authorized data targets and restores each target handoff',async()=>{
+ const {db,sql}=fixture(),seen=[],predictions=[],seals=[];let tick=stamp;
+ const env={DB:db,LAB_SAVED_AUTOMATIC_LOCK:'true',LAB_COMPLETION_PREPARATION_TARGETS:JSON.stringify(saturday)};
+ for(let i=0;i<12;i++){
+  await runFocusedScheduled({...sourceEvent,scheduledTime:tick},env,target,{now:()=>tick,predict:async(_,n,t)=>predictions.push(t),seal:async(_,o)=>seals.push(o.target),prepareRoster:async(_,t)=>{assert.ok(saturday.some(s=>s.venue===t.venue&&s.date===t.date));return{saved:0}},collect:async(_,t,c)=>{
+   const n=seen.filter(x=>x.venue===t.venue).length;seen.push(t);
+   assert.equal(c.previousCardSelection?.target,n?`${t.date}:${t.venue}:11`:undefined);
+   assert.equal(c.previousHistoryWorkStage,n?'acquisition':null);
+   assert.equal(c.previousOfficialHistoryCursor,n?7:0);
+   return{ok:true,status:'official-card-link-found',externalRequests:1,historyWorkStage:'acquisition',officialHistoryCursor:7,cardSelection:{lane:'card',target:`${t.date}:${t.venue}:11`,savedPredrawHistoryPending:true}};
+  }});tick+=360000;
+ }
+ assert.deepEqual(seen.map(t=>t.venue),['東京','京都','東京','京都']);
+ assert.equal(predictions.length,12);assert.ok(predictions.every(t=>t===target));assert.ok(seals.every(t=>t===target));
+ const rows=sql.prepare("SELECT job,result_json FROM lab_bounded_pipeline_runs").all();
+ assert.equal(rows.filter(r=>r.job==='history').length,4);assert.ok(rows.filter(r=>r.job!=='history').every(r=>JSON.parse(r.result_json).externalRequests===0));
+ const latest=JSON.parse(rows.filter(r=>r.job==='history').at(-1).result_json);assert.equal(latest.dataPreparationOnly,true);assert.equal(latest.primaryFocusRaceKey,'2026-11-15:京都:11');assert.equal(Object.keys(latest.cardSelection.preparationContexts).length,2);sql.close();
+});
+test('expired preparation returns to Eliza and its outcome lane never dispatches Saturday work',async()=>{
+ const calls=[],env={DB:{},LAB_COMPLETION_PREPARATION_TARGETS:JSON.stringify(saturday)};
+ const base={prepareRoster:async()=>({saved:0}),predict:async()=>{},seal:async()=>{},coordinate:async(e,env,o)=>o.jobs.history({}),collect:async(_,t)=>{calls.push(t);return{status:'idle',externalRequests:0}}};
+ await runFocusedScheduled(sourceEvent,env,target,{...base,now:()=>Date.parse('2026-11-14T06:00:00Z')});assert.deepEqual(calls,[target]);
+ const result=await runFocusedScheduled(sourceEvent,env,target,{now:()=>Date.parse('2026-11-15T07:15:00Z'),coordinate:async(e,env,o)=>o.jobs.results({}),outcomes:async(_,t)=>{assert.equal(t,target);return{status:'focus-awaiting-result-window',externalRequests:0}},collect:()=>assert.fail('Saturday after expiry'),predict:()=>assert.fail('no rescoring after cutoff'),seal:()=>assert.fail('no reseal')});assert.equal(result.externalRequests,0);
 });

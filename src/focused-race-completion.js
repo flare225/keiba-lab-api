@@ -1,6 +1,6 @@
 import {EXPECTED_ROSTER_SEEDS,prepareReviewedRoster} from './expected-roster-seeds.js';
 import {targetInput} from './race-history-assessment-v3.31.0.js';
-import {jstDay,collectHistoryBatch} from './history-collection-v3.37.0.js';
+import {jstDay,collectHistoryBatch,collectionStatus} from './history-collection-v3.37.0.js';
 import {collectMissingOfficialCard} from './missing-official-cards.js';
 import {recoverMissingPrograms} from './program-recovery.js';
 import {storedExpectedSources} from './expected-roster-registry.js';
@@ -120,10 +120,15 @@ export async function runFocusedScheduled(event,env,target,deps={}){
  const stageErrors=[];
  const activeTargets=[target,...mains].filter(t=>focusScheduleState(t,event,stamp)==='active');
  const predictionTarget=activeTargets[Math.floor(stamp/360000)%activeTargets.length];
- for(const [stage,work] of [
+ let predictionReady=true;
+ if(mains.some(t=>key(t)===key(predictionTarget)))try{
+  const coverage=await(deps.readiness||collectionStatus)(db,{...predictionTarget,historyLimit:3,verifyStoredCoverage:true},stamp);
+  predictionReady=coverage.ok===true&&coverage.remainingHorses===0&&coverage.unverifiedStoredHorses===0;
+ }catch(e){if(e?.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;predictionReady=false;stageErrors.push({stage:'main-history-readiness',error:String(e.message||e)});}
+ for(const [stage,work] of predictionReady?[
   ['prediction',()=>(deps.predict||scheduledAutomaticPrediction)(db,stamp,predictionTarget)],
   ['lock',()=>(deps.seal||scheduledSavedAutomaticSeal)(db,{enabled:env.LAB_SAVED_AUTOMATIC_LOCK==='true',now,target:predictionTarget})]
- ])try{await work();}catch(e){if(e?.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;stageErrors.push({stage,error:String(e.message||e),saveMayHaveSucceeded:!!e.saveMayHaveSucceeded});}
+ ]:[])try{await work();}catch(e){if(e?.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;stageErrors.push({stage,error:String(e.message||e),saveMayHaveSucceeded:!!e.saveMayHaveSucceeded});}
  const deferred=async()=>({ok:true,status:'focus-background-deferred',focusRaceKey:key(target),externalRequests:0});
  // Retain the existing 3-lane rotation: do not turn deferred archive/result
  // slots into extra source requests while reserving DB work for this target.

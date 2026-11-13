@@ -460,3 +460,31 @@ test('post-publication predraw responses keep a full refresh interval and failed
  assert.equal(r.status,'deferred');assert.equal(calls,1);assert.equal(rows(sql)[0].status,'http-or-source-failed');assert.equal(rows(sql)[0].next_at,now+3600000);
  now+=61000;assert.equal((await runSharedPageStep(db,input([race]),{now:()=>now,fetcher:()=>assert.fail('shared 429 pause')})).status,'cooldown');assert.equal(calls,1);sql.close();
 });
+
+test('witnessed numbered Eliza publication releases only the older successful predraw wait through the natural shared step',async()=>{
+ const {db,sql}=await fixtureDatabase();
+ const observed=Date.parse('2026-11-12T15:24:54.110+09:00');
+ const witnessed=Date.parse('2026-11-13T11:25:06+09:00');
+ const url=canonicalPublishedPage('https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202605041120261115%2F4C');
+ const race={date:'2026-11-15',venue:'京都',raceNo:11,startAt:'2026-11-15T15:40:00+09:00',enqueuedAt:new Date(observed).toISOString(),rootUrl:url,cardUrl:url};
+ const original={scope:race.date,races:[race]};
+ sql.prepare('INSERT INTO lab_shared_page_receipts_v1(scope_key,page_url,status,next_at,body_sha,observed_at,parser_version,card_key) VALUES(?,?,?,?,?,?,?,?)').run(race.date,url,'predraw',observed+86400000,'a'.repeat(64),observed,SHARED_PAGE_POLICY.parserVersion,'2026-11-15:京都:11');
+ let now=witnessed-1,calls=0;
+ const deps={now:()=>now,fetcher:async()=>{calls++;return new Response(drawnHtml(race),{headers:{'content-type':'text/html;charset=utf-8'}})}};
+ assert.equal((await runSharedPageStep(db,original,deps)).externalRequests,0);
+ now=witnessed;sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=?').run(now+60000);
+ assert.equal((await runSharedPageStep(db,original,deps)).status,'cooldown');assert.equal(calls,0);
+ sql.prepare('UPDATE lab_history_collection_budget SET next_batch_at=0,locked_until=?').run(now+60000);
+ assert.equal((await runSharedPageStep(db,original,deps)).status,'cooldown');assert.equal(calls,0);
+ sql.prepare('UPDATE lab_history_collection_budget SET locked_until=0').run();
+ const before=sql.prepare('SELECT * FROM lab_shared_page_receipts_v1').get();
+ sql.prepare("UPDATE lab_shared_page_receipts_v1 SET status='http-or-source-failed'").run();
+ assert.equal((await runSharedPageStep(db,original,deps)).externalRequests,0);assert.equal(calls,0);
+ sql.prepare("UPDATE lab_shared_page_receipts_v1 SET status='predraw'").run();
+ const saved=await runSharedPageStep(db,original,deps);assert.equal(saved.status,'official-card-saved');assert.equal(saved.externalRequests,1);assert.equal(calls,1);
+ assert.equal(sql.prepare('SELECT runner_count FROM jra_races WHERE race_key=?').get('2026-11-15:京都:11').runner_count,2);
+ now+=61000;assert.equal((await runSharedPageStep(db,original,deps)).status,'complete');assert.equal(calls,1);
+ const planned={...race,start:Date.parse(race.startAt),enqueued:observed};
+ for(const override of [{observed_at:witnessed+1},{card_key:'2026-11-15:京都:10'},{body_sha:null}])assert.equal(planSharedPages([planned],[{...before,...override}],witnessed).jobs.length,0);
+ sql.close();
+});

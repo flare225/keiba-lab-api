@@ -7,6 +7,7 @@
     "LAB_COMPLETION_FOCUS": "{\"date\":\"2026-11-15\",\"venue\":\"京都\",\"raceNo\":11,\"expiresAt\":\"2026-11-15T15:35:00+09:00\"}",
     "LAB_COMPLETION_PREPARATION_TARGETS": "[{\"date\":\"2026-11-14\",\"venue\":\"東京\",\"raceNo\":11,\"expiresAt\":\"2026-11-14T15:00:00+09:00\"},{\"date\":\"2026-11-14\",\"venue\":\"京都\",\"raceNo\":11,\"expiresAt\":\"2026-11-14T15:00:00+09:00\"}]",
     "LAB_SAVED_AUTOMATIC_LOCK": "true",
+    "LAB_COMPLETION_MAIN_TARGETS": "[{\"date\":\"2026-11-14\",\"venue\":\"東京\",\"raceNo\":11,\"expiresAt\":\"2026-11-14T15:00:00+09:00\"},{\"date\":\"2026-11-14\",\"venue\":\"京都\",\"raceNo\":11,\"expiresAt\":\"2026-11-14T15:00:00+09:00\"}]",
     "LAB_CARD_COMPLETION_PRIORITIES": "[\"2026-10-25:京都:3\",\"2026-10-25:京都:8\",\"2026-10-25:京都:9\",\"2026-10-25:京都:10\"]"
   },
   "d1_databases": [

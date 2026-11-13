@@ -328,7 +328,7 @@ export default {
  async scheduled(event,env,ctx){
   if(!shouldRunScheduled(event))return;
   const focus=focusedRaceTarget(env.LAB_COMPLETION_FOCUS);
-  if(focus&&focusScheduleState(focus,event,Date.now())!=='active')return;
+  if(focus&&!['active','outcomes'].includes(focusScheduleState(focus,event,Date.now())))return;
   return runWithScheduledReadBudget(env.DB,async db=>{
   const budgetEnv={...env,DB:db};
   if(focus)return runFocusedScheduled(event,budgetEnv,focus);

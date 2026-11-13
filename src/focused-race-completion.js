@@ -12,6 +12,7 @@ import {runSourceCoordinator} from './source-coordinator-v3.40.0.js';
 import {scheduledAutomaticPrediction} from './automatic-pre-race-prediction.js';
 import {scheduledSavedAutomaticSeal} from './saved-automatic-seal-queue.js';
 import {scheduledProvisionalPrediction} from './provisional-prediction-queue.js';
+import {collectFocusedOutcomes} from './focused-race-outcomes.js';
 
 // Explicit, temporary one-race scope. Invalid/expired scope never falls back to
 // the broad queue. Source slots, persisted retry clocks and budget remain owned
@@ -24,7 +25,12 @@ export function focusedRaceTarget(value){
 }
 export function focusScheduleState(target,event,stamp){
  const today=jstDay(stamp),until=jstDay(stamp+7*86400000);
- if(target.date<today||target.date>until||stamp>=Date.parse(target.expiresAt))return 'focus-expired-or-outside-window';
+ const expiry=Date.parse(target.expiresAt);
+ // Pre-race work still stops at expiry. Retain only the same race's outcome
+ // lane for a bounded 24h reconciliation window; never fall back to all races.
+ if(target.date>until||stamp>=expiry+86400000)return 'focus-expired-or-outside-window';
+ if(stamp>=expiry)return event.cron==='*/3 * * * *'?'outcomes':'focus-background-deferred';
+ if(target.date<today)return 'focus-expired-or-outside-window';
  return ['*/3 * * * *','0 * * * *'].includes(event.cron)?'active':'focus-background-deferred';
 }
 const key=t=>`${t.date}:${t.venue}:${t.raceNo}`;
@@ -82,8 +88,12 @@ export async function collectFocusedRace(db,target,context={},deps={}){
 }
 export async function runFocusedScheduled(event,env,target,deps={}){
  const now=deps.now||Date.now,stamp=now(),state=focusScheduleState(target,event,stamp);
- if(state!=='active')return{ok:true,status:state,focusRaceKey:key(target),externalRequests:0};
+ if(!['active','outcomes'].includes(state))return{ok:true,status:state,focusRaceKey:key(target),externalRequests:0};
  const db=env.DB;
+ if(state==='outcomes'){
+  const deferred=async()=>({ok:true,status:'focus-background-deferred',focusRaceKey:key(target),externalRequests:0});
+  return(deps.coordinate||runSourceCoordinator)(event,env,{now,jobs:{archive:deferred,history:deferred,results:()=>(deps.outcomes||collectFocusedOutcomes)(db,target,{now})}});
+ }
  if(event.cron==='0 * * * *')return(deps.provisional||scheduledProvisionalPrediction)(db,stamp,{prepareRoster:()=>prepareFocusedReviewedRoster(db,target,stamp),sources:()=>focusedStoredSources(db,target,stamp)});
  // Preserve the ordinary scheduler's failure isolation. A local forecast or
  // seal validation error must not prevent the target's missing-data work;

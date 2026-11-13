@@ -65,8 +65,18 @@ function predrawNextAttempt(stamp,date){
 }
 function pageNextAttempt(row,race,url){
  if(row?.status!=='predraw'||!row.body_sha||row.card_key!==key(race)||key(metaFromRacecardUrl(url)||{})!==key(race)||!Number.isFinite(Number(row.observed_at))||Number(row.observed_at)<=0)return Number(row?.next_at)||0;
- return Math.min(Number(row.next_at)||0,predrawNextAttempt(Number(row.observed_at),race.date));
+ const ordinary=Math.min(Number(row.next_at)||0,predrawNextAttempt(Number(row.observed_at),race.date));
+ // A witnessed change of this exact published source supersedes an older
+ // successful unnumbered observation, not a failed request or shared stop.
+ // The next natural slot still fetches and strictly validates the full card;
+ // this evidence contains no runner data and never writes production receipts.
+ const published=NUMBERED_CARD_PUBLICATIONS.find(p=>p.raceKey===key(race)&&p.url===canonicalPublishedPage(url));
+ return published&&Number(row.observed_at)<published.observedAt?Math.min(ordinary,Math.max(Number(row.observed_at)+SHARED_PAGE_POLICY.refreshMs,published.observedAt)):ordinary;
 }
+
+// Independently observed on JRA, 2026-11-13 11:25 JST: all 18 horse numbers.
+// Browser observation is a refresh reason, never formal-save/LOCK evidence.
+const NUMBERED_CARD_PUBLICATIONS=Object.freeze([{raceKey:'2026-11-15:京都:11',url:'https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0108202605041120261115%2F4C',observedAt:Date.parse('2026-11-13T11:25:06+09:00')}]);
 
 export function planSharedPages(races,rows,stamp,parserVersion=SHARED_PAGE_POLICY.parserVersion,{allowStartedCards=false,completionPriorityRaceKeys=[]}={}){
  const completionOrder=new Map(completionPriorityRaceKeys.map((k,i)=>[k,i]));

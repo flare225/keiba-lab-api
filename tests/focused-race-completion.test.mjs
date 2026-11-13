@@ -131,6 +131,7 @@ test('natural source rotation alternates only the two authorized data targets an
  for(let i=0;i<12;i++){
   await runFocusedScheduled({...sourceEvent,scheduledTime:tick},env,target,{now:()=>tick,predict:async(_,n,t)=>predictions.push(t),seal:async(_,o)=>seals.push(o.target),prepareRoster:async(_,t)=>{assert.ok(saturday.some(s=>s.venue===t.venue&&s.date===t.date));return{saved:0}},collect:async(_,t,c)=>{
    const n=seen.filter(x=>x.venue===t.venue).length;seen.push(t);
+   assert.equal(c.formalCardFirst,true);
    assert.equal(c.previousCardSelection?.target,n?`${t.date}:${t.venue}:11`:undefined);
    assert.equal(c.previousHistoryWorkStage,n?'acquisition':null);
    assert.equal(c.previousOfficialHistoryCursor,n?7:0);
@@ -148,4 +149,13 @@ test('expired preparation returns to Eliza and its outcome lane never dispatches
  const base={prepareRoster:async()=>({saved:0}),predict:async()=>{},seal:async()=>{},coordinate:async(e,env,o)=>o.jobs.history({}),collect:async(_,t)=>{calls.push(t);return{status:'idle',externalRequests:0}}};
  await runFocusedScheduled(sourceEvent,env,target,{...base,now:()=>Date.parse('2026-11-14T06:00:00Z')});assert.deepEqual(calls,[target]);
  const result=await runFocusedScheduled(sourceEvent,env,target,{now:()=>Date.parse('2026-11-15T07:15:00Z'),coordinate:async(e,env,o)=>o.jobs.results({}),outcomes:async(_,t)=>{assert.equal(t,target);return{status:'focus-awaiting-result-window',externalRequests:0}},collect:()=>assert.fail('Saturday after expiry'),predict:()=>assert.fail('no rescoring after cutoff'),seal:()=>assert.fail('no reseal')});assert.equal(result.externalRequests,0);
+});
+
+test('published Saturday card is selected before available profile work, while a not-due card falls back safely',async()=>{
+ const calls=[],deps={now:()=>stamp,sources:async()=>[{}],expected:async()=>{calls.push('history');return{status:'collected',attempted:1,externalRequests:1}},cards:async()=>{calls.push('card');return{status:'official-card-saved',attempted:true,externalRequests:1}}};
+ const oldOrder=await collectFocusedRace(gateDb(),target,{},deps);assert.deepEqual(calls,['history']);assert.equal(oldOrder.historyWorkStage,'history');
+ calls.length=0;const r=await collectFocusedRace(gateDb(),target,{formalCardFirst:true},deps);assert.deepEqual(calls,['card']);assert.equal(r.historyWorkStage,'acquisition');assert.equal(r.externalRequests,1);
+ calls.length=0;deps.cards=async()=>{calls.push('card');return{status:'card-discovery-not-due',externalRequests:0}};
+ const fallback=await collectFocusedRace(gateDb(),target,{formalCardFirst:true},deps);assert.deepEqual(calls,['card','history']);assert.equal(fallback.externalRequests,1);
+ calls.length=0;const blocked=await collectFocusedRace(gateDb({blocked:stamp+3600000}),target,{formalCardFirst:true},deps);assert.equal(blocked.externalRequests,0);assert.deepEqual(calls,[]);
 });

@@ -85,12 +85,12 @@ export async function collectFocusedRace(db,target,context={},deps={}){
   waitingHistory=await(deps.expected||collectUpcomingExpectedHistory)(db,{now,sources,verifyStoredCoverage:true,previousExpectedHistoryWorkKind:context.previousExpectedHistoryWorkKind});
   return waitingHistory;
  };
- if(context.previousHistoryWorkStage!=='history'){
+ if(context.previousHistoryWorkStage!=='history'&&!context.formalCardFirst){
   const r=await history();if(worked(r))return{...r,historyWorkStage:'history'};
  }
  const card=await(deps.cards||collectMissingOfficialCard)(db,{...target},{now,previousCardSelection:context.previousCardSelection,...(deps.shared?{discover:discoverSharedSelectedCard}:{})});
  if(worked(card)||card?.reusedBody)return{...card,historyWorkStage:'acquisition'};
- if(context.previousHistoryWorkStage==='history'){
+ if(context.previousHistoryWorkStage==='history'||context.formalCardFirst){
   const r=await history();if(worked(r))return{...r,historyWorkStage:'history'};
  }
  // No supplementary netkeiba roster or unrelated calendar fallback.
@@ -128,7 +128,7 @@ export async function runFocusedScheduled(event,env,target,deps={}){
   const same=context.previousCardSelection?.target===workKey;
   const scoped=same?context:{...context,previousCardSelection:null,previousHistoryWorkStage:null,previousExpectedHistoryWorkKind:null,previousOfficialHistoryCursor:0};
   const rosterPreparation=await(deps.prepareRoster||prepareFocusedReviewedRoster)(db,workTarget,stamp);
-  const focusedContext=rosterPreparation.saved>0?{...scoped,previousHistoryWorkStage:'acquisition'}:scoped;
+  const focusedContext={...(rosterPreparation.saved>0?{...scoped,previousHistoryWorkStage:'acquisition'}:scoped),...(preparation.length?{formalCardFirst:true}:{})};
   const result=await(deps.collect||collectFocusedRace)(db,workTarget,focusedContext,{now,shared:env.LAB_SHARED_PAGE_ACQUISITION==='true'});
   if(result.cardSelection?.target&&result.cardSelection.target!==workKey)throw Error('Focused collector returned another race selection');
   const selection=result.cardSelection||scoped.previousCardSelection||{lane:'discovery',reason:'focused-race-completion'};

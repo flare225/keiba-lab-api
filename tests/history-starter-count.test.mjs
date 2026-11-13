@@ -53,3 +53,22 @@ test('did-not-finish remains a starter and an unexplained profile count stays co
   assert.equal((await historyForExpected(db,source,'コルサロ')).available,false);
  }finally{sql.close()}
 });
+test('the production inventory adapter passes reconciliation reads through and uses the reconciled batch',async()=>{
+ const {rosterHistoryInventory}=await import('../src/roster-history-inventory.js');
+ const {sql,db}=await fixture();try{
+  sql.exec(`CREATE TABLE lab_expected_roster_registry(snapshot_id TEXT,race_key TEXT,record_json TEXT,stored_at TEXT);
+  CREATE TABLE jra_race_program(race_date TEXT,venue TEXT,race_no INTEGER,surface TEXT,distance INTEGER);
+  CREATE TABLE lab_expected_history_snapshots(horse_name TEXT,snapshot_id TEXT,race_date TEXT,payload_json TEXT);
+  CREATE TABLE lab_provisional_predictions_v1(race_key TEXT,snapshot_sha256 TEXT,snapshot_json TEXT,saved_at TEXT);`);
+  const record=JSON.stringify({date:'2026-11-14',venue:'京都',raceNo:11,runners:[{horseName:'コルサロ',age:2}]});
+  sql.prepare('INSERT INTO lab_expected_roster_registry VALUES(?,?,?,?)').run(await sha256(record),'2026-11-14:京都:11',record,'2026-11-13T08:00:00Z');
+  sql.prepare('INSERT INTO jra_race_program VALUES(?,?,?,?,?)').run('2026-11-14','京都',11,'芝',1600);
+  const report=await rosterHistoryInventory(db,{from:'2026-11-14',to:'2026-11-14',raceKey:'2026-11-14:京都:11',asOf:'2026-11-13T08:30:00Z'},Date.parse('2026-11-13T08:31:00Z'));
+  assert.equal(report.summary.conflictAppearances,0);
+  assert.equal(report.races[0].horses[0].usableRecent,1);
+  const input=report.currentShadowEvaluations[0].horses[0].primaryInput[0];
+  assert.equal(input.fieldSize,8);assert.equal(input.sourceEvidence[0].values.fieldSize,9);
+  assert.ok(input.fieldSizeBasis.withdrawals[0].proofSha256);
+  assert.equal(report.dbWrites,0);assert.equal(report.externalSourceRequests,0);
+ }finally{sql.close()}
+});

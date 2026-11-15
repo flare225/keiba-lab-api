@@ -5,7 +5,8 @@ on:
     paths: [.github/workflows/verify-elizabeth-20261115.yml]
   workflow_dispatch:
   schedule:
-    - cron: '35 7-10 15 11 *'
+    - cron: '35 7,10,13 15 11 *'
+    - cron: '35 0,3,6 16 11 *'
 permissions:
   contents: read
   actions: read
@@ -28,7 +29,7 @@ jobs:
           import {createHash} from 'node:crypto';
           const now=Date.now();
           const earliest=Date.parse('2026-11-15T07:15:00Z'); // 16:15 JST: official result + 35min
-          const latest=Date.parse('2026-11-15T15:00:00Z');   // end of Nov 15 JST
+          const latest=Date.parse('2026-11-16T06:35:00Z');   // 24h after Sunday's 15:35 focus expiry
           if(process.env.EVENT==='push'||now<earliest||now>=latest){
             console.log(JSON.stringify({phase:'SKIP',reason:'push-only dry-run or outside safe race-result window',event:process.env.EVENT,now:new Date(now).toISOString(),workerGET:0}));
             process.exit(0);
@@ -50,8 +51,14 @@ jobs:
           const sha=record?createHash('sha256').update(JSON.stringify(record),'utf8').digest('hex'):null;
           const predictionSHA='9a2927a4fa61ef5c4b27e3f534eb9d148952701c96f2a7945c152e32fa4ec2e9';
           const source=record?.resultSourceUrl||'';
-          const validSource=/^https:\/\/www\.jra\.go\.jp\/JRADB\/accessS\.html\?CNAME=/.test(source);
-          const validRows=rows.length===18&&
+          let validSource=false;
+          try {
+            const u=new URL(source);
+            const m=(u.searchParams.get('CNAME')||'').match(/^pw01sde(?:01|10)(\\d{2})(\\d{4})(\\d{2})(\\d{2})(\\d{2})(\\d{8})\\/[a-z0-9]+$/i);
+            validSource=u.protocol==='https:'&&u.hostname==='www.jra.go.jp'&&u.pathname==='/JRADB/accessS.html'&&!!m&&m[1]==='08'&&m[5]==='11'&&m[6]==='20261115';
+          } catch {}
+          const finishers=rows.filter(x=>x.finishStatus==='finished');
+          const validRows=rows.length===18&&finishers.some(x=>x.finishPosition===1)&&new Set(finishers.map(x=>x.finishPosition)).size===finishers.length&&
             new Set(rows.map(x=>x.horseNo)).size===18&&new Set(rows.map(x=>x.horseName)).size===18&&
             rows.every(x=>typeof x.horseName==='string'&&x.horseName.length>0&&(
               x.finishStatus==='finished'?Number.isInteger(x.finishPosition)&&x.finishPosition>0&&x.finishPosition<=18:

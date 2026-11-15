@@ -16,7 +16,7 @@ jobs:
           WORKER_URL: https://keiba-lab-api.sekai-no-bancyou.workers.dev
         run: |
           node <<'NODE'
-          const { createHash } = require('node:crypto');
+          const { createHash } = await import('node:crypto');
           const targets = [
             {venue:'東京', name:'武蔵野S', count:16, sha:'34219fa3937cfcf23992ad42935ff960123de6db96c64041d4496fe3db77f013'},
             {venue:'京都', name:'デイリー杯2歳S', count:13, sha:'de669dff76b6874c1a87ee4537da6c8d71828008ca23f139ada48aa2687e9f32'}

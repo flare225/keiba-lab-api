@@ -1,0 +1,57 @@
+name: Audit 2026-11-14 Saturday main results and learning candidate SHA (read-only)
+on:
+  push:
+    branches: [audit-weekend-results-20261115]
+    paths: [.github/workflows/audit-weekend-results-20261115.yml]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Verify both production candidate records by independent SHA (GET only)
+        shell: bash
+        env:
+          WORKER_URL: https://keiba-lab-api.sekai-no-bancyou.workers.dev
+        run: |
+          node <<'NODE'
+          const { createHash } = require('node:crypto');
+          const targets = [
+            {venue:'東京', name:'武蔵野S', count:16, sha:'34219fa3937cfcf23992ad42935ff960123de6db96c64041d4496fe3db77f013'},
+            {venue:'京都', name:'デイリー杯2歳S', count:13, sha:'de669dff76b6874c1a87ee4537da6c8d71828008ca23f139ada48aa2687e9f32'}
+          ];
+          const audit = async t => {
+            const query = new URLSearchParams({date:'2026-11-14',venue:t.venue,race_no:'11'});
+            const url = process.env.WORKER_URL+'/v1/lab/automatic-learning-candidate?'+query.toString();
+            let response, data;
+            try {
+              response = await fetch(url, {signal:AbortSignal.timeout(20000),headers:{'accept':'application/json'}});
+              data = await response.json();
+            } catch (e) {
+              console.log(JSON.stringify({race:t.name,error:'GET/parse failed: '+String(e)}));
+              return false;
+            }
+            const record = data?.record;
+            const rows = record?.rows || [];
+            const independentSha = record ? createHash('sha256').update(JSON.stringify(record),'utf8').digest('hex') : null;
+            const noSet = new Set(rows.map(r=>r.horseNo));
+            const nameSet = new Set(rows.map(r=>r.horseName));
+            const validFinishes = rows.every(r=>r.finishStatus==='finished' ? Number.isInteger(r.finishPosition)&&r.finishPosition>0 : ['scratched','excluded','did-not-finish','disqualified'].includes(r.finishStatus) && r.finishPosition==null);
+            const passed = response.ok && data?.ok === true && data?.available === true && data?.integrityVerified === true && rows.length===t.count && noSet.size===t.count && nameSet.size===t.count && validFinishes && record.predictionSha256===t.sha && independentSha===data.labelSha256;
+            console.log(JSON.stringify({
+              race:t.name, http:response.status, ok:data?.ok, available:data?.available, error:data?.error,
+              integrityVerified:data?.integrityVerified, storedRows:rows.length, expectedRows:t.count,
+              uniqueHorseNos:noSet.size, originalPredictionShaMatches:record?.predictionSha256===t.sha,
+              storedLabelSha:data?.labelSha256??null, independentlyComputedLabelSha:independentSha,
+              independentLabelShaMatches:independentSha!=null&&independentSha===data?.labelSha256,
+              resultSourceUrl:record?.resultSourceUrl??null, validFinishes, passed,
+              ...(passed?{runners:rows.map(r=>({no:r.horseNo,name:r.horseName,finish:r.finishPosition,status:r.finishStatus}))}:{})
+            }));
+            return passed;
+          };
+          const results=[];
+          for (const t of targets) results.push(await audit(t));
+          if (results.every(Boolean)) console.log('SATURDAY_RESULT_AND_CANDIDATE_SHA_CONFIRMED_FOR_BOTH');
+          else { console.error('SATURDAY_VERIFICATION_INCOMPLETE_OR_UNAVAILABLE');process.exitCode=1;}
+          NODE

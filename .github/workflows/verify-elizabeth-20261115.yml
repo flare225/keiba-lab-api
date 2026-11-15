@@ -54,7 +54,7 @@ jobs:
           let validSource=false;
           try {
             const u=new URL(source);
-            const m=(u.searchParams.get('CNAME')||'').match(/^pw01sde(?:01|10)(\\d{2})(\\d{4})(\\d{2})(\\d{2})(\\d{2})(\\d{8})\\/[a-z0-9]+$/i);
+            const m=(u.searchParams.get('CNAME')||'').match(/^pw01sde(?:01|10)(\d{2})(\d{4})(\d{2})(\d{2})(\d{2})(\d{8})\/[a-z0-9]+$/i);
             validSource=u.protocol==='https:'&&u.hostname==='www.jra.go.jp'&&u.pathname==='/JRADB/accessS.html'&&!!m&&m[1]==='08'&&m[5]==='11'&&m[6]==='20261115';
           } catch {}
           const finishers=rows.filter(x=>x.finishStatus==='finished');

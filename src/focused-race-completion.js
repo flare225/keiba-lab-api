@@ -146,23 +146,40 @@ export async function runFocusedScheduled(event,env,target,deps={}){
  const history=async context=>{
   const historyTargets=preparation.length&&mains.length?[...preparation,...(focusScheduleState(target,event,stamp)==='active'?[target]:[])]:preparation;
   const prior=context.previousCardSelection,previousIndex=historyTargets.findIndex(t=>key(t)===prior?.target);
-  const workTarget=historyTargets.length?historyTargets[(previousIndex+1)%historyTargets.length]:target;
-  const workKey=key(workTarget),checkpoints=preparation.length?(prior?.preparationContexts||{}):{};
-  const checkpoint=checkpoints[workKey];
-  if(checkpoint)context={...context,previousCardSelection:checkpoint.selection,previousHistoryWorkStage:checkpoint.historyWorkStage,previousExpectedHistoryWorkKind:checkpoint.expectedHistoryWorkKind,previousOfficialHistoryCursor:checkpoint.officialHistoryCursor};
-  // The coordinator intentionally carries old metadata forward. A new focus
-  // must not inherit another race's selection or one-shot history handoff.
-  const same=context.previousCardSelection?.target===workKey;
-  const scoped=same?context:{...context,previousCardSelection:null,previousHistoryWorkStage:null,previousExpectedHistoryWorkKind:null,previousOfficialHistoryCursor:0};
-  const rosterPreparation=await(deps.prepareRoster||prepareFocusedReviewedRoster)(db,workTarget,stamp);
-  const focusedContext={...(rosterPreparation.saved>0?{...scoped,previousHistoryWorkStage:'acquisition'}:scoped),...(preparation.length?{formalCardFirst:true}:{})};
-  const result=await(deps.collect||collectFocusedRace)(db,workTarget,focusedContext,{now,shared:env.LAB_SHARED_PAGE_ACQUISITION==='true'});
-  if(result.cardSelection?.target&&result.cardSelection.target!==workKey)throw Error('Focused collector returned another race selection');
-  const selection=result.cardSelection||scoped.previousCardSelection||{lane:'discovery',reason:'focused-race-completion'};
-  const historyWorkStage=result.historyWorkStage||(!result.historyWorkStage&&rosterPreparation.saved>0?'acquisition':scoped.previousHistoryWorkStage);
-  const selected={...selection,target:workKey};delete selected.preparationContexts;
-  const nextCheckpoints=preparation.length?Object.fromEntries(historyTargets.map(t=>key(t)).filter(k=>k===workKey||checkpoints[k]).map(k=>[k,k===workKey?{selection:selected,historyWorkStage,expectedHistoryWorkKind:result.expectedHistoryWorkKind||scoped.previousExpectedHistoryWorkKind,officialHistoryCursor:result.officialHistoryCursor??scoped.previousOfficialHistoryCursor}:checkpoints[k]])):null;
-  return{...result,...(historyWorkStage?{historyWorkStage}:{}),rosterPreparation,focusRaceKey:workKey,...(preparation.length?{primaryFocusRaceKey:key(target),dataPreparationOnly:workKey!==key(target)&&!mains.some(t=>key(t)===workKey)}:{}),cardSelection:{...selected,...(nextCheckpoints?{preparationContexts:nextCheckpoints}:{})},...(stageErrors.length?{stageErrors}:{})};
+  const checkpoints=preparation.length?(prior?.preparationContexts||{}):{};
+  const runTarget=async workTarget=>{
+   let targetContext=context;
+   const workKey=key(workTarget);
+   const checkpoint=checkpoints[workKey];
+   if(checkpoint)targetContext={...targetContext,previousCardSelection:checkpoint.selection,previousHistoryWorkStage:checkpoint.historyWorkStage,previousExpectedHistoryWorkKind:checkpoint.expectedHistoryWorkKind,previousOfficialHistoryCursor:checkpoint.officialHistoryCursor};
+   // The coordinator intentionally carries old metadata forward. A new focus
+   // must not inherit another race's selection or one-shot history handoff.
+   const same=targetContext.previousCardSelection?.target===workKey;
+   const scoped=same?targetContext:{...targetContext,previousCardSelection:null,previousHistoryWorkStage:null,previousExpectedHistoryWorkKind:null,previousOfficialHistoryCursor:0};
+   const rosterPreparation=await(deps.prepareRoster||prepareFocusedReviewedRoster)(db,workTarget,stamp);
+   const focusedContext={...(rosterPreparation.saved>0?{...scoped,previousHistoryWorkStage:'acquisition'}:scoped),...(preparation.length?{formalCardFirst:true}:{})};
+   const result=await(deps.collect||collectFocusedRace)(db,workTarget,focusedContext,{now,shared:env.LAB_SHARED_PAGE_ACQUISITION==='true'});
+   if(result.cardSelection?.target&&result.cardSelection.target!==workKey)throw Error('Focused collector returned another race selection');
+   const selection=result.cardSelection||scoped.previousCardSelection||{lane:'discovery',reason:'focused-race-completion'};
+   const historyWorkStage=result.historyWorkStage||(!result.historyWorkStage&&rosterPreparation.saved>0?'acquisition':scoped.previousHistoryWorkStage);
+   const selected={...selection,target:workKey};delete selected.preparationContexts;
+   const nextCheckpoints=preparation.length?Object.fromEntries(historyTargets.map(t=>key(t)).filter(k=>k===workKey||checkpoints[k]).map(k=>[k,k===workKey?{selection:selected,historyWorkStage,expectedHistoryWorkKind:result.expectedHistoryWorkKind||scoped.previousExpectedHistoryWorkKind,officialHistoryCursor:result.officialHistoryCursor??scoped.previousOfficialHistoryCursor}:checkpoints[k]])):null;
+   return{...result,...(historyWorkStage?{historyWorkStage}:{}),rosterPreparation,focusRaceKey:workKey,...(preparation.length?{primaryFocusRaceKey:key(target),dataPreparationOnly:workKey!==key(target)&&!mains.some(t=>key(t)===workKey)}:{}),cardSelection:{...selected,...(nextCheckpoints?{preparationContexts:nextCheckpoints}:{})},...(stageErrors.length?{stageErrors}:{})};
+  };
+  // Only the no-op program deferral can pass the slot on. Any actual
+  // work, shared wait or uncertain result ends this coordinator invocation.
+  const candidates=historyTargets.length?historyTargets:[target];
+  const skipped=[];
+  let firstDeferred;
+  for(let i=0;i<candidates.length;i++){
+   const result=await runTarget(candidates[(previousIndex+1+i)%candidates.length]);
+   if(result.ok!==true||result.status!=='focused-program-not-due'||result.externalRequests!==0||
+      result.rosterPreparation.status!=='no-reviewed-candidate'||result.rosterPreparation.saved!==0||
+      result.rosterPreparation.externalRequests!==0)return skipped.length?{...result,programNotDueRaceKeys:skipped}:result;
+   firstDeferred??=result;
+   skipped.push(result.focusRaceKey);
+  }
+  return skipped.length>1?{...firstDeferred,programNotDueRaceKeys:skipped}:firstDeferred;
  };
  return(deps.coordinate||runSourceCoordinator)(event,env,{now,jobs:{archive:deferred,results:outcomes||deferred,history}});
 }

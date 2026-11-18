@@ -88,3 +88,14 @@ test('race with all failed runners awaiting retry cannot block a different pendi
  sql.exec("INSERT INTO jra_races VALUES('next','2026-10-04','京都',10,'次の対象','https://www.jra.go.jp/card',1);INSERT INTO jra_runners VALUES('next',1,'HorseC',5)");
  const result=await scheduledCollection(db,{...deps,fetcher:async url=>response(url.includes('accessU')?history.replaceAll('HorseA','HorseC'):'<a href="'+profile+'">HorseC</a>')});assert.equal(result.before.race.raceKey,'next');assert.equal(result.results[0].status,'checked');sql.close();
 });
+test('stored-only history never fetches or moves the shared clock when stored priors are absent',async()=>{
+ const {db,sql}=await database();await ensureCollectionTables(db);
+ sql.exec("UPDATE lab_history_collection_budget SET next_batch_at=42 WHERE name='jra-history'");
+ const opts={cacheOnly:true,now:()=>Date.parse('2026-10-03T03:00:00Z'),fetcher:()=>assert.fail('stored-only must not fetch')};
+ const result=await collectHistoryBatch(db,{...target,historyLimit:3,verifyStoredCoverage:true},opts);
+ assert.equal(result.externalRequests,0);assert.equal(result.attempted,0);
+ assert.equal(sql.prepare("SELECT COUNT(*) n FROM lab_history_collection_receipts").get().n,0);
+ assert.deepEqual({...sql.prepare("SELECT next_batch_at,locked_until FROM lab_history_collection_budget WHERE name='jra-history'").get()},{next_batch_at:42,locked_until:0});
+ sql.exec("UPDATE lab_history_collection_budget SET next_batch_at=9999999999999 WHERE name='jra-history'");
+ assert.equal((await collectHistoryBatch(db,{...target,historyLimit:3},opts)).status,'cooldown');sql.close();
+});

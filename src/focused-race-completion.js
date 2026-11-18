@@ -38,9 +38,9 @@ export function focusScheduleState(target,event,stamp){
 function additionalMainTargets(value,focus){
  if(value==null||value==='')return[];
  const list=JSON.parse(value);
- if(!Array.isArray(list)||!list.length||list.length>2)throw Error('Preparation requires one or two explicit main races');
+ if(!Array.isArray(list)||!list.length||list.length>8)throw Error('Preparation requires one to eight explicit main races');
  const targets=list.map(v=>focusedRaceTarget(JSON.stringify(v)));
- if(targets.some(t=>!t||t.raceNo!==11||t.date>=focus.date)||new Set(targets.map(t=>`${t.date}:${t.venue}:${t.raceNo}`)).size!==targets.length)throw Error('Preparation targets must be distinct earlier main races');
+ if(targets.some(t=>!t||t.raceNo!==11||t.date>focus.date||t.date<jstDay(Date.parse(focus.expiresAt)-6*86400000)||key(t)===key(focus))||new Set(targets.map(t=>`${t.date}:${t.venue}:${t.raceNo}`)).size!==targets.length)throw Error('Preparation targets must be distinct main races in the reviewed focus week');
  return targets;
 }
 export function preparationRaceTargets(value,focus,stamp){
@@ -113,7 +113,12 @@ export async function runFocusedScheduled(event,env,target,deps={}){
   const deferred=async()=>({ok:true,status:'focus-background-deferred',focusRaceKey:key(target),externalRequests:0});
   return(deps.coordinate||runSourceCoordinator)(event,env,{now,jobs:{archive:deferred,history:deferred,results:outcomes||deferred}});
  }
- if(event.cron==='0 * * * *')return(deps.provisional||scheduledProvisionalPrediction)(db,stamp,{prepareRoster:()=>prepareFocusedReviewedRoster(db,target,stamp),sources:()=>focusedStoredSources(db,target,stamp)});
+ if(event.cron==='0 * * * *'){
+  const active=[target,...mains].filter(t=>focusScheduleState(t,{cron:'*/3 * * * *'},stamp)==='active');
+  if(!active.length)return{ok:true,status:'focus-background-deferred',externalRequests:0};
+  const provisionalTarget=active[Math.floor(stamp/3600000)%active.length];
+  return(deps.provisional||scheduledProvisionalPrediction)(db,stamp,{prepareRoster:()=>(deps.prepareRoster||prepareFocusedReviewedRoster)(db,provisionalTarget,stamp),sources:()=>focusedStoredSources(db,provisionalTarget,stamp)});
+ }
  // Preserve the ordinary scheduler's failure isolation. A local forecast or
  // seal validation error must not prevent the target's missing-data work;
  // quota exhaustion still stops before any later stage or source request.
@@ -133,8 +138,9 @@ export async function runFocusedScheduled(event,env,target,deps={}){
  // Retain the existing 3-lane rotation: do not turn deferred archive/result
  // slots into extra source requests while reserving DB work for this target.
  const history=async context=>{
-  const prior=context.previousCardSelection,previousIndex=preparation.findIndex(t=>key(t)===prior?.target);
-  const workTarget=preparation.length?preparation[(previousIndex+1)%preparation.length]:target;
+  const historyTargets=preparation.length&&mains.length?[...preparation,...(focusScheduleState(target,event,stamp)==='active'?[target]:[])]:preparation;
+  const prior=context.previousCardSelection,previousIndex=historyTargets.findIndex(t=>key(t)===prior?.target);
+  const workTarget=historyTargets.length?historyTargets[(previousIndex+1)%historyTargets.length]:target;
   const workKey=key(workTarget),checkpoints=preparation.length?(prior?.preparationContexts||{}):{};
   const checkpoint=checkpoints[workKey];
   if(checkpoint)context={...context,previousCardSelection:checkpoint.selection,previousHistoryWorkStage:checkpoint.historyWorkStage,previousExpectedHistoryWorkKind:checkpoint.expectedHistoryWorkKind,previousOfficialHistoryCursor:checkpoint.officialHistoryCursor};
@@ -149,8 +155,8 @@ export async function runFocusedScheduled(event,env,target,deps={}){
   const selection=result.cardSelection||scoped.previousCardSelection||{lane:'discovery',reason:'focused-race-completion'};
   const historyWorkStage=result.historyWorkStage||(!result.historyWorkStage&&rosterPreparation.saved>0?'acquisition':scoped.previousHistoryWorkStage);
   const selected={...selection,target:workKey};delete selected.preparationContexts;
-  const nextCheckpoints=preparation.length?Object.fromEntries(preparation.map(t=>key(t)).filter(k=>k===workKey||checkpoints[k]).map(k=>[k,k===workKey?{selection:selected,historyWorkStage,expectedHistoryWorkKind:result.expectedHistoryWorkKind||scoped.previousExpectedHistoryWorkKind,officialHistoryCursor:result.officialHistoryCursor??scoped.previousOfficialHistoryCursor}:checkpoints[k]])):null;
-  return{...result,...(historyWorkStage?{historyWorkStage}:{}),rosterPreparation,focusRaceKey:workKey,...(preparation.length?{primaryFocusRaceKey:key(target),dataPreparationOnly:!mains.some(t=>key(t)===workKey)}:{}),cardSelection:{...selected,...(nextCheckpoints?{preparationContexts:nextCheckpoints}:{})},...(stageErrors.length?{stageErrors}:{})};
+  const nextCheckpoints=preparation.length?Object.fromEntries(historyTargets.map(t=>key(t)).filter(k=>k===workKey||checkpoints[k]).map(k=>[k,k===workKey?{selection:selected,historyWorkStage,expectedHistoryWorkKind:result.expectedHistoryWorkKind||scoped.previousExpectedHistoryWorkKind,officialHistoryCursor:result.officialHistoryCursor??scoped.previousOfficialHistoryCursor}:checkpoints[k]])):null;
+  return{...result,...(historyWorkStage?{historyWorkStage}:{}),rosterPreparation,focusRaceKey:workKey,...(preparation.length?{primaryFocusRaceKey:key(target),dataPreparationOnly:workKey!==key(target)&&!mains.some(t=>key(t)===workKey)}:{}),cardSelection:{...selected,...(nextCheckpoints?{preparationContexts:nextCheckpoints}:{})},...(stageErrors.length?{stageErrors}:{})};
  };
  return(deps.coordinate||runSourceCoordinator)(event,env,{now,jobs:{archive:deferred,results:outcomes||deferred,history}});
 }

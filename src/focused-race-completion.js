@@ -125,6 +125,12 @@ export async function runFocusedScheduled(event,env,target,deps={}){
  const stageErrors=[];
  const activeTargets=[target,...mains].filter(t=>focusScheduleState(t,event,stamp)==='active');
  const predictionTarget=activeTargets[Math.floor(stamp/360000)%activeTargets.length];
+ if(env.LAB_FOCUSED_STORED_HISTORY==='true')try{
+  await (deps.storedHistory||collectHistoryBatch)(db,{...predictionTarget,historyLimit:3,batchSize:1,storedBatchSize:2,verifyStoredCoverage:true},{now,cacheOnly:true});
+ }catch(e){
+  if(e?.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;
+  if(!/正式出馬表が未保存/.test(String(e)))stageErrors.push({stage:'stored-history',error:String(e.message||e)});
+ }
  let predictionReady=true;
  if(mains.some(t=>key(t)===key(predictionTarget)))try{
   const coverage=await(deps.readiness||collectionStatus)(db,{...predictionTarget,historyLimit:3,verifyStoredCoverage:true},stamp);

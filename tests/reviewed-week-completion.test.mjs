@@ -37,3 +37,29 @@ test('release configuration contains exactly the six officially reviewed mains, 
  assert.deepEqual(new Set([p,...m].map(key)),new Set(['2026-11-21:京都:11','2026-11-21:福島:11','2026-11-22:東京:11','2026-11-22:京都:11','2026-11-23:東京:11','2026-11-23:福島:11']));
  assert.deepEqual(get('LAB_COMPLETION_PREPARATION_TARGETS'),m);assert.equal(p.expiresAt,'2026-11-23T06:25:00.000Z');
 });
+
+test('one natural history slot skips only no-op program deferrals and keeps race checkpoints separate',async()=>{
+ const seen=[],pending={ok:true,status:'focused-program-not-due',externalRequests:0};
+ const prep={status:'no-reviewed-candidate',saved:0,externalRequests:0};
+ const run=(getResult,prepareRoster=async()=>prep)=>runFocusedScheduled(event,env,primary,{
+  now:()=>Date.parse('2026-11-18T09:24:52Z'),readiness:async()=>({ok:false}),
+  predict:async()=>{},seal:async()=>{},prepareRoster,
+  collect:async(_,t,c)=>{
+   seen.push(key(t));assert.equal(c.previousOfficialHistoryCursor??0,key(t)===key(mains[1])?3:0);
+   return getResult(t);
+  },
+  coordinate:async(e,v,o)=>o.jobs.history({previousCardSelection:{target:key(primary),preparationContexts:{
+   [key(mains[1])]:{selection:{target:key(mains[1])},officialHistoryCursor:3}
+  }}})
+ });
+ const r=await run(t=>key(t)===key(mains[0])?pending:{ok:true,status:'collected',externalRequests:1});
+ assert.deepEqual(seen,mains.slice(0,2).map(key));
+ assert.deepEqual(r.programNotDueRaceKeys,[key(mains[0])]);assert.equal(r.cardSelection.target,key(mains[1]));
+ assert.equal(r.cardSelection.preparationContexts[key(mains[1])].officialHistoryCursor,3);
+ for(const stop of ['cooldown','lease-unavailable','source-unconfirmed','pending-readback']){
+  seen.length=0;assert.equal((await run(()=>({...pending,status:stop}))).status,stop);assert.equal(seen.length,1);
+ }
+ seen.length=0;await run(()=>pending,async()=>({...prep,status:'roster-saved',saved:1}));assert.equal(seen.length,1);
+ seen.length=0;const waiting=await run(()=>pending);assert.equal(seen.length,9);assert.equal(waiting.externalRequests,0);
+ assert.equal(waiting.cardSelection.target,key(mains[0]));
+});

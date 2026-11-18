@@ -76,6 +76,7 @@ async function saveReceipt(db,key,item,limit,status,rows,stamp,profileUrl=null,e
 }
 export async function collectHistoryBatch(db,input,deps={}){
  const now=deps.now||Date.now,fetcher=deps.fetcher||fetch,wait=deps.wait||(ms=>new Promise(r=>setTimeout(r,ms)));
+ const cacheOnly=deps.cacheOnly===true;
  const limit=integer(input.historyLimit??10,10,1,20),batchSize=limit>10?1:integer(input.batchSize??1,1,1,2);
  await ensureCollectionTables(db);const context=deps.context||await raceContext(db,input),before=await collectionStatus(db,{...input,historyLimit:limit},now(),deps.context||null);
  const cachedBatchSize=limit>10?batchSize:Math.max(batchSize,integer(input.storedBatchSize??batchSize,batchSize,1,COLLECTION_POLICY.maxHorsesPerBatch));
@@ -86,6 +87,7 @@ export async function collectHistoryBatch(db,input,deps={}){
  if(Number(claim.meta?.changes||0)!==1)return{ok:true,status:'cooldown',attempted:0,externalRequests:0,policy:COLLECTION_POLICY};
  let requests=0,cooldown=COLLECTION_POLICY.minBatchGapMs;const results=[];
  async function page(url,profile=false){
+  if(cacheOnly)throw Error('Stored-only history cannot fetch');
   officialUrl(url,profile);if(requests)await wait(COLLECTION_POLICY.minRequestGapMs);requests++;
   if(requests>COLLECTION_POLICY.maxExternalRequestsPerBatch)throw Error('取得上限を超えました。');
   const pageRequest=jraPageRequest(url),response=await fetcher(pageRequest.url,pageRequest.options);
@@ -99,13 +101,14 @@ export async function collectHistoryBatch(db,input,deps={}){
   for(const [index,item] of selected.entries()){
    // Extra scheduled work may only reuse verified stored priors, never HTTP.
    const storedOnly=index>=batchSize;
-   if(storedOnly&&!results.at(-1)?.reusedStoredCard)break;
+   if(!cacheOnly&&storedOnly&&!results.at(-1)?.reusedStoredCard)break;
    let profileUrl=item.profileUrl;
    try{
     if(item.storedRows>=limit&&!item.verificationPending&&!item.cachedRepairPending){await saveReceipt(db,context.race.race_key,item,limit,'stored-enough',item.storedRows,now());results.push({horseName:item.horseName,status:'stored-enough',savedRows:0});continue}
     const source=await readStoredCardPriors(db,context,item,limit,{includeProfileLink:true});
     const stored=source?.performances?source:null;
     if(item.cachedRepairPending&&!stored){await saveReceipt(db,context.race.race_key,item,limit,'checked',item.storedRows,Date.parse(item.lastCheckedAt),profileUrl,null,CACHED_LAST3F_POLICY);results.push({horseName:item.horseName,status:'cached-last3f-unavailable',savedRows:0,cachedRepairOnly:true});continue}
+    if(!stored&&cacheOnly)continue;
     if(storedOnly&&!stored)break;
     if(source)profileUrl=officialUrl(source.profileUrl,true);
     if(!profileUrl){const known=await db.prepare('SELECT source_url FROM jra_past_performances WHERE horse_name=? AND race_date>=? AND race_date<? AND source_url IS NOT NULL ORDER BY fetched_at DESC LIMIT 1').bind(item.horseName,item.fromDate,context.race.race_date).first();try{profileUrl=officialUrl(known?.source_url,true)}catch{}}
@@ -131,9 +134,14 @@ export async function collectHistoryBatch(db,input,deps={}){
     if(performances.length)await db.batch(performances.map(p=>db.prepare('INSERT INTO jra_past_performances(horse_name,race_date,venue,race_name,surface,distance,finish_position,field_size,popularity,odds,jockey,assigned_weight,body_weight,body_weight_change,time_text,last3f,corner_positions,track_condition,source_url,fetched_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) '+(stored?'ON CONFLICT(horse_name,race_date,venue,race_name) DO UPDATE SET last3f=excluded.last3f,source_url=excluded.source_url,fetched_at=excluded.fetched_at WHERE jra_past_performances.last3f IS NULL AND excluded.last3f>0':'ON CONFLICT(horse_name,race_date,venue,race_name) DO UPDATE SET surface=COALESCE(excluded.surface,surface),distance=COALESCE(excluded.distance,distance),finish_position=COALESCE(excluded.finish_position,finish_position),field_size=COALESCE(excluded.field_size,field_size),jockey=COALESCE(excluded.jockey,jockey),assigned_weight=COALESCE(excluded.assigned_weight,assigned_weight),body_weight=COALESCE(excluded.body_weight,body_weight),body_weight_change=COALESCE(excluded.body_weight_change,body_weight_change),time_text=COALESCE(excluded.time_text,time_text),last3f=COALESCE(excluded.last3f,last3f),corner_positions=COALESCE(excluded.corner_positions,corner_positions),track_condition=COALESCE(excluded.track_condition,track_condition),source_url=excluded.source_url,fetched_at=excluded.fetched_at')).bind(p.horseName,p.raceDate,p.venue,p.raceName,p.surface,p.distance,p.finishPosition,p.fieldSize,null,null,p.jockey,p.assignedWeight,p.bodyWeight,p.bodyWeightChange,p.timeText,p.last3f,p.cornerPositions,p.trackCondition,p.sourceUrl,at)));
     await saveReceipt(db,context.race.race_key,item,limit,'checked',performances.length,now(),profileUrl,null,item.cachedRepairPending?CACHED_LAST3F_POLICY:COLLECTION_POLICY.version);
     results.push({horseName:item.horseName,status:'checked',savedRows:performances.length,profileUrl,...(item.cachedRepairPending?{cachedRepairOnly:true}:{}),...(stored?{reusedStoredCard:true,sourceSha256:stored.sourceSha256}:{}),oldestDate:performances.at(-1)?.raceDate||null});
-   }catch(error){await saveReceipt(db,context.race.race_key,item,limit,item.cachedRepairPending?'checked':'failed',item.cachedRepairPending?item.storedRows:0,item.cachedRepairPending?Date.parse(item.lastCheckedAt):now(),profileUrl,String(error.message||error),item.cachedRepairPending?CACHED_LAST3F_POLICY:COLLECTION_POLICY.version);results.push({horseName:item.horseName,status:'failed',savedRows:0,error:String(error.message||error)});if(cooldown>COLLECTION_POLICY.minBatchGapMs)break}
+   }catch(error){if(error?.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(error)))throw error;
+    if(cacheOnly)throw error;
+    await saveReceipt(db,context.race.race_key,item,limit,item.cachedRepairPending?'checked':'failed',item.cachedRepairPending?item.storedRows:0,item.cachedRepairPending?Date.parse(item.lastCheckedAt):now(),profileUrl,String(error.message||error),item.cachedRepairPending?CACHED_LAST3F_POLICY:COLLECTION_POLICY.version);results.push({horseName:item.horseName,status:'failed',savedRows:0,error:String(error.message||error)});if(cooldown>COLLECTION_POLICY.minBatchGapMs)break}
   }
- }finally{await db.prepare("UPDATE lab_history_collection_budget SET locked_until=0,next_batch_at=?,lock_token=NULL WHERE name='jra-history' AND lock_token=?").bind(now()+cooldown,token).run()}
+ }finally{
+  if(cacheOnly)await db.prepare("UPDATE lab_history_collection_budget SET locked_until=0,lock_token=NULL WHERE name='jra-history' AND lock_token=?").bind(token).run();
+  else await db.prepare("UPDATE lab_history_collection_budget SET locked_until=0,next_batch_at=?,lock_token=NULL WHERE name='jra-history' AND lock_token=?").bind(now()+cooldown,token).run();
+ }
  const after=await collectionStatus(db,{...input,historyLimit:limit},now(),deps.context||null);
  const addedRows=after.totalStoredRows-before.totalStoredRows;
  const addedLast3fRows=Math.max(0,after.last3fRows-before.last3fRows);

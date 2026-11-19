@@ -22,7 +22,7 @@ export function confirmedPredrawSource(row,stamp){
    if(!meta||`${meta.date}:${meta.venue}:${meta.raceNo}`!==row.race_key||!/^https:\/\/www\.jra\.go\.jp\/JRADB\/accessD\.html\?/.test(row.source_url)||!/^[a-f0-9]{64}$/.test(row.source_sha256)||!Number.isFinite(Date.parse(row.checked_at))||Date.parse(row.checked_at)>stamp)return null;
    const runners=JSON.parse(row.runners_json);
    if(!Array.isArray(runners)||!runners.length||runners.length>18||new Set(runners.map(r=>r.horse_name)).size!==runners.length||runners.some(r=>typeof r.horse_name!=='string'||!r.horse_name.trim()||!Number.isInteger(r.age)||r.age<2||r.age>15||r.horse_no!=null||r.frame_no!=null))return null;
-   for(const r of runners)officialUrl(r.profile_url,true);
+   for(const r of runners)if(r.profile_url!==null)officialUrl(r.profile_url,true);
    source={date:meta.date,venue:meta.venue,raceNo:meta.raceNo,raceName:'公式枠順確定前名簿',snapshotId:'confirmed-predraw:'+row.race_key,names:runners.map(r=>r.horse_name),priority:50,rosterBasis:'confirmed-predraw',provider:'JRA',kind:'confirmed-predraw',confirmationVerified:true,sourceUrl:row.source_url,observedAt:row.checked_at,ages:Object.fromEntries(runners.map(r=>[r.horse_name,r.age]))};
   }catch{return null;}
  return {...source,basis:'confirmed-predraw',sourceSha256:row.source_sha256};

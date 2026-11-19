@@ -370,3 +370,27 @@ test('focused verification preserves failed retries and shared waits for otherwi
  sql.prepare('DELETE FROM lab_history_collection_receipts').run();sql.prepare('UPDATE lab_history_collection_budget SET locked_until=?').run(stamp+3600000);
  const shared=await collectHistoryBatch(db,{historyLimit:3,verifyStoredCoverage:true},deps);assert.equal(shared.status,'cooldown');assert.equal(shared.externalRequests,0);sql.close();
 });
+
+test('a saved no-profile runner does not block the other pre-draw histories',async()=>{
+ const {readFile}=await import('node:fs/promises'),e=JSON.parse(await readFile(new URL('./fixtures/kyoto1-predraw-handoff-20261029.json',import.meta.url),'utf8'));
+ const {confirmedPredrawSource}=await import('../src/confirmed-predraw-history-source.js');
+ const {db,sql}=await fixture(),time=Date.parse(e.observedAt)+61000;
+ sql.exec('CREATE TABLE lab_confirmed_predraw_rosters(race_key TEXT PRIMARY KEY,source_url TEXT,source_sha256 TEXT,runners_json TEXT,checked_at TEXT);CREATE TABLE lab_provisional_queue_v1(race_key TEXT PRIMARY KEY,status TEXT NOT NULL,next_at INTEGER NOT NULL,error TEXT)');
+ e.runners[1].profile_url=null;
+ const row={race_key:e.raceKey,source_url:e.sourceUrl,source_sha256:e.sourceSha256,runners_json:JSON.stringify(e.runners),checked_at:e.observedAt};
+ sql.prepare('INSERT INTO lab_confirmed_predraw_rosters VALUES(?,?,?,?,?)').run(...Object.values(row));
+ sql.prepare('INSERT INTO lab_provisional_queue_v1 VALUES(?,?,?,NULL)').run(e.raceKey+':predraw:'+e.sourceSha256,'verified',9999999999999);
+ const s=confirmedPredrawSource(row,time);assert.equal(s.names.length,16);assert.ok(s.names.includes(e.runners[1].horse_name));
+ const invalid=JSON.parse(row.runners_json);invalid[1].profile_url='https://example.org/other';
+ assert.equal(confirmedPredrawSource({...row,runners_json:JSON.stringify(invalid)},time),null);
+ delete invalid[1].profile_url;
+ assert.equal(confirmedPredrawSource({...row,runners_json:JSON.stringify(invalid)},time),null);
+ let requests=0;
+ const r=await collectLiveHistory(db,{scheduledTime:time},{now:()=>time,cardCompletionFirst:true,previousHistoryWorkStage:'acquisition',previousCardSelection:{lane:'card',savedPredrawHistoryPending:true},cards:()=>assert.fail('no second card request'),
+  priorityExpected:(db,deps)=>collectUpcomingExpectedHistory(db,{...deps,sources:[s],wait:async()=>{},fetcher:async(url,opts)=>{requests++;assert.equal(url,'https://www.jra.go.jp/JRADB/accessU.html');assert.equal(new URLSearchParams(opts.body).get('CNAME'),new URL(e.runners[0].profile_url).searchParams.get('CNAME'));return new Response('<h1>'+e.runners[0].horse_name+'</h1><table>'+rowHtml('2026年9月1日')+'</table>',{headers:{'content-type':'text/html;charset=utf-8'}})}})});
+ assert.equal(requests,1);assert.equal(r.addedRows,1);assert.equal(r.provisionalEvaluationQueued,1);assert.equal(r.historyWorkStage,'history');
+ assert.equal(sql.prepare('SELECT horse_name FROM jra_past_performances').get().horse_name,e.runners[0].horse_name);
+ assert.equal(sql.prepare('SELECT status FROM lab_provisional_queue_v1').get().status,'history-updated');
+ assert.equal(sql.prepare('SELECT runners_json FROM lab_confirmed_predraw_rosters').get().runners_json,row.runners_json);sql.close();
+ function rowHtml(date){return '<tr>'+[date,'京都','過去レース','芝1400','良','12','2','1','騎手','55','450(+0)','1:24.0','111','勝馬'].map(x=>'<td>'+x+'</td>').join('')+'</tr>';}
+});

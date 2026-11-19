@@ -20,3 +20,11 @@ test('official JRA sex-age accepts the published せん spelling and preserves i
 });
 test('rejects wrong source identity, partial numbering, duplicate rows and incomplete fields',()=>{for(const h of [html.replace('2026年10月10日','2026年10月11日'),html.replace('alt="11レース"','alt="12レース"'),html.replace('class="num"></td>','class="num">1</td>'),html.replace(row,row+row),html.replace('56.0','未定'),html.replace('今の騎手','')])assert.throws(()=>parseConfirmedPredraw(h,url,target));assert.throws(()=>parseConfirmedPredraw(html,url.replace('www.jra.go.jp','example.com'),target));});
 test('isolated saved confirmed roster supplies history context and excludes withdrawn expected horses',async()=>{let saved;const queries=[];const db={prepare(q){queries.push(q);return{bind(...args){return{async run(){saved={race_key:args[0],source_url:args[1],source_sha256:args[2],runners_json:args[3],checked_at:args[4]};},async first(){return saved;}}},async run(){}}}};await saveConfirmedPredraw(db,html,url,target);assert.equal((await readConfirmedPredraw(db,target)).runners.length,1);const c=await expectedHistoryContext(db,target);assert.equal(c.rosterBasis,'confirmed-predraw');assert.equal(c.runners[0].horse_name,'出走馬');assert.equal(c.race.race_key,'expected:test');assert.ok(queries.every(q=>!q.includes('jra_runners')&&!q.includes('jra_races')));});
+test('predraw retains a marked overseas runner missing a JRA profile and coat',()=>{
+ const overseas=row.replace(/<div class="name">.*?<\/div>/,'<div class="name"><span><img src="/JRADB/img/kigo/kaku-gai.png" alt="カクガイ"></span>エルデナリ</div><p class="trainer">調教師<span class="division">(本会外)</span></p>').replace('牡2/黒鹿','せん3');
+ const body=html.replace(row,row+overseas),options={allowUnassignedConnections:true};
+ const {runners}=parseConfirmedPredraw(body,url,target,options);
+ assert.equal(runners.length,2);assert.deepEqual(runners[1],{horse_name:'エルデナリ',age:3,sex:'せん',jockey:'今の騎手',assigned_weight:56,profile_url:null,horse_no:null,frame_no:null});
+ for(const bad of [body.replace('カクガイ','マルガイ'),body.replace('(本会外)','(栗東)'),body.replace('せん3','未定')])assert.throws(()=>parseConfirmedPredraw(bad,url,target,options));
+ assert.throws(()=>parseConfirmedPredraw(body,url,target));
+});

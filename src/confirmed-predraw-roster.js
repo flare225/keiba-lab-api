@@ -12,14 +12,17 @@ export function parseConfirmedPredraw(html,url,target,{allowUnassignedConnection
  const runners=raw.map(row=>{
   if(cell(row,'num')===undefined||cell(row,'waku')===undefined||plain(cell(row,'num'))||plain(cell(row,'waku'))||/<img\b/i.test(cell(row,'waku')))throw Error('Not a pre-draw roster');
   const horse=cell(row,'horse'),j=cell(row,'jockey')||'',nameBlock=horse.match(/<div class=["']name["']>([\s\S]*?)<\/div>/i)?.[1]||'',link=nameBlock.match(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i);
-  const age=plain(j.match(/<p class=["']age["']>([\s\S]*?)<\/p>/i)?.[1]).match(/^(牡|牝|セ|せん|騸)(\d{1,2})\//);
+  // JRA lists some invited foreign runners without a JRA profile or coat.
+  const overseasName=!link&&allowUnassignedConnections&&/<img\b[^>]*src=["']\/JRADB\/img\/kigo\/kaku-gai\.png["'][^>]*alt=["']カクガイ["']/i.test(nameBlock)&&plain(horse).includes('(本会外)')?plain(nameBlock):'';
+  const ageText=plain(j.match(/<p class=["']age["']>([\s\S]*?)<\/p>/i)?.[1]);
+  const age=ageText.match(overseasName?/^(牡|牝|セ|せん|騸)(\d{1,2})(?:\/|$)/:/^(牡|牝|セ|せん|騸)(\d{1,2})\//);
   const weightText=plain(j.match(/<p class=["']weight["']>([\s\S]*?)<\/p>/i)?.[1]).replace(/\s*kg$/i,'');
   const weight=allowUnassignedConnections&&(!weightText||weightText==='未定')?null:Number(weightText);
   const jockey=plain(j.match(/<p class=["']jockey["']>([\s\S]*?)<\/p>/i)?.[1]);
-  if(!link||!age||(!jockey&&!allowUnassignedConnections)||(weight===null?!allowUnassignedConnections:!Number.isFinite(weight)||weight<40||weight>70))throw Error('Incomplete confirmed runner: '+(!link?'horse link':!age?'age':!jockey?'jockey':'assigned weight'));
-  const profile=new URL(link[1].replace(/&amp;/g,'&'),url);
-  if(profile.origin!==u.origin||profile.pathname!=='/JRADB/accessU.html'||!/^pw01dud00\d{10}\//.test(profile.searchParams.get('CNAME')||''))throw Error('Invalid confirmed profile');
-  return {horse_name:plain(link[2]),age:Number(age[2]),sex:age[1],jockey:jockey||null,assigned_weight:weight,profile_url:profile.href,horse_no:null,frame_no:null};
+  if((!link&&!overseasName)||!age||(!jockey&&!allowUnassignedConnections)||(weight===null?!allowUnassignedConnections:!Number.isFinite(weight)||weight<40||weight>70))throw Error('Incomplete confirmed runner: '+((!link&&!overseasName)?'horse link':!age?'age':!jockey?'jockey':'assigned weight'));
+  const profile=link?new URL(link[1].replace(/&amp;/g,'&'),url):null;
+  if(profile&&(profile.origin!==u.origin||profile.pathname!=='/JRADB/accessU.html'||!/^pw01dud00\d{10}\//.test(profile.searchParams.get('CNAME')||'')))throw Error('Invalid confirmed profile');
+  return {horse_name:link?plain(link[2]):overseasName,age:Number(age[2]),sex:age[1],jockey:jockey||null,assigned_weight:weight,profile_url:profile?.href??null,horse_no:null,frame_no:null};
  });
  const cells=[...table.matchAll(/<td\b[^>]*class=["']horse["']/gi)].length;
  if(!runners.length||runners.length>18||cells!==runners.length||new Set(runners.map(r=>r.horse_name)).size!==runners.length)throw Error('Incomplete or duplicate confirmed roster');

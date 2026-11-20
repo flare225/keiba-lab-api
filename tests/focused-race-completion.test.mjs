@@ -159,3 +159,23 @@ test('published Saturday card is selected before available profile work, while a
  const fallback=await collectFocusedRace(gateDb(),target,{formalCardFirst:true},deps);assert.deepEqual(calls,['card','history']);assert.equal(fallback.externalRequests,1);
  calls.length=0;const blocked=await collectFocusedRace(gateDb({blocked:stamp+3600000}),target,{formalCardFirst:true},deps);assert.equal(blocked.externalRequests,0);assert.deepEqual(calls,[]);
 });
+
+test('nearest main keeps the source slot through a shared wait and advances only on a verified seal',async()=>{
+ const later={date:'2026-11-23',venue:'東京',raceNo:11,expiresAt:'2026-11-23T15:25:00+09:00'};
+ const early={date:'2026-11-21',venue:'福島',raceNo:11,expiresAt:'2026-11-21T15:15:00+09:00'};
+ const next={date:'2026-11-21',venue:'京都',raceNo:11,expiresAt:'2026-11-21T15:35:00+09:00'};
+ const configured=JSON.stringify([next,early]), calls=[];
+ let lock=null;
+ const env={DB:{},LAB_FINISH_NEAREST_MAIN:'true',LAB_COMPLETION_MAIN_TARGETS:configured,LAB_COMPLETION_PREPARATION_TARGETS:configured,LAB_FOCUSED_STORED_HISTORY:'true'};
+ const deps={now:()=>Date.parse('2026-11-20T09:30:00Z'),readSeal:async(_,t)=>t.venue===early.venue?lock:null,
+  storedHistory:async(_,t,o)=>{assert.equal(o.cacheOnly,true);calls.push('stored:'+t.venue)},
+  readiness:async()=>({ok:true,remainingHorses:1,unverifiedStoredHorses:1}),predict:()=>assert.fail('unverified history'),seal:()=>assert.fail('unverified history'),
+  prepareRoster:async()=>({saved:0}),coordinate:async(e,env,o)=>o.jobs.history({previousCardSelection:{target:'2026-11-21:福島:11'}}),
+  collect:async(_,t)=>{calls.push('source:'+t.venue);return {ok:true,status:'cooldown',externalRequests:0}}};
+ await runFocusedScheduled(sourceEvent,env,later,deps);
+ lock={available:true,locked:true,integrityVerified:true,preRaceVerified:false};
+ await runFocusedScheduled(sourceEvent,env,later,deps);
+ lock.preRaceVerified=true;
+ await runFocusedScheduled(sourceEvent,env,later,deps);
+ assert.deepEqual(calls,['stored:福島','source:福島','stored:福島','source:福島','stored:京都','source:京都']);
+});

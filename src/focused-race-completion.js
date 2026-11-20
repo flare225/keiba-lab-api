@@ -10,6 +10,7 @@ import {collectUpcomingExpectedHistory} from './expected-history-collection-v3.4
 import {discoverSharedSelectedCard} from './shared-page-acquisition.js';
 import {runSourceCoordinator} from './source-coordinator-v3.40.0.js';
 import {scheduledAutomaticPrediction} from './automatic-pre-race-prediction.js';
+import {readSavedAutomaticSeal} from './saved-automatic-seal.js';
 import {scheduledSavedAutomaticSeal} from './saved-automatic-seal-queue.js';
 import {scheduledProvisionalPrediction} from './provisional-prediction-queue.js';
 import {collectFocusedOutcomes} from './focused-race-outcomes.js';
@@ -124,7 +125,19 @@ export async function runFocusedScheduled(event,env,target,deps={}){
  // quota exhaustion still stops before any later stage or source request.
  const stageErrors=[];
  const activeTargets=[target,...mains].filter(t=>focusScheduleState(t,event,stamp)==='active');
- const predictionTarget=activeTargets[Math.floor(stamp/360000)%activeTargets.length];
+ const serial=env.LAB_FINISH_NEAREST_MAIN==='true';
+ let predictionTarget=activeTargets[Math.floor(stamp/360000)%activeTargets.length];
+ if(serial){
+  predictionTarget=null;
+  for(const candidate of activeTargets.sort((a,b)=>Date.parse(a.expiresAt)-Date.parse(b.expiresAt))){
+   if(stamp>=Date.parse(candidate.expiresAt)-300000)continue;
+   const lock=await (deps.readSeal||readSavedAutomaticSeal)(db,candidate);
+   if(lock?.available&&lock.locked&&lock.integrityVerified&&lock.preRaceVerified)continue;
+   predictionTarget=candidate;
+   break;
+  }
+ }
+ if(predictionTarget){
  if(env.LAB_FOCUSED_STORED_HISTORY==='true')try{
   await (deps.storedHistory||collectHistoryBatch)(db,{...predictionTarget,historyLimit:3,batchSize:1,storedBatchSize:2,verifyStoredCoverage:true},{now,cacheOnly:true});
  }catch(e){
@@ -140,6 +153,7 @@ export async function runFocusedScheduled(event,env,target,deps={}){
   ['prediction',()=>(deps.predict||scheduledAutomaticPrediction)(db,stamp,predictionTarget)],
   ['lock',()=>(deps.seal||scheduledSavedAutomaticSeal)(db,{enabled:env.LAB_SAVED_AUTOMATIC_LOCK==='true',now,target:predictionTarget})]
  ]:[])try{await work();}catch(e){if(e?.d1DailyReadLimit||/exceeded D1.*daily row read limit/i.test(String(e)))throw e;stageErrors.push({stage,error:String(e.message||e),saveMayHaveSucceeded:!!e.saveMayHaveSucceeded});}
+ }
  const deferred=async()=>({ok:true,status:'focus-background-deferred',focusRaceKey:key(target),externalRequests:0});
  // Retain the existing 3-lane rotation: do not turn deferred archive/result
  // slots into extra source requests while reserving DB work for this target.
@@ -168,6 +182,7 @@ export async function runFocusedScheduled(event,env,target,deps={}){
   };
   // Only the no-op program deferral can pass the slot on. Any actual
   // work, shared wait or uncertain result ends this coordinator invocation.
+  if(serial)return predictionTarget?runTarget(predictionTarget):deferred();
   const candidates=historyTargets.length?historyTargets:[target];
   const skipped=[];
   let firstDeferred;

@@ -31,11 +31,12 @@ test('only unexpired reviewed targets get forecasts and only ended targets get o
  for(let i=0;i<9;i++)await runFocusedScheduled(event,env,primary,{now:()=>stamp+i*360000,readiness:async()=>({ok:true,remainingHorses:0,unverifiedStoredHorses:0}),predict:async(_,n,t)=>assert.equal(t.date,'2026-11-23'),seal:async()=>{},coordinate:async(e,v,o)=>o.jobs.results({}),outcomes:async(_,t)=>{seen.push(t);assert.equal(focusScheduleState(t,event,stamp),'outcomes');return{externalRequests:0}}});
  assert(seen.length>0);assert(seen.every(t=>t.date!=='2026-11-23'));
 });
-test('release configuration contains exactly the six officially reviewed mains, preserving cutoff and scope',()=>{
+test('release configuration contains exactly the four officially reviewed weekend mains, preserving cutoff and scope',()=>{
  const text=fs.readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8');const get=k=>JSON.parse(JSON.parse(text.split('\n').find(l=>l.includes('"'+k+'"')).trim().replace(/,$/,'').split(/:\s(.+)/s)[1]));
  const p=focusedRaceTarget(JSON.stringify(get('LAB_COMPLETION_FOCUS'))),m=get('LAB_COMPLETION_MAIN_TARGETS');
- assert.deepEqual(new Set([p,...m].map(key)),new Set(['2026-11-21:京都:11','2026-11-21:福島:11','2026-11-22:東京:11','2026-11-22:京都:11','2026-11-23:東京:11','2026-11-23:福島:11']));
- assert.deepEqual(get('LAB_COMPLETION_PREPARATION_TARGETS'),m);assert.equal(p.expiresAt,'2026-11-23T06:25:00.000Z');
+ assert.deepEqual(new Set([p,...m].map(key)),new Set(['2026-11-28:東京:11','2026-11-28:京都:11','2026-11-29:東京:12','2026-11-29:京都:12']));
+ assert.deepEqual(get('LAB_COMPLETION_PREPARATION_TARGETS'),m);assert.equal(key(p),'2026-11-29:京都:12');
+ assert.deepEqual(Object.fromEntries([p,...m].map(t=>[key(t),new Date(t.expiresAt).toISOString()])),{'2026-11-29:京都:12':'2026-11-29T07:10:00.000Z','2026-11-28:東京:11':'2026-11-28T06:20:00.000Z','2026-11-28:京都:11':'2026-11-28T06:35:00.000Z','2026-11-29:東京:12':'2026-11-29T06:35:00.000Z'});
 });
 
 test('one natural history slot skips only no-op program deferrals and keeps race checkpoints separate',async()=>{

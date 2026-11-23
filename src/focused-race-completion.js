@@ -41,7 +41,7 @@ function additionalMainTargets(value,focus){
  const list=JSON.parse(value);
  if(!Array.isArray(list)||!list.length||list.length>8)throw Error('Preparation requires one to eight explicit main races');
  const targets=list.map(v=>focusedRaceTarget(JSON.stringify(v)));
- if(targets.some(t=>!t||t.raceNo!==11||t.date>focus.date||t.date<jstDay(Date.parse(focus.expiresAt)-6*86400000)||key(t)===key(focus))||new Set(targets.map(t=>`${t.date}:${t.venue}:${t.raceNo}`)).size!==targets.length)throw Error('Preparation targets must be distinct main races in the reviewed focus week');
+ if(targets.some(t=>!t||![11,12].includes(t.raceNo)||t.date>focus.date||t.date<jstDay(Date.parse(focus.expiresAt)-6*86400000)||key(t)===key(focus))||new Set(targets.map(t=>`${t.date}:${t.venue}:${t.raceNo}`)).size!==targets.length)throw Error('Preparation targets must be distinct main races in the reviewed focus week');
  return targets;
 }
 export function preparationRaceTargets(value,focus,stamp){

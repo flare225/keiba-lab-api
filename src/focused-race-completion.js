@@ -182,12 +182,17 @@ export async function runFocusedScheduled(event,env,target,deps={}){
   };
   // Only the no-op program deferral can pass the slot on. Any actual
   // work, shared wait or uncertain result ends this coordinator invocation.
-  if(serial)return predictionTarget?runTarget(predictionTarget):deferred();
-  const candidates=historyTargets.length?historyTargets:[target];
+  if(serial&&!predictionTarget)return deferred();
+  const candidates=serial?activeTargets.slice(activeTargets.indexOf(predictionTarget)).filter(t=>stamp<Date.parse(t.expiresAt)-300000):historyTargets.length?historyTargets:[target];
   const skipped=[];
   let firstDeferred;
   for(let i=0;i<candidates.length;i++){
-   const result=await runTarget(candidates[(previousIndex+1+i)%candidates.length]);
+   const candidate=candidates[serial?i:(previousIndex+1+i)%candidates.length];
+   if(serial&&i>0){
+    const lock=await (deps.readSeal||readSavedAutomaticSeal)(db,candidate);
+    if(lock?.available&&lock.locked&&lock.integrityVerified&&lock.preRaceVerified)continue;
+   }
+   const result=await runTarget(candidate);
    if(result.ok!==true||result.status!=='focused-program-not-due'||result.externalRequests!==0||
       result.rosterPreparation.status!=='no-reviewed-candidate'||result.rosterPreparation.saved!==0||
       result.rosterPreparation.externalRequests!==0)return skipped.length?{...result,programNotDueRaceKeys:skipped}:result;
